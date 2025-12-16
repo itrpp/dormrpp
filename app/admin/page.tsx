@@ -58,21 +58,10 @@ async function getDashboardStats(): Promise<DashboardStats> {
     const maintenanceRooms = maintenanceRoomsResult?.count || 0;
 
     // 2. สถิติผู้เช่า
-    let totalTenants = 0;
-    try {
-      const [totalTenantsResult] = await query<{ count: number }>(
-        'SELECT COUNT(*) as count FROM tenants WHERE is_deleted = 0 OR is_deleted IS NULL'
-      );
-      totalTenants = totalTenantsResult?.count || 0;
-    } catch (error: any) {
-      // Fallback: ถ้าไม่มี is_deleted column
-      if (error.message?.includes("Unknown column 'is_deleted'")) {
-        const [totalTenantsResult] = await query<{ count: number }>(
-          'SELECT COUNT(*) as count FROM tenants'
-        );
-        totalTenants = totalTenantsResult?.count || 0;
-      }
-    }
+    const [totalTenantsResult] = await query<{ count: number }>(
+      'SELECT COUNT(*) as count FROM tenants'
+    );
+    const totalTenants = totalTenantsResult?.count || 0;
 
     // ผู้เช่าใหม่เดือนนี้ (จาก contracts.start_date)
     let newTenantsThisMonth = 0;
@@ -125,20 +114,19 @@ async function getDashboardStats(): Promise<DashboardStats> {
     );
     const totalBuildings = totalBuildingsResult?.count || 0;
 
-    const [totalRoomTypesResult] = await query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM room_types'
-    );
-    const totalRoomTypes = totalRoomTypesResult?.count || 0;
+    // ตาราง room_types ไม่มีใน schema ใหม่แล้ว
+    const totalRoomTypes = 0;
 
     // อัตราการเข้าพัก (occupied rooms / total rooms * 100)
     const occupancyRate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
 
     // 4. สถิติการเงิน
-    // รายได้เดือนนี้ (จาก bills.total_amount)
+    // รายได้เดือนนี้ (จาก bills.total_amount) - JOIN กับ billing_cycles
     const [revenueThisMonthResult] = await query<{ total: number }>(
-      `SELECT COALESCE(SUM(total_amount), 0) as total 
-       FROM bills 
-       WHERE billing_year = ? AND billing_month = ?`,
+      `SELECT COALESCE(SUM(b.total_amount), 0) as total 
+       FROM bills b
+       JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
+       WHERE cy.billing_year = ? AND cy.billing_month = ?`,
       [buddhistYear, currentMonth]
     );
     const revenueThisMonth = revenueThisMonthResult?.total || 0;
@@ -149,11 +137,12 @@ async function getDashboardStats(): Promise<DashboardStats> {
     );
     const totalRevenue = totalRevenueResult?.total || 0;
 
-    // ค่าใช้จ่ายเดือนนี้ (ใช้ maintenance_fee เป็นค่าใช้จ่าย)
+    // ค่าใช้จ่ายเดือนนี้ (ใช้ maintenance_fee เป็นค่าใช้จ่าย) - JOIN กับ billing_cycles
     const [expensesThisMonthResult] = await query<{ total: number }>(
-      `SELECT COALESCE(SUM(maintenance_fee), 0) as total 
-       FROM bills 
-       WHERE billing_year = ? AND billing_month = ?`,
+      `SELECT COALESCE(SUM(b.maintenance_fee), 0) as total 
+       FROM bills b
+       JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
+       WHERE cy.billing_year = ? AND cy.billing_month = ?`,
       [buddhistYear, currentMonth]
     );
     const expensesThisMonth = expensesThisMonthResult?.total || 0;
@@ -279,15 +268,17 @@ async function getChartData() {
 
     try {
       const [revenueResult] = await query<{ total: number }>(
-        `SELECT COALESCE(SUM(total_amount), 0) as total 
-         FROM bills 
-         WHERE billing_year = ? AND billing_month = ?`,
+        `SELECT COALESCE(SUM(b.total_amount), 0) as total 
+         FROM bills b
+         JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
+         WHERE cy.billing_year = ? AND cy.billing_month = ?`,
         [buddhistYear, month]
       );
       const [expensesResult] = await query<{ total: number }>(
-        `SELECT COALESCE(SUM(maintenance_fee), 0) as total 
-         FROM bills 
-         WHERE billing_year = ? AND billing_month = ?`,
+        `SELECT COALESCE(SUM(b.maintenance_fee), 0) as total 
+         FROM bills b
+         JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
+         WHERE cy.billing_year = ? AND cy.billing_month = ?`,
         [buddhistYear, month]
       );
 
