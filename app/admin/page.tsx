@@ -36,30 +36,22 @@ async function getDashboardStats(): Promise<DashboardStats> {
   const currentMonth = now.getMonth() + 1; // 1-12
 
   try {
-    // 1. สถิติห้องพัก
-    const [totalRoomsResult] = await query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM rooms'
+    // 1. สถิติห้องพัก - รวม query เป็นอันเดียว
+    const roomStats = await query<{ status: string; count: number }>(
+      `SELECT status, COUNT(*) as count 
+       FROM rooms 
+       WHERE COALESCE(is_deleted, 0) = 0
+       GROUP BY status`
     );
-    const totalRooms = totalRoomsResult?.count || 0;
-
-    const [availableRoomsResult] = await query<{ count: number }>(
-      "SELECT COUNT(*) as count FROM rooms WHERE status = 'available'"
-    );
-    const availableRooms = availableRoomsResult?.count || 0;
-
-    const [occupiedRoomsResult] = await query<{ count: number }>(
-      "SELECT COUNT(*) as count FROM rooms WHERE status = 'occupied'"
-    );
-    const occupiedRooms = occupiedRoomsResult?.count || 0;
-
-    const [maintenanceRoomsResult] = await query<{ count: number }>(
-      "SELECT COUNT(*) as count FROM rooms WHERE status = 'maintenance'"
-    );
-    const maintenanceRooms = maintenanceRoomsResult?.count || 0;
+    
+    const totalRooms = roomStats.reduce((sum, r) => sum + (r.count || 0), 0);
+    const availableRooms = roomStats.find(r => r.status === 'available')?.count || 0;
+    const occupiedRooms = roomStats.find(r => r.status === 'occupied')?.count || 0;
+    const maintenanceRooms = roomStats.find(r => r.status === 'maintenance')?.count || 0;
 
     // 2. สถิติผู้เช่า
     const [totalTenantsResult] = await query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM tenants'
+      'SELECT COUNT(*) as count FROM tenants WHERE COALESCE(is_deleted, 0) = 0'
     );
     const totalTenants = totalTenantsResult?.count || 0;
 
@@ -109,10 +101,10 @@ async function getDashboardStats(): Promise<DashboardStats> {
     }
 
     // 3. สถิติอื่นๆ
-    const [totalBuildingsResult] = await query<{ count: number }>(
+    const [totalBuildingsRow] = await query<{ count: number }>(
       'SELECT COUNT(*) as count FROM buildings'
     );
-    const totalBuildings = totalBuildingsResult?.count || 0;
+    const totalBuildings = totalBuildingsRow?.count || 0;
 
     // ตาราง room_types ไม่มีใน schema ใหม่แล้ว
     const totalRoomTypes = 0;
@@ -120,38 +112,34 @@ async function getDashboardStats(): Promise<DashboardStats> {
     // อัตราการเข้าพัก (occupied rooms / total rooms * 100)
     const occupancyRate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
 
-    // 4. สถิติการเงิน
-    // รายได้เดือนนี้ (จาก bills.total_amount) - JOIN กับ billing_cycles
-    const [revenueThisMonthResult] = await query<{ total: number }>(
-      `SELECT COALESCE(SUM(b.total_amount), 0) as total 
-       FROM bills b
-       JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
-       WHERE cy.billing_year = ? AND cy.billing_month = ?`,
-      [buddhistYear, currentMonth]
-    );
-    const revenueThisMonth = revenueThisMonthResult?.total || 0;
-
-    // รายได้รวม
-    const [totalRevenueResult] = await query<{ total: number }>(
-      'SELECT COALESCE(SUM(total_amount), 0) as total FROM bills'
-    );
-    const totalRevenue = totalRevenueResult?.total || 0;
-
-    // ค่าใช้จ่ายเดือนนี้ (ใช้ maintenance_fee เป็นค่าใช้จ่าย) - JOIN กับ billing_cycles
-    const [expensesThisMonthResult] = await query<{ total: number }>(
-      `SELECT COALESCE(SUM(b.maintenance_fee), 0) as total 
-       FROM bills b
-       JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
-       WHERE cy.billing_year = ? AND cy.billing_month = ?`,
-      [buddhistYear, currentMonth]
-    );
-    const expensesThisMonth = expensesThisMonthResult?.total || 0;
-
-    // ค่าใช้จ่ายรวม
-    const [totalExpensesResult] = await query<{ total: number }>(
-      'SELECT COALESCE(SUM(maintenance_fee), 0) as total FROM bills'
-    );
-    const totalExpenses = totalExpensesResult?.total || 0;
+    // 4. สถิติการเงิน - รวม query เป็นอันเดียว
+    const [revenueThisMonthResult, totalRevenueResult, expensesThisMonthResult, totalExpensesResult] = await Promise.all([
+      query<{ total: number }>(
+        `SELECT COALESCE(SUM(b.total_amount), 0) as total 
+         FROM bills b
+         JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
+         WHERE cy.billing_year = ? AND cy.billing_month = ?`,
+        [buddhistYear, currentMonth]
+      ),
+      query<{ total: number }>(
+        'SELECT COALESCE(SUM(total_amount), 0) as total FROM bills'
+      ),
+      query<{ total: number }>(
+        `SELECT COALESCE(SUM(b.maintenance_fee), 0) as total 
+         FROM bills b
+         JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
+         WHERE cy.billing_year = ? AND cy.billing_month = ?`,
+        [buddhistYear, currentMonth]
+      ),
+      query<{ total: number }>(
+        'SELECT COALESCE(SUM(maintenance_fee), 0) as total FROM bills'
+      )
+    ]);
+    
+    const revenueThisMonth = revenueThisMonthResult[0]?.total || 0;
+    const totalRevenue = totalRevenueResult[0]?.total || 0;
+    const expensesThisMonth = expensesThisMonthResult[0]?.total || 0;
+    const totalExpenses = totalExpensesResult[0]?.total || 0;
 
     // กำไรเดือนนี้
     const profitThisMonth = revenueThisMonth - expensesThisMonth;
@@ -217,20 +205,18 @@ async function getChartData() {
   ];
 
   try {
-    const [available] = await query<{ count: number }>(
-      "SELECT COUNT(*) as count FROM rooms WHERE status = 'available'"
-    );
-    const [occupied] = await query<{ count: number }>(
-      "SELECT COUNT(*) as count FROM rooms WHERE status = 'occupied'"
-    );
-    const [maintenance] = await query<{ count: number }>(
-      "SELECT COUNT(*) as count FROM rooms WHERE status = 'maintenance'"
+    // รวม query เป็นอันเดียว
+    const roomStatusCounts = await query<{ status: string; count: number }>(
+      `SELECT status, COUNT(*) as count 
+       FROM rooms 
+       WHERE COALESCE(is_deleted, 0) = 0
+       GROUP BY status`
     );
 
     roomStatusData = [
-      { name: 'ว่าง', value: available?.count || 0, color: '#10b981' },
-      { name: 'มีผู้อาศัย', value: occupied?.count || 0, color: '#3b82f6' },
-      { name: 'ซ่อมบำรุง', value: maintenance?.count || 0, color: '#6b7280' },
+      { name: 'ว่าง', value: roomStatusCounts.find(r => r.status === 'available')?.count || 0, color: '#10b981' },
+      { name: 'มีผู้อาศัย', value: roomStatusCounts.find(r => r.status === 'occupied')?.count || 0, color: '#3b82f6' },
+      { name: 'ซ่อมบำรุง', value: roomStatusCounts.find(r => r.status === 'maintenance')?.count || 0, color: '#6b7280' },
     ];
   } catch (error) {
     console.error('Error fetching room status data:', error);
@@ -352,15 +338,14 @@ async function getChartData() {
     const monthName = monthNames[month - 1];
 
     try {
-      const [totalRoomsResult] = await query<{ count: number }>(
-        'SELECT COUNT(*) as count FROM rooms'
-      );
-      const [occupiedRoomsResult] = await query<{ count: number }>(
-        "SELECT COUNT(*) as count FROM rooms WHERE status = 'occupied'"
-      );
+      // รวม query เป็นอันเดียว
+      const [totalRoomsResult, occupiedRoomsResult] = await Promise.all([
+        query<{ count: number }>('SELECT COUNT(*) as count FROM rooms WHERE COALESCE(is_deleted, 0) = 0'),
+        query<{ count: number }>("SELECT COUNT(*) as count FROM rooms WHERE status = 'occupied' AND COALESCE(is_deleted, 0) = 0")
+      ]);
 
-      const totalRooms = totalRoomsResult?.count || 0;
-      const occupiedRooms = occupiedRoomsResult?.count || 0;
+      const totalRooms = totalRoomsResult[0]?.count || 0;
+      const occupiedRooms = occupiedRoomsResult[0]?.count || 0;
       const rate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
 
       occupancyData.push({

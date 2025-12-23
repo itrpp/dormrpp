@@ -2,6 +2,9 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 
+// บังคับให้ route นี้เป็น dynamic เพราะมีการใช้ request.url
+export const dynamic = 'force-dynamic';
+
 // GET /api/utility-types?code=electric
 export async function GET(req: Request) {
   try {

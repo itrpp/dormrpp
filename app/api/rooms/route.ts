@@ -20,11 +20,11 @@ export async function GET(req: Request) {
 }
 
 // POST /api/rooms
-// body: { building_id, room_number, floor_no, status }
+// body: { building_id, room_number, floor_no, status, room_type_id? }
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { building_id, room_number, floor_no, status } = body;
+    const { building_id, room_number, floor_no, status, room_type_id } = body;
 
     if (!building_id || !room_number) {
       return NextResponse.json(
@@ -33,20 +33,70 @@ export async function POST(req: Request) {
       );
     }
 
+    // ตรวจสอบรูปแบบหมายเลขห้อง: ต้องเป็นตัวเลข 3 หลักเท่านั้น (เช่น 101, 305)
+    // รองรับทั้งกรณี body ส่งมาเป็น string หรือ number
+    const roomNumberStr = String(room_number ?? '').trim();
+    if (!/^\d{3}$/.test(roomNumberStr)) {
+      return NextResponse.json(
+        { error: 'room_number must be a 3-digit numeric string (e.g. 101, 305)' },
+        { status: 400 }
+      );
+    }
+
     // สร้างห้องพัก
     const { pool } = await import('@/lib/db');
     const connection = await pool.getConnection();
     try {
-      const [result] = await connection.query(
+      let result: any;
+
+      // ถ้า body มี room_type_id ให้พยายาม insert ด้วย column นี้ก่อน
+      if (room_type_id !== undefined && room_type_id !== null && room_type_id !== '') {
+        try {
+          const [resWithType] = await connection.query(
+            `INSERT INTO rooms (building_id, room_number, floor_no, status, room_type_id)
+             VALUES (?, ?, ?, ?, ?)`,
+            [
+              Number(building_id),
+              roomNumberStr,
+              floor_no ? Number(floor_no) : null,
+              status || 'available',
+              Number(room_type_id),
+            ]
+          );
+          result = resWithType;
+        } catch (err: any) {
+          // ถ้าไม่มี column room_type_id ให้ fallback ไป insert แบบเดิม
+          if (err.message?.includes("room_type_id")) {
+            const [resFallback] = await connection.query(
+              `INSERT INTO rooms (building_id, room_number, floor_no, status)
+               VALUES (?, ?, ?, ?)`,
+              [
+                Number(building_id),
+                roomNumberStr,
+                floor_no ? Number(floor_no) : null,
+                status || 'available',
+              ]
+            );
+            result = resFallback;
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        // ไม่มี room_type_id → ใช้ insert แบบเดิม
+        const [resFallback] = await connection.query(
         `INSERT INTO rooms (building_id, room_number, floor_no, status)
          VALUES (?, ?, ?, ?)`,
         [
           Number(building_id),
-          room_number,
+          roomNumberStr,
           floor_no ? Number(floor_no) : null,
           status || 'available',
         ]
       );
+        result = resFallback;
+      }
+
       const roomId = (result as any).insertId;
       connection.release();
 

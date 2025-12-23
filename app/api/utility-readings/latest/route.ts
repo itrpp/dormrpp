@@ -2,6 +2,9 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 
+// บังคับให้ route นี้เป็น dynamic เพราะมีการใช้ request.url
+export const dynamic = 'force-dynamic';
+
 // GET /api/utility-readings/latest?room_id=1
 // ดึงเลขมิเตอร์ล่าสุดของห้อง (จากรอบบิลล่าสุด)
 export async function GET(req: Request) {

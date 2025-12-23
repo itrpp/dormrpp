@@ -118,6 +118,8 @@ export interface RoomType {
   name_th: string;
   name_en?: string | null;
   description?: string | null;
+  // รองรับคอลัมน์ name_type (ชื่อประเภทห้อง) หากมีในฐานข้อมูล
+  name_type?: string | null;
 }
 
 export interface BillOtherItem {

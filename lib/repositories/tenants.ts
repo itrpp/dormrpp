@@ -38,7 +38,7 @@ export async function getAllTenantsForAdmin(): Promise<AdminTenantRow[]> {
       t.last_name_th AS last_name,
       t.email,
       t.phone,
-      COALESCE(c.status, 'inactive') AS status,
+      COALESCE(t.status, 'inactive') AS status,
       c.start_date AS move_in_date,
       r.room_number,
       r.floor_no,
@@ -52,8 +52,16 @@ export async function getAllTenantsForAdmin(): Promise<AdminTenantRow[]> {
       ON r.room_id = c.room_id
     LEFT JOIN buildings b
       ON b.building_id = r.building_id
-    WHERE t.status = 'active'
-    ORDER BY t.tenant_id DESC
+    WHERE COALESCE(t.is_deleted, 0) = 0
+    ORDER BY 
+      COALESCE(b.building_id, 999999) ASC,
+      CASE 
+        WHEN r.room_number IS NULL THEN 999999
+        WHEN r.room_number REGEXP '^[0-9]+$' THEN CAST(r.room_number AS UNSIGNED)
+        ELSE 999999
+      END ASC,
+      r.room_number ASC,
+      t.tenant_id DESC
   `;
   
   const results = await query<AdminTenantRow>(sql);

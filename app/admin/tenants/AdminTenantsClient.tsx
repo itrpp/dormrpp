@@ -25,16 +25,16 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
   const [searchText, setSearchText] = useState('');
   const [selectedBuilding, setSelectedBuilding] = useState<string>('all');
   const [selectedFloor, setSelectedFloor] = useState<string>('all');
-  const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [selectedStatus, setSelectedStatus] = useState<string>('active'); // Default: แสดงเฉพาะผู้เช่าที่ active
 
   // state สำหรับ pagination
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const [itemsPerPage, setItemsPerPage] = useState(15);
 
-  // state สำหรับ modal
+  // state สำหรับ modal (แก้ไขเท่านั้น)
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
   const [form, setForm] = useState<TenantForm>({
+    tenant_id: undefined,
     first_name: '',
     last_name: '',
     email: '',
@@ -109,10 +109,10 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
     });
   }, [tenants, selectedStatus, selectedBuilding, selectedFloor, searchText]);
 
-  // Reset to page 1 when filters change
+  // Reset to page 1 when filters or itemsPerPage change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedStatus, selectedBuilding, selectedFloor, searchText]);
+  }, [selectedStatus, selectedBuilding, selectedFloor, searchText, itemsPerPage]);
 
   // คำนวณ pagination
   const totalPages = Math.ceil(filteredTenants.length / itemsPerPage);
@@ -182,25 +182,8 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
     return pages;
   };
 
-  // เปิด modal เพิ่ม
-  const openCreateModal = () => {
-    setModalMode('create');
-    setForm({
-      first_name: '',
-      last_name: '',
-      email: '',
-      phone: '',
-      room_number: '',
-      status: 'active',
-      move_in_date: '',
-    });
-    setIsModalOpen(true);
-  };
-
   // เปิด modal แก้ไข
   const openEditModal = (t: AdminTenantRow) => {
-    setModalMode('edit');
-    
     // Handle move_in_date - อาจเป็น string หรือ Date object
     let moveInDateStr = '';
     if (t.move_in_date) {
@@ -236,40 +219,50 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
 
   const closeModal = () => setIsModalOpen(false);
 
-  // submit ฟอร์ม (create / edit)
+  // submit ฟอร์ม (แก้ไขเท่านั้น) - แก้ไขได้เฉพาะ 4 ฟิลด์: ชื่อ, นามสกุล, อีเมล, เบอร์โทร
   const handleSubmit = async () => {
     try {
-      const payload = { ...form };
+      if (!form.tenant_id) {
+        alert('ไม่พบ tenant_id');
+        return;
+      }
 
-      if (modalMode === 'create') {
-        const res = await fetch('/api/tenants', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) {
-          const error = await res.json();
-          throw new Error(error.error || 'Create tenant failed');
+      // ตรวจสอบรูปแบบอีเมล (ถ้ามีการกรอก)
+      if (form.email && form.email.trim() !== '') {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(form.email.trim())) {
+          alert('รูปแบบอีเมลไม่ถูกต้อง กรุณากรอกอีเมลให้ถูกต้อง (เช่น example@email.com)');
+          return;
         }
-        const newTenant: AdminTenantRow = await res.json();
-        setTenants((prev) => [newTenant, ...prev]);
-      } else {
+      }
+
+      // ส่งข้อมูลที่อนุญาตให้แก้ไข: ชื่อ, นามสกุล, อีเมล, เบอร์โทร, และสถานะ
+      const payload = {
+        first_name: form.first_name,
+        last_name: form.last_name,
+        email: form.email.trim() || null, // trim และแปลงเป็น null ถ้าว่าง
+        phone: form.phone,
+        status: form.status, // เพิ่มการแก้ไขสถานะ
+      };
+      
         const res = await fetch(`/api/tenants/${form.tenant_id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
+      
         if (!res.ok) {
           const error = await res.json();
           throw new Error(error.error || 'Update tenant failed');
         }
+      
         const updated: AdminTenantRow = await res.json();
         setTenants((prev) =>
           prev.map((t) => (t.tenant_id === updated.tenant_id ? updated : t))
         );
-      }
 
       setIsModalOpen(false);
+      alert('แก้ไขข้อมูลผู้เช่าสำเร็จ');
     } catch (err: any) {
       console.error(err);
       alert(err.message || 'บันทึกข้อมูลไม่สำเร็จ');
@@ -299,12 +292,14 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
       {/* Header + ปุ่มเพิ่ม */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
         <h1 className="text-3xl font-bold text-gray-800">จัดการผู้เช่า</h1>
-        <button
-          onClick={openCreateModal}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+        <div className="flex gap-2">
+          <a
+            href="/admin/tenants/add"
+            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
         >
-          เพิ่มผู้เช่า
-        </button>
+            เพิ่มผู้เช่าใหม่ (เลือกห้อง)
+          </a>
+        </div>
       </div>
 
       {/* แถว search + filter */}
@@ -374,6 +369,28 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
         </div>
       </div>
 
+      {/* แถวแสดงจำนวนและเลือกจำนวนแสดงผล */}
+      <div className="bg-white shadow rounded-lg p-4 mb-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="text-sm text-gray-700">
+          แสดง {startIndex + 1} - {Math.min(endIndex, filteredTenants.length)} จาก {filteredTenants.length} รายการ
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-gray-700">แสดงต่อหน้า:</label>
+          <select
+            className="border rounded-md px-3 py-1 text-sm"
+            value={itemsPerPage}
+            onChange={(e) => {
+              setItemsPerPage(Number(e.target.value));
+              setCurrentPage(1); // Reset to first page when changing items per page
+            }}
+          >
+            <option value={15}>15</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
+        </div>
+      </div>
+
       {/* ตารางผู้เช่า */}
       <div className="bg-white shadow rounded-lg overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200">
@@ -432,12 +449,14 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span
                     className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                      tenant.status === 'active'
+                      (tenant.status || 'inactive').toLowerCase() === 'active'
                         ? 'bg-green-100 text-green-800'
                         : 'bg-gray-100 text-gray-800'
                     }`}
                   >
-                    {tenant.status || 'inactive'}
+                    {(tenant.status || 'inactive').toLowerCase() === 'active' 
+                      ? 'active' 
+                      : 'inactive'}
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -532,12 +551,12 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
         </div>
       )}
 
-      {/* Modal เพิ่ม/แก้ไข ผู้เช่า */}
+      {/* Modal แก้ไขผู้เช่า */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-lg w-full max-w-lg p-6">
             <h2 className="text-xl font-semibold mb-4">
-              {modalMode === 'create' ? 'เพิ่มผู้เช่า' : 'แก้ไขข้อมูลผู้เช่า'}
+              แก้ไขข้อมูลผู้เช่า
             </h2>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -565,12 +584,17 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
               <div>
                 <label className="block text-sm mb-1">อีเมล</label>
                 <input
+                  type="email"
                   className="w-full border rounded-md px-3 py-2 text-sm"
                   value={form.email}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, email: e.target.value }))
                   }
+                  placeholder="example@email.com"
                 />
+                {form.email && form.email.trim() !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim()) && (
+                  <p className="text-xs text-red-500 mt-1">รูปแบบอีเมลไม่ถูกต้อง</p>
+                )}
               </div>
               <div>
                 <label className="block text-sm mb-1">เบอร์โทร</label>
@@ -584,29 +608,6 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
               </div>
 
               <div>
-                <label className="block text-sm mb-1">ห้องพัก (หมายเลขห้อง)</label>
-                <input
-                  className="w-full border rounded-md px-3 py-2 text-sm"
-                  value={form.room_number}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, room_number: e.target.value }))
-                  }
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm mb-1">วันที่เข้าพัก</label>
-                <input
-                  type="date"
-                  className="w-full border rounded-md px-3 py-2 text-sm"
-                  value={form.move_in_date}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, move_in_date: e.target.value }))
-                  }
-                />
-              </div>
-
-              <div>
                 <label className="block text-sm mb-1">สถานะ</label>
                 <select
                   className="w-full border rounded-md px-3 py-2 text-sm"
@@ -615,8 +616,8 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
                     setForm((f) => ({ ...f, status: e.target.value }))
                   }
                 >
-                  <option value="active">active</option>
-                  <option value="inactive">inactive</option>
+                  <option value="active">active (ปัจจุบันพักอยู่)</option>
+                  <option value="inactive">inactive (ไม่พักแล้ว)</option>
                 </select>
               </div>
             </div>

@@ -3,6 +3,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import type { RoomWithDetails } from '@/lib/repositories/rooms';
 import type { Building, RoomType } from '@/types/db';
+import type { RoomOccupancyInfo } from '@/lib/repositories/room-occupancy';
 
 type Props = {
   initialRooms: RoomWithDetails[];
@@ -14,6 +15,7 @@ type RoomForm = {
   room_number: string;
   floor_no: string;
   status: string;
+  room_type_id?: string;
 };
 
 export default function AdminRoomsClient({ initialRooms }: Props) {
@@ -22,6 +24,12 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
   // state สำหรับ buildings และ room types ที่ดึงจาก API
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
+  
+  // state สำหรับข้อมูลสถานะผู้เข้าพัก
+  const [roomOccupancies, setRoomOccupancies] = useState<Map<number, RoomOccupancyInfo>>(new Map());
+  
+  // state สำหรับข้อมูลผู้เข้าพักของแต่ละห้อง
+  const [roomTenants, setRoomTenants] = useState<Map<number, Array<{ first_name: string; last_name: string }>>>(new Map());
 
   // state สำหรับ filter
   const [selectedBuilding, setSelectedBuilding] = useState<string>('all');
@@ -30,7 +38,7 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
 
   // state สำหรับ pagination
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const [itemsPerPage, setItemsPerPage] = useState(15);
 
   // state สำหรับ modal
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -40,6 +48,7 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
     room_number: '',
     floor_no: '',
     status: 'available',
+    room_type_id: '',
   });
 
   // state สำหรับ modal รายละเอียด
@@ -49,6 +58,7 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
     room: RoomWithDetails | null;
     tenants: Array<{
       tenant_id: number;
+      contract_id?: number;
       first_name: string;
       last_name: string;
       email: string | null;
@@ -64,16 +74,29 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
       status: string;
       due_date: string;
     }>;
+    occupancy: {
+      current_occupants: number;
+      max_occupants: number;
+    } | null;
   } | null>(null);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
 
-  // ดึงข้อมูล buildings และ room types จาก API
+  // state สำหรับ modal ย้ายผู้เช่าออก
+  const [isMoveOutModalOpen, setIsMoveOutModalOpen] = useState(false);
+  const [selectedContractId, setSelectedContractId] = useState<number | null>(null);
+  const [selectedTenantName, setSelectedTenantName] = useState<string>('');
+  const [moveOutDate, setMoveOutDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [isMovingOut, setIsMovingOut] = useState(false);
+
+  // ดึงข้อมูล buildings, room types, occupancy และ tenants จาก API
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [buildingsRes, roomTypesRes] = await Promise.all([
+        const [buildingsRes, roomTypesRes, occupancyRes, contractsRes] = await Promise.all([
           fetch('/api/buildings'),
           fetch('/api/room-types'),
+          fetch('/api/rooms/occupancy'),
+          fetch('/api/contracts?status=active'),
         ]);
 
         if (buildingsRes.ok) {
@@ -85,8 +108,43 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
           const roomTypesData = await roomTypesRes.json();
           setRoomTypes(roomTypesData);
         }
+
+        if (occupancyRes.ok) {
+          const occupancyData: RoomOccupancyInfo[] = await occupancyRes.json();
+          const occupancyMap = new Map<number, RoomOccupancyInfo>();
+          occupancyData.forEach((occ) => {
+            if (occ && occ.room_id) {
+              occupancyMap.set(occ.room_id, occ);
+            }
+          });
+          setRoomOccupancies(occupancyMap);
+        } else {
+          const errorText = await occupancyRes.text();
+          console.error('Failed to fetch occupancy:', occupancyRes.status, errorText);
+        }
+
+        // จัดกลุ่มผู้เข้าพักตาม room_id
+        if (contractsRes.ok) {
+          const contractsData = await contractsRes.json();
+          const tenantsMap = new Map<number, Array<{ first_name: string; last_name: string }>>();
+          
+          contractsData.forEach((contract: any) => {
+            if (contract.room_id && contract.first_name_th && contract.last_name_th) {
+              const roomId = contract.room_id;
+              if (!tenantsMap.has(roomId)) {
+                tenantsMap.set(roomId, []);
+              }
+              tenantsMap.get(roomId)!.push({
+                first_name: contract.first_name_th,
+                last_name: contract.last_name_th,
+              });
+            }
+          });
+          
+          setRoomTenants(tenantsMap);
+        }
       } catch (error) {
-        console.error('Error fetching buildings/room types:', error);
+        console.error('Error fetching buildings/room types/occupancy/tenants:', error);
       }
     };
 
@@ -120,7 +178,7 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
   const roomTypeOptions = useMemo(() => {
     // ใช้ข้อมูลจาก API ก่อน ถ้าไม่มีให้ใช้ข้อมูลจาก rooms
     if (roomTypes.length > 0) {
-      return roomTypes.map((rt) => [rt.room_type_id, rt.name_th] as [number, string]);
+      return roomTypes.map((rt) => [rt.room_type_id, (rt as any).name_type || rt.name_th] as [number, string]);
     }
     // Fallback: ถ้าไม่มี room types จาก API ให้ return array ว่าง
     return [];
@@ -150,18 +208,31 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
       //   }
       // }
 
-      // 4) filter สถานะ
+      // 4) filter สถานะ (ตรวจสอบตามจำนวนผู้เข้าพัก)
       if (selectedStatus !== 'all') {
-        const roomStatus = (r.status || '').toLowerCase().trim();
+        const occupancy = roomOccupancies.get(r.room_id);
+        const currentOccupants = occupancy?.current_occupants ?? 
+          (roomTenants.get(r.room_id)?.length || 0);
+        
+        // กำหนดสถานะตามจำนวนผู้เข้าพัก
+        let displayStatus = r.status || 'available';
+        if (r.status === 'maintenance') {
+          displayStatus = 'maintenance';
+        } else if (currentOccupants > 0) {
+          displayStatus = 'occupied';
+        } else {
+          displayStatus = 'available';
+        }
+        
         const selectedStatusLower = selectedStatus.toLowerCase().trim();
-        if (roomStatus !== selectedStatusLower) {
+        if (displayStatus.toLowerCase().trim() !== selectedStatusLower) {
           return false;
         }
       }
 
       return true;
     });
-  }, [rooms, selectedBuilding, selectedFloor, selectedStatus]);
+  }, [rooms, selectedBuilding, selectedFloor, selectedStatus, roomOccupancies, roomTenants]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
@@ -236,14 +307,21 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
     return pages;
   };
 
+  // หา building default (รวงผึ้ง) จากรายการอาคาร
+  const defaultBuildingId = useMemo(() => {
+    const target = buildings.find((b) => b.name_th === 'รวงผึ้ง');
+    return target ? String(target.building_id) : '';
+  }, [buildings]);
+
   // เปิด modal เพิ่ม
   const openCreateModal = () => {
     setModalMode('create');
     setForm({
-      building_id: '',
+      building_id: defaultBuildingId,
       room_number: '',
       floor_no: '',
       status: 'available',
+      room_type_id: '',
     });
     setIsModalOpen(true);
   };
@@ -257,20 +335,41 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
       room_number: room.room_number,
       floor_no: room.floor_no ? String(room.floor_no) : '',
       status: room.status || 'available',
+      room_type_id: room.room_type_id != null ? String(room.room_type_id) : '',
     });
     setIsModalOpen(true);
   };
 
   const closeModal = () => setIsModalOpen(false);
 
+  // คำนวณชั้นจากหมายเลขห้อง เช่น 301 -> ชั้น 3, 1205 -> ชั้น 12
+  const computeFloorFromRoomNumber = (roomNumber: string): string => {
+    const numeric = parseInt(roomNumber, 10);
+    if (Number.isNaN(numeric)) return '';
+    const floor = Math.floor(numeric / 100);
+    return floor > 0 ? String(floor) : '';
+  };
+
   // submit ฟอร์ม (create / edit)
   const handleSubmit = async () => {
     try {
+      // ตรวจสอบหมายเลขห้อง: ต้องเป็นตัวเลข 3 หลักเท่านั้น
+      if (!form.room_number || !/^\d{3}$/.test(form.room_number)) {
+        alert('หมายเลขห้องต้องเป็นตัวเลข 3 หลักเท่านั้น (เช่น 101, 305)');
+        return;
+      }
+
+      if (!form.building_id) {
+        alert('กรุณาเลือกอาคาร');
+        return;
+      }
+
       const payload = {
         building_id: Number(form.building_id),
         room_number: form.room_number,
         floor_no: form.floor_no ? Number(form.floor_no) : null,
         status: form.status,
+        room_type_id: form.room_type_id ? Number(form.room_type_id) : null,
       };
 
       if (modalMode === 'create') {
@@ -287,6 +386,25 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
 
         const newRoom: RoomWithDetails = await res.json();
         setRooms((prev) => [newRoom, ...prev]);
+        
+        // Refetch occupancy data เพื่ออัปเดตข้อมูล occupancy ของห้องใหม่
+        try {
+          const occupancyRes = await fetch('/api/rooms/occupancy');
+          if (occupancyRes.ok) {
+            const occupancyData: RoomOccupancyInfo[] = await occupancyRes.json();
+            const occupancyMap = new Map<number, RoomOccupancyInfo>();
+            occupancyData.forEach((occ) => {
+              if (occ && occ.room_id) {
+                occupancyMap.set(occ.room_id, occ);
+              }
+            });
+            setRoomOccupancies(occupancyMap);
+          }
+        } catch (err) {
+          console.error('Failed to refresh occupancy data:', err);
+        }
+        
+        alert('บันทึกห้องพักใหม่สำเร็จ');
       } else {
         if (!form.room_id) {
           alert('ไม่พบ room_id');
@@ -308,6 +426,25 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
         setRooms((prev) =>
           prev.map((r) => (r.room_id === updated.room_id ? updated : r))
         );
+        
+        // Refetch occupancy data เพื่ออัปเดต max_occupants ตาม room_type_id ที่แก้ไข
+        try {
+          const occupancyRes = await fetch('/api/rooms/occupancy');
+          if (occupancyRes.ok) {
+            const occupancyData: RoomOccupancyInfo[] = await occupancyRes.json();
+            const occupancyMap = new Map<number, RoomOccupancyInfo>();
+            occupancyData.forEach((occ) => {
+              if (occ && occ.room_id) {
+                occupancyMap.set(occ.room_id, occ);
+              }
+            });
+            setRoomOccupancies(occupancyMap);
+          }
+        } catch (err) {
+          console.error('Failed to refresh occupancy data:', err);
+        }
+        
+        alert('แก้ไขข้อมูลห้องพักสำเร็จ');
       }
 
       setIsModalOpen(false);
@@ -317,21 +454,36 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
     }
   };
 
-  // ลบห้องพัก
-  const handleDelete = async (roomId: number) => {
-    if (!confirm('ยืนยันการลบห้องพัก?')) return;
+  // เปิดใช้งาน/ปิดใช้งานห้องพัก
+  const handleToggleActive = async (roomId: number, newIsDeleted: boolean) => {
+    const action = newIsDeleted ? 'ปิดใช้งาน' : 'เปิดใช้งาน';
+    const confirmMessage = newIsDeleted 
+      ? 'ยืนยันการปิดใช้งานห้องพัก? ห้องที่ปิดใช้งานจะไม่แสดงในรายการ'
+      : 'ยืนยันการเปิดใช้งานห้องพัก?';
+    
+    if (!confirm(confirmMessage)) return;
+    
     try {
       const res = await fetch(`/api/rooms/${roomId}`, {
-        method: 'DELETE',
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_deleted: newIsDeleted }),
       });
+      
       if (!res.ok) {
         const error = await res.json();
-        throw new Error(error.error || 'Delete failed');
+        throw new Error(error.error || `${action} ไม่สำเร็จ`);
       }
-      setRooms((prev) => prev.filter((r) => r.room_id !== roomId));
+
+      const updated: RoomWithDetails = await res.json();
+      setRooms((prev) =>
+        prev.map((r) => (r.room_id === updated.room_id ? updated : r))
+      );
+      
+      alert(`${action} สำเร็จ`);
     } catch (err: any) {
       console.error(err);
-      alert(err.message || 'ลบไม่สำเร็จ');
+      alert(err.message || `${action} ไม่สำเร็จ`);
     }
   };
 
@@ -377,6 +529,84 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
     setIsDetailsModalOpen(false);
     setSelectedRoomId(null);
     setRoomDetails(null);
+  };
+
+  // เปิด modal ย้ายผู้เช่าออก
+  const openMoveOutModal = (contractId: number, tenantName: string) => {
+    setSelectedContractId(contractId);
+    setSelectedTenantName(tenantName);
+    setMoveOutDate(new Date().toISOString().slice(0, 10));
+    setIsMoveOutModalOpen(true);
+  };
+
+  // ปิด modal ย้ายผู้เช่าออก
+  const closeMoveOutModal = () => {
+    setIsMoveOutModalOpen(false);
+    setSelectedContractId(null);
+    setSelectedTenantName('');
+    setMoveOutDate(new Date().toISOString().slice(0, 10));
+  };
+
+  // ย้ายผู้เช่าออกจากห้อง (end contract)
+  const handleMoveOut = async () => {
+    if (!selectedContractId) {
+      alert('ไม่พบข้อมูลสัญญา');
+      return;
+    }
+
+    if (!moveOutDate) {
+      alert('กรุณาเลือกวันที่สิ้นสุดสัญญา');
+      return;
+    }
+
+    if (!confirm(`ยืนยันการย้าย ${selectedTenantName} ออกจากห้อง?\nวันที่สิ้นสุดสัญญา: ${moveOutDate}`)) {
+      return;
+    }
+
+    setIsMovingOut(true);
+    try {
+      const res = await fetch(`/api/contracts/${selectedContractId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          end_date: moveOutDate,
+          status: 'ended',
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'ไม่สามารถย้ายผู้เช่าออกได้');
+      }
+
+      alert('ย้ายผู้เช่าออกสำเร็จ');
+      closeMoveOutModal();
+      
+      // Refresh ข้อมูลห้อง
+      if (selectedRoomId) {
+        const detailsRes = await fetch(`/api/rooms/${selectedRoomId}/details`);
+        if (detailsRes.ok) {
+          const data = await detailsRes.json();
+          setRoomDetails(data);
+        }
+      }
+      
+      // Refresh ข้อมูล occupancy
+      const occupancyRes = await fetch('/api/rooms/occupancy');
+      if (occupancyRes.ok) {
+        const occupancyData = await occupancyRes.json();
+        const occupancyMap = new Map<number, RoomOccupancyInfo>();
+        occupancyData.forEach((occ: RoomOccupancyInfo) => {
+          occupancyMap.set(occ.room_id, occ);
+        });
+        setRoomOccupancies(occupancyMap);
+      }
+    } catch (error: any) {
+      console.error('Error moving out tenant:', error);
+      alert(`ไม่สามารถย้ายผู้เช่าออกได้: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsMovingOut(false);
+    }
   };
 
   // จัดรูปแบบวันที่
@@ -462,6 +692,28 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
         </div>
       </div>
 
+      {/* ตัวเลือกแสดงผลและข้อมูลสรุป */}
+      <div className="bg-white shadow rounded-lg p-4 mb-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="text-sm text-gray-700">
+          แสดง {startIndex + 1} - {Math.min(endIndex, filteredRooms.length)} จาก {filteredRooms.length} รายการ
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-gray-700">แสดงต่อหน้า:</label>
+          <select
+            className="border rounded-md px-3 py-1 text-sm"
+            value={itemsPerPage}
+            onChange={(e) => {
+              setItemsPerPage(Number(e.target.value));
+              setCurrentPage(1); // Reset to first page when changing items per page
+            }}
+          >
+            <option value={15}>15</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
+        </div>
+      </div>
+
       {/* ตารางห้องพัก */}
       <div className="bg-white shadow rounded-lg overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200">
@@ -480,7 +732,16 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                 ชั้น
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                ประเภทห้องพัก
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 สถานะ
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                จำนวนผู้เข้าพัก
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                รายชื่อผู้เข้าพัก
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 การจัดการ
@@ -502,45 +763,177 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {room.floor_no ?? '-'}
                 </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {(() => {
+                    const occupancy = roomOccupancies.get(room.room_id);
+                    return occupancy?.room_type_name || '-';
+                  })()}
+                </td>
                 <td className="px-6 py-4 whitespace-nowrap">
+                  {(() => {
+                    // ตรวจสอบจำนวนผู้เข้าพัก
+                    const occupancy = roomOccupancies.get(room.room_id);
+                    const currentOccupants = occupancy?.current_occupants ?? 
+                      (roomTenants.get(room.room_id)?.length || 0);
+                    
+                    // กำหนดสถานะตามจำนวนผู้เข้าพัก
+                    let displayStatus = room.status;
+                    if (room.status === 'maintenance') {
+                      // ถ้าเป็น maintenance ให้คงสถานะ maintenance
+                      displayStatus = 'maintenance';
+                    } else if (currentOccupants > 0) {
+                      // ถ้ามีผู้เข้าพัก → แสดงเป็น occupied
+                      displayStatus = 'occupied';
+                    } else {
+                      // ถ้าไม่มีผู้เข้าพัก → แสดงเป็น available
+                      displayStatus = 'available';
+                    }
+                    
+                    return (
                   <span
                     className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                      room.status === 'available'
+                          displayStatus === 'available'
                         ? 'bg-green-100 text-green-800'
-                        : room.status === 'occupied'
+                            : displayStatus === 'occupied'
                         ? 'bg-blue-100 text-blue-800'
                         : 'bg-gray-100 text-gray-800'
                     }`}
                   >
-                    {getStatusThai(room.status)}
+                        {getStatusThai(displayStatus)}
                   </span>
+                    );
+                  })()}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  {(() => {
+                    const occupancy = roomOccupancies.get(room.room_id);
+                    // ถ้าไม่มี occupancy data แต่มี tenant names ให้คำนวณจาก tenant names
+                    if (!occupancy) {
+                      const tenants = roomTenants.get(room.room_id);
+                      if (tenants && tenants.length > 0) {
+                        // ใช้ default max_occupants = 2 ถ้าไม่มีข้อมูล occupancy
+                        const currentCount = tenants.length;
+                        const maxOccupants = 2; // default
+                        const isFull = currentCount >= maxOccupants;
+                        return (
+                          <span
+                            className={`font-medium ${
+                              isFull
+                                ? 'text-red-600'
+                                : 'text-green-600'
+                            }`}
+                          >
+                            {currentCount} / {maxOccupants}
+                            {isFull && <span className="ml-1">🔴</span>}
+                            {!isFull && <span className="ml-1">🟢</span>}
+                          </span>
+                        );
+                      }
+                      return <span className="text-gray-400">-</span>;
+                    }
+                    const isFull = occupancy.current_occupants >= occupancy.max_occupants;
+                    const isEmpty = occupancy.current_occupants === 0;
+                    return (
+                      <span
+                        className={`font-medium ${
+                          isFull
+                            ? 'text-red-600'
+                            : isEmpty
+                            ? 'text-gray-500'
+                            : 'text-green-600'
+                        }`}
+                      >
+                        {occupancy.current_occupants} / {occupancy.max_occupants}
+                        {isFull && <span className="ml-1">🔴</span>}
+                        {!isFull && !isEmpty && <span className="ml-1">🟢</span>}
+                      </span>
+                    );
+                  })()}
+                </td>
+                <td className="px-6 py-4 text-sm text-gray-700">
+                  {(() => {
+                    const tenants = roomTenants.get(room.room_id);
+                    if (!tenants || tenants.length === 0) {
+                      return <span className="text-gray-400">-</span>;
+                    }
+                    return (
+                      <div className="space-y-1">
+                        {tenants.map((tenant, index) => (
+                          <div key={index} className="truncate">
+                            {tenant.first_name} {tenant.last_name}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   <button
                     className="text-green-600 hover:text-green-900 mr-3"
                     onClick={() => openDetailsModal(room.room_id)}
                   >
-                    รายละเอียด
+                    จัดการผู้เช่า
                   </button>
-                  <button
-                    className="text-blue-600 hover:text-blue-900 mr-3"
-                    onClick={() => openEditModal(room)}
-                  >
-                    แก้ไข
-                  </button>
-                  <button
-                    className="text-red-600 hover:text-red-900"
-                    onClick={() => handleDelete(room.room_id)}
-                  >
-                    ลบ
-                  </button>
+                  {(() => {
+                    const occupancy = roomOccupancies.get(room.room_id);
+                    // ตรวจสอบจาก occupancy หรือจาก roomTenants เป็น fallback
+                    const currentOccupants = occupancy?.current_occupants ?? 
+                      (roomTenants.get(room.room_id)?.length || 0);
+                    const hasOccupants = currentOccupants > 0;
+                    return (
+                      <button
+                        className={`mr-3 ${
+                          hasOccupants
+                            ? 'text-gray-400 cursor-not-allowed'
+                            : 'text-blue-600 hover:text-blue-900'
+                        }`}
+                        onClick={() => !hasOccupants && openEditModal(room)}
+                        disabled={hasOccupants}
+                        title={hasOccupants ? 'ไม่สามารถแก้ไขได้ เนื่องจากมีผู้เช่าพักอยู่' : ''}
+                      >
+                        แก้ไข
+                      </button>
+                    );
+                  })()}
+                  {(() => {
+                    const isDeletedValue = room.is_deleted ?? 0;
+                    const isDeleted = isDeletedValue === 1;
+                    const isActive = !isDeleted;
+                    
+                    // ตรวจสอบว่าห้องมีผู้เข้าพักหรือไม่
+                    const occupancy = roomOccupancies.get(room.room_id);
+                    const currentOccupants = occupancy?.current_occupants ?? 
+                      (roomTenants.get(room.room_id)?.length || 0);
+                    const hasOccupants = currentOccupants > 0;
+                    
+                    return (
+                      <label className={`relative inline-flex items-center ${hasOccupants ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+                        <input
+                          type="checkbox"
+                          checked={isActive}
+                          onChange={(e) => !hasOccupants && handleToggleActive(room.room_id, !e.target.checked)}
+                          disabled={hasOccupants}
+                          className="sr-only peer"
+                        />
+                        <div className={`w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600 ${hasOccupants ? 'opacity-50 cursor-not-allowed' : ''}`}></div>
+                        <span className={`ml-3 text-sm font-medium ${hasOccupants ? 'text-gray-400' : 'text-gray-700'}`}>
+                          {/* {isActive ? 'เปิด' : 'ปิด'} */}
+                          {hasOccupants && (
+                            <span className="ml-2 text-xs text-red-500" title="ไม่สามารถเปลี่ยนสถานะได้ เนื่องจากมีผู้เช่าพักอยู่">
+                              (มีผู้เข้าพัก)
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    );
+                  })()}
                 </td>
               </tr>
             ))}
             {paginatedRooms.length === 0 && (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={10}
                   className="px-6 py-4 text-center text-sm text-gray-500"
                 >
                   ไม่พบข้อมูลห้องพัก
@@ -554,10 +947,7 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="bg-white shadow rounded-lg p-4 mt-4">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="text-sm text-gray-700">
-              แสดง {startIndex + 1} - {Math.min(endIndex, filteredRooms.length)} จาก {filteredRooms.length} รายการ
-            </div>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <div className="flex items-center gap-2">
               <button
                 onClick={goToPrevious}
@@ -643,40 +1033,89 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
               <div>
                 <label className="block text-sm mb-1">หมายเลขห้อง</label>
                 <input
+                  type="text"
+                  maxLength={3}
+                  inputMode="numeric"
                   className="w-full border rounded-md px-3 py-2 text-sm"
                   value={form.room_number}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, room_number: e.target.value }))
-                  }
+                  onChange={(e) => {
+                    // อนุญาตเฉพาะตัวเลข 0-9 สูงสุด 3 หลัก
+                    const onlyDigits = e.target.value.replace(/[^0-9]/g, '').slice(0, 3);
+                    const value = onlyDigits;
+                    const floor = computeFloorFromRoomNumber(value);
+                    setForm((f) => ({
+                      ...f,
+                      room_number: value,
+                      floor_no: floor,
+                    }));
+                  }}
                 />
               </div>
 
               <div>
                 <label className="block text-sm mb-1">ชั้น</label>
                 <input
-                  type="number"
+                  type="text"
                   className="w-full border rounded-md px-3 py-2 text-sm"
                   value={form.floor_no}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, floor_no: e.target.value }))
-                  }
-                  placeholder="ไม่ระบุ"
+                  disabled
+                  placeholder="คำนวณจากหมายเลขห้อง"
                 />
               </div>
 
               <div>
-                <label className="block text-sm mb-1">สถานะ</label>
+                <label className="block text-sm mb-1">ประเภทห้อง</label>
                 <select
                   className="w-full border rounded-md px-3 py-2 text-sm"
+                  value={form.room_type_id || ''}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, room_type_id: e.target.value }))
+                  }
+                >
+                  <option value="">ไม่ระบุ</option>
+                  {roomTypes.map((rt) => (
+                    <option key={rt.room_type_id} value={rt.room_type_id}>
+                      {(rt as any).name_type || rt.name_th}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm mb-1">สถานะ</label>
+                {(() => {
+                  // ตรวจสอบว่าห้องนี้มีผู้เข้าพักหรือไม่ (เฉพาะกรณีแก้ไข)
+                  const hasOccupants = modalMode === 'edit' && form.room_id
+                    ? (() => {
+                        const occupancy = roomOccupancies.get(form.room_id!);
+                        return occupancy && occupancy.current_occupants > 0;
+                      })()
+                    : false;
+
+                  return (
+                    <>
+                <select
+                        className={`w-full border rounded-md px-3 py-2 text-sm ${
+                          hasOccupants ? 'bg-gray-100 cursor-not-allowed' : ''
+                        }`}
                   value={form.status}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, status: e.target.value }))
                   }
+                        disabled={hasOccupants}
                 >
                   <option value="available">ว่าง (available)</option>
                   <option value="occupied">มีผู้เช่า (occupied)</option>
                   <option value="maintenance">ซ่อมบำรุง (maintenance)</option>
                 </select>
+                      {hasOccupants && (
+                        <p className="text-xs text-orange-600 mt-1">
+                          ⚠️ ไม่สามารถแก้ไขสถานะได้ เนื่องจากมีผู้เช่าพักอยู่
+                        </p>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             </div>
 
@@ -752,34 +1191,93 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">สถานะ</p>
-                      <span
-                        className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                          roomDetails.room?.status === 'available'
-                            ? 'bg-green-100 text-green-800'
-                            : roomDetails.room?.status === 'occupied'
-                            ? 'bg-blue-100 text-blue-800'
-                            : 'bg-gray-100 text-gray-800'
-                        }`}
-                      >
-                        {getStatusThai(roomDetails.room?.status)}
-                      </span>
+                      {(() => {
+                        // กำหนดสถานะตามจำนวนผู้เข้าพัก
+                        let displayStatus = roomDetails.room?.status || 'available';
+                        if (roomDetails.room?.status === 'maintenance') {
+                          displayStatus = 'maintenance';
+                        } else if (roomDetails.occupancy && roomDetails.occupancy.current_occupants > 0) {
+                          displayStatus = 'occupied';
+                        } else {
+                          displayStatus = 'available';
+                        }
+                        
+                        return (
+                          <span
+                            className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                              displayStatus === 'available'
+                                ? 'bg-green-100 text-green-800'
+                                : displayStatus === 'occupied'
+                                ? 'bg-blue-100 text-blue-800'
+                                : 'bg-gray-100 text-gray-800'
+                            }`}
+                          >
+                            {getStatusThai(displayStatus)}
+                          </span>
+                        );
+                      })()}
                     </div>
+                    {roomDetails.occupancy && (
+                      <div>
+                        <p className="text-sm text-gray-600">จำนวนผู้เข้าพัก</p>
+                        <p className="font-medium">
+                          <span
+                            className={
+                              roomDetails.occupancy.current_occupants >=
+                              roomDetails.occupancy.max_occupants
+                                ? 'text-red-600'
+                                : roomDetails.occupancy.current_occupants === 0
+                                ? 'text-gray-500'
+                                : 'text-green-600'
+                            }
+                          >
+                            {roomDetails.occupancy.current_occupants} / {roomDetails.occupancy.max_occupants}
+                          </span>
+                          {roomDetails.occupancy.current_occupants >=
+                            roomDetails.occupancy.max_occupants && (
+                            <span className="ml-1">🔴</span>
+                          )}
+                          {roomDetails.occupancy.current_occupants > 0 &&
+                            roomDetails.occupancy.current_occupants <
+                              roomDetails.occupancy.max_occupants && (
+                              <span className="ml-1">🟢</span>
+                            )}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 {/* ผู้เข้าพัก */}
                 <div className="bg-gray-50 rounded-lg p-4">
-                  <h3 className="text-lg font-semibold mb-3 text-gray-800">
-                    ผู้เข้าพัก
+                  <div className="flex justify-between items-center mb-3">
+                    <h3 className="text-lg font-semibold text-gray-800">
+                      ผู้เข้าพักปัจจุบัน
                   </h3>
+                    <button
+                      onClick={() => {
+                        if (roomDetails.room?.room_id) {
+                          window.location.href = `/admin/tenants/add?room_id=${roomDetails.room.room_id}`;
+                        } else {
+                          window.location.href = '/admin/tenants/add';
+                        }
+                      }}
+                      className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
+                    >
+                      เพิ่มผู้เช่าใหม่
+                    </button>
+                  </div>
                   {roomDetails.tenants && roomDetails.tenants.length > 0 ? (
                     <div className="space-y-3">
-                      {roomDetails.tenants.map((tenant) => (
+                      {roomDetails.tenants
+                        .filter((tenant) => tenant.status === 'active')
+                        .map((tenant) => (
                         <div
                           key={tenant.tenant_id}
                           className="bg-white rounded-lg p-4 border border-gray-200"
                         >
-                          <div className="grid grid-cols-2 gap-4">
+                          <div className="flex justify-between items-start">
+                            <div className="grid grid-cols-2 gap-4 flex-1">
                             <div>
                               <p className="text-sm text-gray-600">ชื่อ-นามสกุล</p>
                               <p className="font-medium">
@@ -797,7 +1295,7 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                             <div>
                               <p className="text-sm text-gray-600">วันที่เข้าพัก</p>
                               <p className="font-medium">
-                                {formatDate(tenant.move_in_date)}
+                                  ตั้งแต่ {formatDate(tenant.move_in_date)}
                               </p>
                             </div>
                             <div>
@@ -812,14 +1310,23 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                                 {tenant.status === 'active' ? 'ใช้งาน' : tenant.status || '-'}
                               </span>
                             </div>
+                            </div>
+                            {tenant.status === 'active' && tenant.contract_id && (
+                              <button
+                                onClick={() => openMoveOutModal(tenant.contract_id!, `${tenant.first_name} ${tenant.last_name}`)}
+                                className="ml-4 text-sm text-red-600 hover:text-red-800 px-3 py-1 border border-red-300 rounded hover:bg-red-50"
+                              >
+                                ย้ายออก
+                              </button>
+                            )}
                           </div>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="text-gray-500 text-center py-4">
-                      ไม่มีผู้เข้าพักในห้องนี้
-                    </p>
+                    <div className="text-center py-4">
+                      <p className="text-gray-500">ไม่มีผู้เข้าพักในห้องนี้</p>
+                    </div>
                   )}
                 </div>
 
@@ -881,6 +1388,65 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                 onClick={closeDetailsModal}
               >
                 ปิด
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal ย้ายผู้เช่าออก */}
+      {isMoveOutModalOpen && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+            <h2 className="text-xl font-semibold mb-4">ย้ายผู้เช่าออกจากห้อง</h2>
+            
+            <div className="mb-4">
+              <p className="text-sm text-gray-600 mb-2">ผู้เช่า:</p>
+              <p className="font-medium text-lg">{selectedTenantName}</p>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                วันที่สิ้นสุดสัญญา <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="date"
+                className="w-full border rounded-md px-3 py-2 text-sm"
+                value={moveOutDate}
+                onChange={(e) => setMoveOutDate(e.target.value)}
+                max={new Date().toISOString().slice(0, 10)}
+                required
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                ระบบจะสิ้นสุดสัญญาและเก็บประวัติไว้ในระบบ
+              </p>
+            </div>
+
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+              <p className="text-sm text-yellow-800">
+                ⚠️ หมายเหตุ: การย้ายผู้เช่าออกจะสิ้นสุดสัญญาเท่านั้น ไม่ได้ลบข้อมูล<br/>
+                บิลและประวัติการพักจะยังคงอยู่ในระบบ
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={closeMoveOutModal}
+                className="px-4 py-2 rounded-md border hover:bg-gray-50"
+                disabled={isMovingOut}
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={handleMoveOut}
+                disabled={isMovingOut || !moveOutDate}
+                className={`px-4 py-2 rounded-md text-white ${
+                  isMovingOut || !moveOutDate
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-red-600 hover:bg-red-700'
+                }`}
+              >
+                {isMovingOut ? 'กำลังดำเนินการ...' : 'ยืนยันย้ายออก'}
               </button>
             </div>
           </div>

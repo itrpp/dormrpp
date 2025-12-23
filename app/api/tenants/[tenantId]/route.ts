@@ -14,12 +14,22 @@ export async function PUT(req: Request, { params }: Params) {
       last_name,
       email,
       phone,
-      room_number,
       status,
-      move_in_date,
     } = body;
 
-    // update tenant
+    // ตรวจสอบรูปแบบอีเมล (ถ้ามีการกรอก)
+    if (email && email.trim() !== '') {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        return NextResponse.json(
+          { error: 'รูปแบบอีเมลไม่ถูกต้อง กรุณากรอกอีเมลให้ถูกต้อง (เช่น example@email.com)' },
+          { status: 400 }
+        );
+      }
+    }
+
+    // อัปเดตข้อมูลผู้เช่า (เฉพาะข้อมูลส่วนตัว + สถานะ)
+    // ไม่ยุ่งกับตาราง contracts เพื่อให้ status ใน contracts คงค่าเดิม
     try {
       await query(
         `
@@ -45,59 +55,7 @@ export async function PUT(req: Request, { params }: Params) {
       }
     }
 
-    // หา room_id ใหม่
-    let room_id: number | null = null;
-    try {
-      const room = await query<{ room_id: number }>(
-        'SELECT room_id FROM rooms WHERE room_number = ? LIMIT 1',
-        [room_number]
-      );
-      room_id = room.length ? room[0].room_id : null;
-    } catch (error: any) {
-      // ถ้าไม่มี rooms table ให้ข้าม
-      if (error.message?.includes("doesn't exist") || error.message?.includes("Unknown table")) {
-        console.warn('Rooms table does not exist, skipping room update');
-      } else {
-        throw error;
-      }
-    }
-
-    // ปิดสัญญาเดิม
-    try {
-      await query(
-        `UPDATE contracts SET status = 'inactive' WHERE tenant_id = ? AND status = 'active'`,
-        [tenantId]
-      );
-    } catch (error: any) {
-      // ถ้าไม่มี contracts table ให้ข้าม
-      if (error.message?.includes("doesn't exist") || error.message?.includes("Unknown table")) {
-        console.warn('Contracts table does not exist, skipping contract update');
-      } else {
-        throw error;
-      }
-    }
-
-    // ถ้ายัง active ให้สร้าง/อัปเดตสัญญาใหม่
-    if (status === 'active' && room_id) {
-      try {
-        await query(
-          `
-          INSERT INTO contracts (tenant_id, room_id, start_date, status)
-          VALUES (?, ?, ?, 'active')
-        `,
-          [tenantId, room_id, move_in_date || new Date().toISOString().slice(0, 10)]
-        );
-      } catch (error: any) {
-        // ถ้าไม่มี contracts table ให้ข้าม
-        if (error.message?.includes("doesn't exist") || error.message?.includes("Unknown table")) {
-          console.warn('Contracts table does not exist, skipping contract creation');
-        } else {
-          throw error;
-        }
-      }
-    }
-
-    // ดึง row เต็ม
+    // ดึง row เต็ม (ใช้ status จาก tenants table; contracts.status ไม่ถูกเปลี่ยน)
     let rows: AdminTenantRow[];
     try {
       rows = await query<AdminTenantRow>(
@@ -108,7 +66,7 @@ export async function PUT(req: Request, { params }: Params) {
           t.last_name_th AS last_name,
           t.email,
           t.phone,
-          COALESCE(c.status, 'inactive') AS status,
+          COALESCE(t.status, 'inactive') AS status,
           c.start_date AS move_in_date,
           r.room_number,
           r.floor_no,
@@ -135,7 +93,7 @@ export async function PUT(req: Request, { params }: Params) {
             t.last_name AS last_name,
             t.email,
             t.phone,
-            COALESCE(c.status, 'inactive') AS status,
+            COALESCE(t.status, 'inactive') AS status,
             c.start_date AS move_in_date,
             r.room_number,
             r.floor_no,

@@ -2,6 +2,9 @@
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/auth/session';
 
+// บังคับให้ route นี้เป็น dynamic เพราะมีการใช้ cookies ภายใน getSession
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     const session = await getSession();

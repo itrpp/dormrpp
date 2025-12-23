@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { getMonthNameThai } from '@/lib/date-utils';
 
 interface Room {
   room_id: number;
@@ -453,14 +454,14 @@ export default function UtilityReadingsClient() {
               >
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
                   <option key={m} value={m}>
-                    {m}
+                    {getMonthNameThai(m)}
                   </option>
                 ))}
               </select>
             </div>
             <div className="flex items-end">
               {isLoadingCycle && <span className="text-sm text-gray-500">กำลังโหลด...</span>}
-              {cycleId && <span className="text-sm text-green-600">รอบบิล: {year}/{month}</span>}
+              {cycleId && <span className="text-sm text-green-600">รอบบิล: {getMonthNameThai(month)} {year}</span>}
             </div>
           </div>
         </div>

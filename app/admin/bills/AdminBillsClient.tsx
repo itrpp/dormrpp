@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { getMonthNameThai } from '@/lib/date-utils';
 
 // ค่าบำรุงรักษาคงที่
 const MAINTENANCE_FEE = 1000;
@@ -344,7 +345,7 @@ export default function AdminBillsClient() {
 
   // ออกบิลทั้งเดือน
   const handleRunBilling = async () => {
-    if (!confirm(`ยืนยันการออกบิลทั้งเดือนสำหรับ ${month}/${year}?`)) {
+    if (!confirm(`ยืนยันการออกบิลทั้งเดือนสำหรับ ${getMonthNameThai(month)} ${year}?`)) {
       return;
     }
 
@@ -518,15 +519,17 @@ const formatInteger = (num: number | null | undefined): string => {
             value={year}
             onChange={(e) => setYear(Number(e.target.value))}
           />
-          <input
-            type="number"
-            placeholder="เดือน"
-            min="1"
-            max="12"
+          <select
             className="border rounded px-3 py-2"
             value={month}
             onChange={(e) => setMonth(Number(e.target.value))}
-          />
+          >
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+              <option key={m} value={m}>
+                {getMonthNameThai(m)}
+              </option>
+            ))}
+          </select>
           <button
             onClick={fetchBills}
             className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
@@ -553,7 +556,7 @@ const formatInteger = (num: number | null | undefined): string => {
         <div className="text-center py-8 text-gray-500">กำลังโหลดข้อมูล...</div>
       ) : bills.length === 0 ? (
         <div className="bg-white shadow rounded-lg p-8 text-center">
-          <p className="text-gray-500">ไม่พบข้อมูลบิลสำหรับเดือน {month}/{year}</p>
+          <p className="text-gray-500">ไม่พบข้อมูลบิลสำหรับ {getMonthNameThai(month)} {year}</p>
           <p className="text-sm text-gray-400 mt-2">
             กรุณาตรวจสอบปีและเดือนที่เลือก หรือสร้างบิลใหม่
           </p>
@@ -813,7 +816,7 @@ const formatInteger = (num: number | null | undefined): string => {
                 >
                   {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
                     <option key={m} value={m}>
-                      {m}
+                      {getMonthNameThai(m)}
                     </option>
                   ))}
                 </select>

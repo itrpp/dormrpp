@@ -2,6 +2,9 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 
+// บังคับให้ route นี้เป็น dynamic เพราะมีการใช้ request.url
+export const dynamic = 'force-dynamic';
+
 // GET /api/bills/detailed?year=2568&month=10
 export async function GET(req: Request) {
   try {
@@ -213,7 +216,23 @@ export async function GET(req: Request) {
 
     // แปลงเป็น array และจัดเรียงตามเลขห้อง
     const result = Object.values(groupedBills).sort((a: any, b: any) => {
-      return a.room_number.localeCompare(b.room_number, 'th', { numeric: true });
+      const roomA = String(a.room_number || '').trim();
+      const roomB = String(b.room_number || '').trim();
+      
+      // ถ้า room_number เป็นตัวเลข ให้แปลงเป็นตัวเลขเพื่อเรียงลำดับ
+      const numA = /^\d+$/.test(roomA) ? parseInt(roomA, 10) : 999999;
+      const numB = /^\d+$/.test(roomB) ? parseInt(roomB, 10) : 999999;
+      
+      if (numA !== 999999 && numB !== 999999) {
+        return numA - numB;
+      }
+      
+      // ถ้าไม่ใช่ตัวเลขทั้งหมด หรือเป็น null/undefined ให้ใช้ localeCompare
+      if (!roomA || !roomB) {
+        return roomA.localeCompare(roomB);
+      }
+      
+      return roomA.localeCompare(roomB, 'th', { numeric: true });
     });
 
     // Log สำหรับ debugging
