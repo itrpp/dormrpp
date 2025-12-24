@@ -54,8 +54,18 @@ export default function UtilityReadingsClient() {
   const targetRoomIdParam = searchParams.get('room_id');
   const targetRoomId = targetRoomIdParam ? Number(targetRoomIdParam) : null;
   const hasAutoFocused = useRef(false);
-  const [year, setYear] = useState(now.getFullYear() + 543);
-  const [month, setMonth] = useState(now.getMonth() + 1);
+  
+  // แปลง พ.ศ. เป็น ค.ศ. สำหรับ month picker
+  const beYear = now.getFullYear() + 543;
+  const beMonth = now.getMonth() + 1;
+  const adYear = now.getFullYear();
+  const adMonth = String(now.getMonth() + 1).padStart(2, '0');
+  const initialMonthValue = `${adYear}-${adMonth}`;
+  const maxMonthValue = `${adYear}-${adMonth}`; // จำกัดไม่ให้เลือกเกินเดือนปัจจุบัน
+  
+  const [monthValue, setMonthValue] = useState(initialMonthValue); // Format: "YYYY-MM" (ค.ศ.)
+  const [year, setYear] = useState(beYear); // พ.ศ.
+  const [month, setMonth] = useState(beMonth); // เดือน (1-12)
   const [cycleId, setCycleId] = useState<number | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [isLoadingRooms, setIsLoadingRooms] = useState(false);
@@ -63,7 +73,18 @@ export default function UtilityReadingsClient() {
   const [roomForms, setRoomForms] = useState<Map<number, RoomReadingForm>>(new Map());
   const [isSaving, setIsSaving] = useState(false);
   const [savedReadings, setSavedReadings] = useState<UtilityReading[]>([]);
-  const [filterBuilding, setFilterBuilding] = useState<string>('all');
+
+  // แปลง month value (ค.ศ.) เป็น year และ month (พ.ศ.)
+  useEffect(() => {
+    if (monthValue) {
+      const [adYearStr, monthStr] = monthValue.split('-');
+      const adYear = Number(adYearStr);
+      const monthNum = Number(monthStr);
+      const beYear = adYear + 543;
+      setYear(beYear);
+      setMonth(monthNum);
+    }
+  }, [monthValue]);
 
   // ดึงหรือสร้าง billing cycle
   useEffect(() => {
@@ -81,7 +102,9 @@ export default function UtilityReadingsClient() {
         setIsLoadingCycle(false);
       }
     };
-    fetchCycle();
+    if (year && month) {
+      fetchCycle();
+    }
   }, [year, month]);
 
   // ดึงข้อมูลห้องที่มี active contracts
@@ -108,9 +131,13 @@ export default function UtilityReadingsClient() {
 
           // สร้าง form สำหรับแต่ละห้อง
           const forms = new Map<number, RoomReadingForm>();
+          
+          // ดึงข้อมูลเลขเก่าทั้งหมดในครั้งเดียว (batch query)
+          const roomIds = filteredRooms.map(r => r.room_id);
+          const allPreviousReadings = await fetchPreviousReadingsBatch(roomIds, cycleId);
+          
           for (const room of filteredRooms) {
-            // ดึงเลขมิเตอร์ล่าสุด (จากรอบก่อนหน้า)
-            const previousReadings = await fetchPreviousReadings(room.room_id);
+            const previousReadings = allPreviousReadings[room.room_id] || { electric: null, water: null };
             forms.set(room.room_id, {
               room_id: room.room_id,
               electric: {
@@ -199,10 +226,15 @@ export default function UtilityReadingsClient() {
     return () => clearTimeout(timer);
   }, [rooms.length, targetRoomId]);
 
-  // ดึงเลขมิเตอร์ล่าสุดจากรอบก่อนหน้า
-  const fetchPreviousReadings = async (roomId: number): Promise<{ electric: number | null; water: number | null }> => {
+  // ดึงเลขมิเตอร์ล่าสุดจากรอบก่อนหน้ารอบบิลปัจจุบัน (สำหรับห้องเดียว - backward compatible)
+  const fetchPreviousReadings = async (roomId: number, currentCycleId: number | null): Promise<{ electric: number | null; water: number | null }> => {
     try {
-      const res = await fetch(`/api/utility-readings/latest?room_id=${roomId}`);
+      // ส่ง cycle_id ไปด้วยเพื่อดึงข้อมูลจากรอบบิลก่อนหน้า
+      const url = currentCycleId 
+        ? `/api/utility-readings/latest?room_id=${roomId}&cycle_id=${currentCycleId}`
+        : `/api/utility-readings/latest?room_id=${roomId}`;
+      
+      const res = await fetch(url);
       if (!res.ok) {
         return { electric: null, water: null };
       }
@@ -212,8 +244,34 @@ export default function UtilityReadingsClient() {
         water: data.water || null,
       };
     } catch (error) {
-      console.error('Error fetching previous readings:', error);
+      // Silent fallback - ไม่ log เพื่อลด log noise
       return { electric: null, water: null };
+    }
+  };
+
+  // ดึงเลขมิเตอร์ล่าสุดจากรอบก่อนหน้ารอบบิลปัจจุบัน (สำหรับหลายห้อง - batch query)
+  const fetchPreviousReadingsBatch = async (roomIds: number[], currentCycleId: number | null): Promise<{ [roomId: number]: { electric: number | null; water: number | null } }> => {
+    try {
+      if (roomIds.length === 0) {
+        return {};
+      }
+
+      // ส่ง room_ids หลายตัวพร้อมกัน
+      const roomIdsParam = roomIds.join(',');
+      const url = currentCycleId 
+        ? `/api/utility-readings/latest?room_ids=${roomIdsParam}&cycle_id=${currentCycleId}`
+        : `/api/utility-readings/latest?room_ids=${roomIdsParam}`;
+      
+      const res = await fetch(url);
+      if (!res.ok) {
+        // Return empty object ถ้า error
+        return {};
+      }
+      const data = await res.json();
+      return data || {};
+    } catch (error) {
+      // Silent fallback - ไม่ log เพื่อลด log noise
+      return {};
     }
   };
 
@@ -408,21 +466,6 @@ export default function UtilityReadingsClient() {
     }
   };
 
-  // กรองห้องตามอาคาร
-  const filteredRooms = useMemo(() => {
-    if (filterBuilding === 'all') return rooms;
-    return rooms.filter(room => String(room.building_id) === filterBuilding);
-  }, [rooms, filterBuilding]);
-
-  // สร้างรายการอาคาร
-  const buildingOptions = useMemo(() => {
-    const buildings = new Map<number, string>();
-    rooms.forEach(room => {
-      buildings.set(room.building_id, room.building_name);
-    });
-    return Array.from(buildings.entries());
-  }, [rooms]);
-
   // ตรวจสอบว่าห้องนี้บันทึกแล้วหรือยัง
   const isRoomSaved = (roomId: number): boolean => {
     return savedReadings.some(r => r.room_id === roomId);
@@ -435,52 +478,44 @@ export default function UtilityReadingsClient() {
         
         {/* เลือกรอบบิล */}
         <div className="bg-white shadow rounded-lg p-4 mb-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1">ปี (พ.ศ.)</label>
+              <label className="block text-sm font-medium mb-2 text-gray-700">
+                📅 เลือกรอบบิล (เดือน/ปี)
+              </label>
               <input
-                type="number"
-                className="w-full border rounded-md px-3 py-2"
-                value={year}
-                onChange={(e) => setYear(Number(e.target.value))}
+                type="month"
+                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-base focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                value={monthValue}
+                onChange={(e) => setMonthValue(e.target.value)}
+                max={maxMonthValue}
               />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1">เดือน</label>
-              <select
-                className="w-full border rounded-md px-3 py-2"
-                value={month}
-                onChange={(e) => setMonth(Number(e.target.value))}
-              >
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
-                  <option key={m} value={m}>
-                    {getMonthNameThai(m)}
-                  </option>
-                ))}
-              </select>
+              <p className="mt-2 text-xs text-gray-500">
+                รอบบิล: {getMonthNameThai(month)} {year} (พ.ศ.)
+              </p>
             </div>
             <div className="flex items-end">
-              {isLoadingCycle && <span className="text-sm text-gray-500">กำลังโหลด...</span>}
-              {cycleId && <span className="text-sm text-green-600">รอบบิล: {getMonthNameThai(month)} {year}</span>}
+              <div className="w-full">
+                {isLoadingCycle && (
+                  <div className="flex items-center gap-2 text-sm text-gray-500">
+                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    กำลังโหลดรอบบิล...
+                  </div>
+                )}
+                {cycleId && !isLoadingCycle && (
+                  <div className="flex items-center gap-2 text-sm text-green-600 font-medium">
+                    <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    พร้อมบันทึก: {getMonthNameThai(month)} {year}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-
-        {/* กรองอาคาร */}
-        <div className="bg-white shadow rounded-lg p-4 mb-4">
-          <label className="block text-sm font-medium mb-1">กรองตามอาคาร</label>
-          <select
-            className="w-full border rounded-md px-3 py-2"
-            value={filterBuilding}
-            onChange={(e) => setFilterBuilding(e.target.value)}
-          >
-            <option value="all">ทุกอาคาร</option>
-            {buildingOptions.map(([id, name]) => (
-              <option key={id} value={id}>
-                {name}
-              </option>
-            ))}
-          </select>
         </div>
 
         {/* ปุ่มบันทึกทั้งหมด */}
@@ -502,30 +537,32 @@ export default function UtilityReadingsClient() {
         <div className="bg-white shadow rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+              <thead className="bg-gray-50 border-b-2 border-gray-300">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">ห้อง</th>
-                  <th colSpan={3} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-4 py-3 text-left text-base font-semibold text-gray-700 uppercase border border-gray-300">ห้อง</th>
+                  <th colSpan={4} className="px-4 py-3 text-center text-base font-semibold text-gray-700 uppercase border border-gray-300">
                     ไฟฟ้า
                   </th>
-                  <th colSpan={3} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                  <th colSpan={4} className="px-4 py-3 text-center text-base font-semibold text-gray-700 uppercase border-l-2 border-r border-t border-b border-gray-300">
                     น้ำ
                   </th>
-                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">การจัดการ</th>
+                  <th className="px-4 py-3 text-center text-base font-semibold text-gray-700 uppercase border border-gray-300">การจัดการ</th>
                 </tr>
                 <tr>
-                  <th></th>
-                  <th className="px-4 py-2 text-xs text-gray-500">เลขเก่า</th>
-                  <th className="px-4 py-2 text-xs text-gray-500">เริ่มต้น</th>
-                  <th className="px-4 py-2 text-xs text-gray-500">สิ้นสุด</th>
-                  <th className="px-4 py-2 text-xs text-gray-500">เลขเก่า</th>
-                  <th className="px-4 py-2 text-xs text-gray-500">เริ่มต้น</th>
-                  <th className="px-4 py-2 text-xs text-gray-500">สิ้นสุด</th>
-                  <th></th>
+                  <th className="border border-gray-300"></th>
+                  <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">เลขเก่า</th>
+                  <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">เริ่มต้น</th>
+                  <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">สิ้นสุด</th>
+                  <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">เลขปัจจุบัน</th>
+                  <th className="px-4 py-2 text-base font-medium text-gray-600 border-l-2 border-r border-t border-b border-gray-300">เลขเก่า</th>
+                  <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">เริ่มต้น</th>
+                  <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">สิ้นสุด</th>
+                  <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">เลขปัจจุบัน</th>
+                  <th className="border border-gray-300"></th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredRooms.map((room) => {
+                {rooms.map((room) => {
                   const form = roomForms.get(room.room_id);
                   const isSaved = isRoomSaved(room.room_id);
                   
@@ -539,22 +576,40 @@ export default function UtilityReadingsClient() {
                     ? Number(form.water.meter_end) - Number(form.water.meter_start)
                     : null;
 
+                  // ดึงเลขมิเตอร์ปัจจุบันของรอบบิลนี้ (meter_start และ meter_end ที่บันทึกแล้ว)
+                  const currentElectricReading = savedReadings.find(
+                    r => r.room_id === room.room_id && r.utility_code === 'electric'
+                  );
+                  const currentWaterReading = savedReadings.find(
+                    r => r.room_id === room.room_id && r.utility_code === 'water'
+                  );
+                  
+                  // แสดงเป็นรูปแบบ "เริ่มต้น-สิ้นสุด"
+                  const currentElectricMeter = currentElectricReading 
+                    ? `${currentElectricReading.meter_start}-${currentElectricReading.meter_end}`
+                    : null;
+                  const currentWaterMeter = currentWaterReading
+                    ? `${currentWaterReading.meter_start}-${currentWaterReading.meter_end}`
+                    : null;
+
                   return (
                     <tr
                       key={room.room_id}
                       id={`room-row-${room.room_id}`}
                       className={isSaved ? 'bg-green-50' : ''}
                     >
-                      <td className="px-4 py-3 whitespace-nowrap text-sm font-medium">
+                      <td className="px-4 py-3 whitespace-nowrap text-sm font-medium border border-gray-300">
                         {room.building_name} - ห้อง {room.room_number}
                         {room.floor_no ? ` (ชั้น ${room.floor_no})` : ''}
                         {isSaved && <span className="ml-2 text-green-600">✓</span>}
                       </td>
                       {/* ไฟฟ้า */}
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500 text-center">
-                        {form.electric.previous_end !== null ? form.electric.previous_end : '-'}
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-center bg-yellow-50 border border-gray-300">
+                        <span className="font-medium text-yellow-700">
+                          {form.electric.previous_end !== null ? form.electric.previous_end : '-'}
+                        </span>
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      <td className="px-4 py-3 whitespace-nowrap border border-gray-300">
                         <input
                           id={`room-electric-start-${room.room_id}`}
                           type="number"
@@ -564,7 +619,7 @@ export default function UtilityReadingsClient() {
                           placeholder={form.electric.previous_end !== null ? String(form.electric.previous_end) : ''}
                         />
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      <td className="px-4 py-3 whitespace-nowrap border border-gray-300">
                         <input
                           type="number"
                           className="w-24 border rounded px-2 py-1 text-sm"
@@ -575,11 +630,18 @@ export default function UtilityReadingsClient() {
                           <span className="ml-2 text-xs text-gray-500">({electricUsage} หน่วย)</span>
                         )}
                       </td>
-                      {/* น้ำ */}
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500 text-center">
-                        {form.water.previous_end !== null ? form.water.previous_end : '-'}
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-center border border-gray-300">
+                        <span className={`font-medium ${currentElectricMeter !== null ? 'text-green-600' : 'text-gray-400'}`}>
+                          {currentElectricMeter !== null ? currentElectricMeter : '-'}
+                        </span>
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      {/* น้ำ */}
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-center bg-blue-50 border-l-2 border-r border-t border-b border-gray-300">
+                        <span className="font-medium text-blue-700">
+                          {form.water.previous_end !== null ? form.water.previous_end : '-'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap border-l-2 border-r border-t border-b border-gray-300">
                         <input
                           id={`room-water-start-${room.room_id}`}
                           type="number"
@@ -589,7 +651,7 @@ export default function UtilityReadingsClient() {
                           placeholder={form.water.previous_end !== null ? String(form.water.previous_end) : ''}
                         />
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      <td className="px-4 py-3 whitespace-nowrap border-l-2 border-r border-t border-b border-gray-300">
                         <input
                           type="number"
                           className="w-24 border rounded px-2 py-1 text-sm"
@@ -600,8 +662,13 @@ export default function UtilityReadingsClient() {
                           <span className="ml-2 text-xs text-gray-500">({waterUsage} หน่วย)</span>
                         )}
                       </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-center border-l-2 border-r border-t border-b border-gray-300">
+                        <span className={`font-medium ${currentWaterMeter !== null ? 'text-green-600' : 'text-gray-400'}`}>
+                          {currentWaterMeter !== null ? currentWaterMeter : '-'}
+                        </span>
+                      </td>
                       {/* ปุ่มบันทึก */}
-                      <td className="px-4 py-3 whitespace-nowrap text-center">
+                      <td className="px-4 py-3 whitespace-nowrap text-center border border-gray-300">
                         <button
                           onClick={() => saveRoomReading(room.room_id)}
                           className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700"

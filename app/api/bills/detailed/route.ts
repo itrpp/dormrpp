@@ -120,8 +120,6 @@ export async function GET(req: Request) {
     // จัดกลุ่มข้อมูลตามห้องและผู้เช่า
     const groupedBills: Record<string, any> = {};
 
-    console.log(`[Bills Detailed] Processing ${bills.length} bill records`);
-
     bills.forEach((bill: any) => {
       // ตรวจสอบว่ามี bill_id และ tenant_id
       if (!bill.bill_id || !bill.tenant_id) {
@@ -212,8 +210,6 @@ export async function GET(req: Request) {
       }
     });
 
-    console.log(`[Bills Detailed] Grouped into ${Object.keys(groupedBills).length} unique bills`);
-
     // แปลงเป็น array และจัดเรียงตามเลขห้อง
     const result = Object.values(groupedBills).sort((a: any, b: any) => {
       const roomA = String(a.room_number || '').trim();
@@ -234,12 +230,6 @@ export async function GET(req: Request) {
       
       return roomA.localeCompare(roomB, 'th', { numeric: true });
     });
-
-    // Log สำหรับ debugging
-    console.log(`[Bills Detailed] Found ${result.length} bills for ${year}/${month}`);
-    if (result.length > 0) {
-      console.log('[Bills Detailed] Sample bill:', JSON.stringify(result[0], null, 2));
-    }
 
     return NextResponse.json(result);
   } catch (error: any) {

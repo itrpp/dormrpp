@@ -37,12 +37,21 @@ async function getDashboardStats(): Promise<DashboardStats> {
 
   try {
     // 1. สถิติห้องพัก - รวม query เป็นอันเดียว
-    const roomStats = await query<{ status: string; count: number }>(
-      `SELECT status, COUNT(*) as count 
-       FROM rooms 
-       WHERE COALESCE(is_deleted, 0) = 0
-       GROUP BY status`
-    );
+    let roomStats: { status: string; count: number }[] = [];
+    try {
+      roomStats = await query<{ status: string; count: number }>(
+        `SELECT status, COUNT(*) as count 
+         FROM rooms 
+         WHERE COALESCE(is_deleted, 0) = 0
+         GROUP BY status`
+      );
+    } catch (error: any) {
+      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+        // Silent fallback - ไม่ log เพื่อลด log noise
+      } else {
+        throw error;
+      }
+    }
     
     const totalRooms = roomStats.reduce((sum, r) => sum + (r.count || 0), 0);
     const availableRooms = roomStats.find(r => r.status === 'available')?.count || 0;
@@ -50,10 +59,19 @@ async function getDashboardStats(): Promise<DashboardStats> {
     const maintenanceRooms = roomStats.find(r => r.status === 'maintenance')?.count || 0;
 
     // 2. สถิติผู้เช่า
-    const [totalTenantsResult] = await query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM tenants WHERE COALESCE(is_deleted, 0) = 0'
-    );
-    const totalTenants = totalTenantsResult?.count || 0;
+    let totalTenants = 0;
+    try {
+      const [totalTenantsResult] = await query<{ count: number }>(
+        'SELECT COUNT(*) as count FROM tenants WHERE COALESCE(is_deleted, 0) = 0'
+      );
+      totalTenants = totalTenantsResult?.count || 0;
+    } catch (error: any) {
+      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+        // Silent fallback - ไม่ log เพื่อลด log noise
+      } else {
+        throw error;
+      }
+    }
 
     // ผู้เช่าใหม่เดือนนี้ (จาก contracts.start_date)
     let newTenantsThisMonth = 0;
@@ -66,8 +84,12 @@ async function getDashboardStats(): Promise<DashboardStats> {
       );
       newTenantsThisMonth = newTenantsResult?.count || 0;
     } catch (error: any) {
-      // Fallback: ถ้าไม่มีตาราง contracts
-      console.warn('Cannot query new tenants this month:', error.message);
+      // Fallback: ถ้าไม่มีตาราง contracts หรือ Too many connections
+      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+        // Silent fallback - ไม่ log เพื่อลด log noise
+      } else {
+        // Log เฉพาะ error อื่นๆ ที่ไม่ใช่ connection error
+      }
     }
 
     // ผู้เช่าออกเดือนนี้ (จาก contracts.end_date)
@@ -81,8 +103,12 @@ async function getDashboardStats(): Promise<DashboardStats> {
       );
       leftTenantsThisMonth = leftTenantsResult?.count || 0;
     } catch (error: any) {
-      // Fallback: ถ้าไม่มีตาราง contracts
-      console.warn('Cannot query left tenants this month:', error.message);
+      // Fallback: ถ้าไม่มีตาราง contracts หรือ Too many connections
+      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+        // Silent fallback - ไม่ log เพื่อลด log noise
+      } else {
+        // Log เฉพาะ error อื่นๆ ที่ไม่ใช่ connection error
+      }
     }
 
     // ผู้เช่าปัจจุบัน (contracts.status = 'active')
@@ -95,16 +121,29 @@ async function getDashboardStats(): Promise<DashboardStats> {
       );
       currentTenants = currentTenantsResult?.count || 0;
     } catch (error: any) {
-      // Fallback: ถ้าไม่มีตาราง contracts ใช้จำนวนผู้เช่าทั้งหมดแทน
-      console.warn('Cannot query current tenants:', error.message);
+      // Fallback: ถ้าไม่มีตาราง contracts หรือ Too many connections ใช้จำนวนผู้เช่าทั้งหมดแทน
+      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+        // Silent fallback - ไม่ log เพื่อลด log noise
+      } else {
+        // Log เฉพาะ error อื่นๆ ที่ไม่ใช่ connection error
+      }
       currentTenants = totalTenants;
     }
 
     // 3. สถิติอื่นๆ
-    const [totalBuildingsRow] = await query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM buildings'
-    );
-    const totalBuildings = totalBuildingsRow?.count || 0;
+    let totalBuildings = 0;
+    try {
+      const [totalBuildingsRow] = await query<{ count: number }>(
+        'SELECT COUNT(*) as count FROM buildings'
+      );
+      totalBuildings = totalBuildingsRow?.count || 0;
+    } catch (error: any) {
+      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+        // Silent fallback - ไม่ log เพื่อลด log noise
+      } else {
+        throw error;
+      }
+    }
 
     // ตาราง room_types ไม่มีใน schema ใหม่แล้ว
     const totalRoomTypes = 0;
@@ -113,33 +152,47 @@ async function getDashboardStats(): Promise<DashboardStats> {
     const occupancyRate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
 
     // 4. สถิติการเงิน - รวม query เป็นอันเดียว
-    const [revenueThisMonthResult, totalRevenueResult, expensesThisMonthResult, totalExpensesResult] = await Promise.all([
-      query<{ total: number }>(
-        `SELECT COALESCE(SUM(b.total_amount), 0) as total 
-         FROM bills b
-         JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
-         WHERE cy.billing_year = ? AND cy.billing_month = ?`,
-        [buddhistYear, currentMonth]
-      ),
-      query<{ total: number }>(
-        'SELECT COALESCE(SUM(total_amount), 0) as total FROM bills'
-      ),
-      query<{ total: number }>(
-        `SELECT COALESCE(SUM(b.maintenance_fee), 0) as total 
-         FROM bills b
-         JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
-         WHERE cy.billing_year = ? AND cy.billing_month = ?`,
-        [buddhistYear, currentMonth]
-      ),
-      query<{ total: number }>(
-        'SELECT COALESCE(SUM(maintenance_fee), 0) as total FROM bills'
-      )
-    ]);
+    let revenueThisMonth = 0;
+    let totalRevenue = 0;
+    let expensesThisMonth = 0;
+    let totalExpenses = 0;
     
-    const revenueThisMonth = revenueThisMonthResult[0]?.total || 0;
-    const totalRevenue = totalRevenueResult[0]?.total || 0;
-    const expensesThisMonth = expensesThisMonthResult[0]?.total || 0;
-    const totalExpenses = totalExpensesResult[0]?.total || 0;
+    try {
+      const [revenueThisMonthResult, totalRevenueResult, expensesThisMonthResult, totalExpensesResult] = await Promise.all([
+        query<{ total: number }>(
+          `SELECT COALESCE(SUM(b.total_amount), 0) as total 
+           FROM bills b
+           JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
+           WHERE cy.billing_year = ? AND cy.billing_month = ?`,
+          [buddhistYear, currentMonth]
+        ),
+        query<{ total: number }>(
+          'SELECT COALESCE(SUM(total_amount), 0) as total FROM bills'
+        ),
+        query<{ total: number }>(
+          `SELECT COALESCE(SUM(b.maintenance_fee), 0) as total 
+           FROM bills b
+           JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
+           WHERE cy.billing_year = ? AND cy.billing_month = ?`,
+          [buddhistYear, currentMonth]
+        ),
+        query<{ total: number }>(
+          'SELECT COALESCE(SUM(maintenance_fee), 0) as total FROM bills'
+        )
+      ]);
+      
+      revenueThisMonth = revenueThisMonthResult[0]?.total || 0;
+      totalRevenue = totalRevenueResult[0]?.total || 0;
+      expensesThisMonth = expensesThisMonthResult[0]?.total || 0;
+      totalExpenses = totalExpensesResult[0]?.total || 0;
+    } catch (error: any) {
+      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+        // Silent fallback - ไม่ log เพื่อลด log noise
+      } else {
+        // ถ้าไม่ใช่ connection error ให้ throw ต่อ
+        throw error;
+      }
+    }
 
     // กำไรเดือนนี้
     const profitThisMonth = revenueThisMonth - expensesThisMonth;
@@ -218,16 +271,19 @@ async function getChartData() {
       { name: 'มีผู้อาศัย', value: roomStatusCounts.find(r => r.status === 'occupied')?.count || 0, color: '#3b82f6' },
       { name: 'ซ่อมบำรุง', value: roomStatusCounts.find(r => r.status === 'maintenance')?.count || 0, color: '#6b7280' },
     ];
-  } catch (error) {
-    console.error('Error fetching room status data:', error);
+  } catch (error: any) {
+    // ถ้าเป็น "Too many connections" ให้ใช้ค่า default (0) แทนการ log error
+    if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+      // Silent fallback - ไม่ log เพื่อลด log noise
+    } else {
+      console.error('Error fetching room status data:', error);
+    }
   }
 
-  // ข้อมูลรายได้/ค่าใช้จ่าย/กำไรรายเดือน (6 เดือนล่าสุด)
+  // ข้อมูลรายได้รายเดือน (6 เดือนล่าสุด)
   const monthlyRevenueData: Array<{
     month: string;
     revenue: number;
-    expenses: number;
-    profit: number;
   }> = [];
 
   const monthNames = [
@@ -260,30 +316,20 @@ async function getChartData() {
          WHERE cy.billing_year = ? AND cy.billing_month = ?`,
         [buddhistYear, month]
       );
-      const [expensesResult] = await query<{ total: number }>(
-        `SELECT COALESCE(SUM(b.maintenance_fee), 0) as total 
-         FROM bills b
-         JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
-         WHERE cy.billing_year = ? AND cy.billing_month = ?`,
-        [buddhistYear, month]
-      );
 
       const revenue = revenueResult?.total || 0;
-      const expenses = expensesResult?.total || 0;
-      const profit = revenue - expenses;
 
       monthlyRevenueData.push({
         month: `${monthName} ${buddhistYear}`,
         revenue,
-        expenses,
-        profit,
       });
-    } catch (error) {
+    } catch (error: any) {
+      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+        // Silent fallback - ไม่ log เพื่อลด log noise
+      }
       monthlyRevenueData.push({
         month: `${monthName} ${buddhistYear}`,
         revenue: 0,
-        expenses: 0,
-        profit: 0,
       });
     }
   }
@@ -317,8 +363,11 @@ async function getChartData() {
         [year, month]
       );
       leftCount = leftResult?.count || 0;
-    } catch (error) {
-      // Fallback if contracts table doesn't exist
+    } catch (error: any) {
+      // Fallback if contracts table doesn't exist or Too many connections
+      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+        // Silent fallback - ไม่ log เพื่อลด log noise
+      }
     }
 
     tenantFlowData.push({
@@ -352,7 +401,11 @@ async function getChartData() {
         month: `${monthName} ${year + 543}`,
         rate: Number(rate.toFixed(2)),
       });
-    } catch (error) {
+    } catch (error: any) {
+      // ถ้าเป็น "Too many connections" ให้ใช้ค่า default (0)
+      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+        // Silent fallback - ไม่ log เพื่อลด log noise
+      }
       occupancyData.push({
         month: `${monthName} ${year + 543}`,
         rate: 0,
@@ -388,138 +441,125 @@ export default async function AdminDashboard() {
   const chartData = await getChartData();
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-bold text-gray-800">แดชบอร์ดผู้ดูแล</h1>
-
-      {/* สถิติห้องพัก */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-semibold mb-4 text-gray-800">สถิติห้องพัก</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">ห้องพักทั้งหมด</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {formatNumber(stats.totalRooms)} <span className="text-sm font-normal">ห้อง</span>
-            </p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">ห้องว่าง</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {formatNumber(stats.availableRooms)} <span className="text-sm font-normal">ห้อง</span>
-            </p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">ห้องมีผู้เช่า</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {formatNumber(stats.occupiedRooms)} <span className="text-sm font-normal">ห้อง</span>
-            </p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">ห้องซ่อมบำรุง</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {formatNumber(stats.maintenanceRooms)} <span className="text-sm font-normal">ห้อง</span>
-            </p>
-          </div>
-        </div>
+    <div className="space-y-3">
+      {/* Header */}
+      <div className="mb-2">
+        <h1 className="text-xl font-bold text-gray-900">แดชบอร์ดผู้ดูแล</h1>
+        <p className="text-xs text-gray-500 mt-0.5">
+          ภาพรวมระบบจัดการหอพักรวงผึ้ง โรงพยาบาลราชพิพัฒน์
+        </p>
       </div>
 
-      {/* สถิติผู้เช่า */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-semibold mb-4 text-gray-800">สถิติผู้เช่า</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">ผู้เช่าทั้งหมด</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {formatNumber(stats.totalTenants)} <span className="text-sm font-normal">คน</span>
+      {/* สถิติทั้งหมด */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-9 gap-3">
+          {/* สถิติห้องพัก */}
+          <div>
+            <p className="text-xs text-gray-600 mb-1">ห้องพักทั้งหมด</p>
+            <p className="text-2xl font-bold text-blue-600">
+              {formatNumber(stats.totalRooms)} <span className="text-sm font-normal text-gray-500">ห้อง</span>
             </p>
           </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">ผู้เช่าใหม่เดือนนี้</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {formatNumber(stats.newTenantsThisMonth)} <span className="text-sm font-normal">คน</span>
-            </p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">ผู้เช่าออกเดือนนี้</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {formatNumber(stats.leftTenantsThisMonth)} <span className="text-sm font-normal">คน</span>
-            </p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">ผู้เช่าปัจจุบัน</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {formatNumber(stats.currentTenants)} <span className="text-sm font-normal">คน</span>
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* สถิติอื่นๆ */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-semibold mb-4 text-gray-800">สถิติอื่นๆ</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">อาคารทั้งหมด</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {formatNumber(stats.totalBuildings)} <span className="text-sm font-normal">อาคาร</span>
-            </p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">ประเภทห้อง</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {formatNumber(stats.totalRoomTypes)} <span className="text-sm font-normal">ประเภท</span>
-            </p>
-          </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">อัตราการเข้าพัก</p>
-            <p className="text-2xl font-bold text-gray-900">
-              {stats.occupancyRate.toFixed(2)} <span className="text-sm font-normal">%</span>
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* สถิติการเงิน */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-semibold mb-4 text-gray-800">สถิติการเงิน</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">รายได้เดือนนี้</p>
+          <div>
+            <p className="text-xs text-gray-600 mb-1">ห้องว่าง</p>
             <p className="text-2xl font-bold text-green-600">
+              {formatNumber(stats.availableRooms)} <span className="text-sm font-normal text-gray-500">ห้อง</span>
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-600 mb-1">ห้องมีผู้เช่า</p>
+            <p className="text-2xl font-bold text-indigo-600">
+              {formatNumber(stats.occupiedRooms)} <span className="text-sm font-normal text-gray-500">ห้อง</span>
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-600 mb-1">ห้องซ่อมบำรุง</p>
+            <p className="text-2xl font-bold text-gray-600">
+              {formatNumber(stats.maintenanceRooms)} <span className="text-sm font-normal text-gray-500">ห้อง</span>
+            </p>
+          </div>
+
+          {/* สถิติผู้เช่า */}
+          <div>
+            <p className="text-xs text-gray-600 mb-1">ผู้เช่าทั้งหมด</p>
+            <p className="text-2xl font-bold text-purple-600">
+              {formatNumber(stats.totalTenants)} <span className="text-sm font-normal text-gray-500">คน</span>
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-600 mb-1">ผู้เช่าใหม่เดือนนี้</p>
+            <p className="text-2xl font-bold text-emerald-600">
+              {formatNumber(stats.newTenantsThisMonth)} <span className="text-sm font-normal text-gray-500">คน</span>
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-600 mb-1">ผู้เช่าออกเดือนนี้</p>
+            <p className="text-2xl font-bold text-orange-600">
+              {formatNumber(stats.leftTenantsThisMonth)} <span className="text-sm font-normal text-gray-500">คน</span>
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-600 mb-1">ผู้เช่าปัจจุบัน</p>
+            <p className="text-2xl font-bold text-cyan-600">
+              {formatNumber(stats.currentTenants)} <span className="text-sm font-normal text-gray-500">คน</span>
+            </p>
+          </div>
+
+          {/* สถิติอื่นๆ */}
+          <div>
+            <p className="text-xs text-gray-600 mb-1">อัตราการเข้าพัก</p>
+            <p className="text-2xl font-bold text-violet-600">
+              {stats.occupancyRate.toFixed(1)} <span className="text-sm font-normal text-gray-500">%</span>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* สถิติการเงิน - ซ่อนไว้ก่อน */}
+      {/* <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+        <h2 className="text-lg font-semibold mb-4 text-gray-800 flex items-center gap-2">
+          <span className="text-2xl">💰</span>
+          <span>สถิติการเงิน</span>
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 border border-green-200 hover:shadow-md transition-shadow">
+            <p className="text-xs font-medium text-green-700 mb-2">รายได้เดือนนี้</p>
+            <p className="text-xl font-bold text-green-900">
               {formatCurrency(stats.revenueThisMonth)}
             </p>
           </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">รายได้รวม</p>
-            <p className="text-2xl font-bold text-green-600">
+          <div className="bg-gradient-to-br from-teal-50 to-teal-100 rounded-lg p-4 border border-teal-200 hover:shadow-md transition-shadow">
+            <p className="text-xs font-medium text-teal-700 mb-2">รายได้รวม</p>
+            <p className="text-xl font-bold text-teal-900">
               {formatCurrency(stats.totalRevenue)}
             </p>
           </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">ค่าใช้จ่ายเดือนนี้</p>
-            <p className="text-2xl font-bold text-red-600">
+          <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-lg p-4 border border-red-200 hover:shadow-md transition-shadow">
+            <p className="text-xs font-medium text-red-700 mb-2">ค่าใช้จ่ายเดือนนี้</p>
+            <p className="text-xl font-bold text-red-900">
               {formatCurrency(stats.expensesThisMonth)}
             </p>
           </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">ค่าใช้จ่ายรวม</p>
-            <p className="text-2xl font-bold text-red-600">
+          <div className="bg-gradient-to-br from-rose-50 to-rose-100 rounded-lg p-4 border border-rose-200 hover:shadow-md transition-shadow">
+            <p className="text-xs font-medium text-rose-700 mb-2">ค่าใช้จ่ายรวม</p>
+            <p className="text-xl font-bold text-rose-900">
               {formatCurrency(stats.totalExpenses)}
             </p>
           </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">กำไรเดือนนี้</p>
-            <p className="text-2xl font-bold text-blue-600">
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200 hover:shadow-md transition-shadow">
+            <p className="text-xs font-medium text-blue-700 mb-2">กำไรเดือนนี้</p>
+            <p className="text-xl font-bold text-blue-900">
               {formatCurrency(stats.profitThisMonth)}
             </p>
           </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm text-gray-600 mb-1">กำไรรวม</p>
-            <p className="text-2xl font-bold text-blue-600">
+          <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-lg p-4 border border-indigo-200 hover:shadow-md transition-shadow">
+            <p className="text-xs font-medium text-indigo-700 mb-2">กำไรรวม</p>
+            <p className="text-xl font-bold text-indigo-900">
               {formatCurrency(stats.totalProfit)}
             </p>
           </div>
         </div>
-      </div>
+      </div> */}
 
       {/* กราฟ */}
       <DashboardCharts

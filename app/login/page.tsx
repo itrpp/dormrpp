@@ -61,7 +61,8 @@ export default function LoginPage() {
           <h1 className="text-3xl font-bold text-center text-gray-800">
             เข้าสู่ระบบ
           </h1>
-          <p className="text-sm text-gray-600 mt-2">ระบบจัดการหอพัก รวงผึ้ง RPP</p>
+          <p className="text-sm text-gray-600 mt-2">หอพักรวงผึ้ง</p>
+          <p className="text-xs text-gray-500 mt-1">โรงพยาบาลราชพิพัฒน์</p>
         </div>
         
         {error && (

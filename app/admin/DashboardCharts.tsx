@@ -28,8 +28,6 @@ interface RoomStatusData {
 interface MonthlyRevenueData {
   month: string;
   revenue: number;
-  expenses: number;
-  profit: number;
   [key: string]: string | number;
 }
 
@@ -62,13 +60,14 @@ export default function DashboardCharts({
   occupancyData,
 }: Props) {
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
       {/* กราฟวงกลม: สถานะห้องพัก */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold mb-4 text-gray-800">
-          สถานะห้องพัก
+      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-3">
+        <h3 className="text-sm font-semibold mb-2 text-gray-800 flex items-center gap-1.5">
+          <span className="text-base">📊</span>
+          <span>สถานะห้องพัก</span>
         </h3>
-        <ResponsiveContainer width="100%" height={300}>
+        <ResponsiveContainer width="100%" height={200}>
           <PieChart>
             <Pie
               data={roomStatusData}
@@ -78,7 +77,7 @@ export default function DashboardCharts({
               label={({ name, percent }) =>
                 `${name}: ${((percent ?? 0) * 100).toFixed(0)}%`
               }
-              outerRadius={80}
+              outerRadius={60}
               fill="#8884d8"
               dataKey="value"
             >
@@ -96,33 +95,44 @@ export default function DashboardCharts({
       </div>
 
       {/* กราฟแท่ง: จำนวนผู้เช่าใหม่/ออกรายเดือน */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold mb-4 text-gray-800">
-          จำนวนผู้เช่าใหม่/ออกรายเดือน (6 เดือนล่าสุด)
+      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-3">
+        <h3 className="text-sm font-semibold mb-2 text-gray-800 flex items-center gap-1.5">
+          <span className="text-base">👥</span>
+          <span>จำนวนผู้เช่าใหม่/ออกรายเดือน</span>
         </h3>
-        <ResponsiveContainer width="100%" height={300}>
+        <p className="text-[10px] text-gray-500 mb-2">6 เดือนล่าสุด</p>
+        <ResponsiveContainer width="100%" height={200}>
           <BarChart data={tenantFlowData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="month" />
-            <YAxis />
-            <Tooltip />
-            <Legend />
-            <Bar dataKey="new" fill="#10b981" name="ผู้เช่าใหม่" />
-            <Bar dataKey="left" fill="#ef4444" name="ผู้เช่าออก" />
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+            <YAxis tick={{ fontSize: 10 }} />
+            <Tooltip 
+              contentStyle={{ 
+                backgroundColor: 'white', 
+                border: '1px solid #e5e7eb',
+                borderRadius: '6px',
+                fontSize: '11px'
+              }} 
+            />
+            <Legend wrapperStyle={{ fontSize: '11px' }} />
+            <Bar dataKey="new" fill="#10b981" name="ผู้เช่าใหม่" radius={[3, 3, 0, 0]} />
+            <Bar dataKey="left" fill="#ef4444" name="ผู้เช่าออก" radius={[3, 3, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </div>
 
-      {/* กราฟเส้น: รายได้/ค่าใช้จ่าย/กำไรรายเดือน */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold mb-4 text-gray-800">
-          รายได้/ค่าใช้จ่าย/กำไรรายเดือน (6 เดือนล่าสุด)
+      {/* กราฟเส้น: รายได้รายเดือน */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-3">
+        <h3 className="text-sm font-semibold mb-2 text-gray-800 flex items-center gap-1.5">
+          <span className="text-base">💰</span>
+          <span>รายได้รายเดือน</span>
         </h3>
-        <ResponsiveContainer width="100%" height={300}>
+        <p className="text-[10px] text-gray-500 mb-2">6 เดือนล่าสุด</p>
+        <ResponsiveContainer width="100%" height={200}>
           <LineChart data={monthlyRevenueData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="month" />
-            <YAxis />
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+            <YAxis tick={{ fontSize: 10 }} />
             <Tooltip
               formatter={(value: number) =>
                 new Intl.NumberFormat('th-TH', {
@@ -130,51 +140,54 @@ export default function DashboardCharts({
                   currency: 'THB',
                 }).format(value)
               }
+              contentStyle={{ 
+                backgroundColor: 'white', 
+                border: '1px solid #e5e7eb',
+                borderRadius: '6px',
+                fontSize: '11px'
+              }}
             />
-            <Legend />
+            <Legend wrapperStyle={{ fontSize: '11px' }} />
             <Line
               type="monotone"
               dataKey="revenue"
               stroke="#10b981"
               strokeWidth={2}
+              dot={{ fill: '#10b981', r: 3 }}
               name="รายได้"
-            />
-            <Line
-              type="monotone"
-              dataKey="expenses"
-              stroke="#ef4444"
-              strokeWidth={2}
-              name="ค่าใช้จ่าย"
-            />
-            <Line
-              type="monotone"
-              dataKey="profit"
-              stroke="#3b82f6"
-              strokeWidth={2}
-              name="กำไร"
             />
           </LineChart>
         </ResponsiveContainer>
       </div>
 
       {/* กราฟพื้นที่: อัตราการเข้าพักรายเดือน */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h3 className="text-lg font-semibold mb-4 text-gray-800">
-          อัตราการเข้าพักรายเดือน (6 เดือนล่าสุด)
+      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-3">
+        <h3 className="text-sm font-semibold mb-2 text-gray-800 flex items-center gap-1.5">
+          <span className="text-base">📈</span>
+          <span>อัตราการเข้าพักรายเดือน</span>
         </h3>
-        <ResponsiveContainer width="100%" height={300}>
+        <p className="text-[10px] text-gray-500 mb-2">6 เดือนล่าสุด</p>
+        <ResponsiveContainer width="100%" height={200}>
           <AreaChart data={occupancyData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="month" />
-            <YAxis domain={[0, 100]} />
-            <Tooltip formatter={(value: number) => `${value.toFixed(2)}%`} />
-            <Legend />
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+            <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
+            <Tooltip 
+              formatter={(value: number) => `${value.toFixed(2)}%`}
+              contentStyle={{ 
+                backgroundColor: 'white', 
+                border: '1px solid #e5e7eb',
+                borderRadius: '6px',
+                fontSize: '11px'
+              }}
+            />
+            <Legend wrapperStyle={{ fontSize: '11px' }} />
             <Area
               type="monotone"
               dataKey="rate"
               stroke="#3b82f6"
               fill="#3b82f6"
-              fillOpacity={0.6}
+              fillOpacity={0.4}
               name="อัตราการเข้าพัก (%)"
             />
           </AreaChart>

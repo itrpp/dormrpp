@@ -30,7 +30,7 @@ export default function LogoutButton() {
     <button
       onClick={handleLogout}
       disabled={loading}
-      className="text-gray-500 hover:text-gray-700 text-sm font-medium disabled:opacity-50"
+      className="text-gray-500 hover:text-gray-700 text-xs sm:text-sm font-medium disabled:opacity-50 transition-colors px-3 py-1.5 rounded-lg hover:bg-gray-100 whitespace-nowrap"
     >
       {loading ? 'กำลังออกจากระบบ...' : 'ออกจากระบบ'}
     </button>

@@ -466,12 +466,14 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
                   >
                     แก้ไข
                   </button>
-                  <button
-                    className="text-red-600 hover:text-red-900"
-                    onClick={() => handleSoftDelete(tenant.tenant_id)}
-                  >
-                    ลบ
-                  </button>
+                  {(tenant.status || 'inactive').toLowerCase() === 'inactive' && (
+                    <button
+                      className="text-red-600 hover:text-red-900"
+                      onClick={() => handleSoftDelete(tenant.tenant_id)}
+                    >
+                      ลบ
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

@@ -13,6 +13,7 @@ interface Room {
   room_type_name: string | null;
   max_occupants: number;
   current_occupants: number;
+  status?: 'available' | 'occupied' | 'maintenance';
 }
 
 interface RoomOccupancy {
@@ -73,6 +74,7 @@ export default function AddTenantClient() {
   const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
   const [roomOccupancy, setRoomOccupancy] = useState<RoomOccupancy | null>(null);
+  const [selectedRoomStatus, setSelectedRoomStatus] = useState<'available' | 'occupied' | 'maintenance' | null>(null);
   const [isLoadingRooms, setIsLoadingRooms] = useState(false);
   const [isLoadingOccupancy, setIsLoadingOccupancy] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -173,19 +175,21 @@ export default function AddTenantClient() {
     fetchRooms();
   }, [selectedBuildingId, selectedFloor, initialRoomId]);
 
-  // ดึงข้อมูลสถานะผู้เข้าพักเมื่อเลือกห้อง
+  // ดึงข้อมูลสถานะผู้เข้าพักและสถานะห้องเมื่อเลือกห้อง
   useEffect(() => {
     const fetchOccupancy = async () => {
       if (!selectedRoomId) {
         setRoomOccupancy(null);
+        setSelectedRoomStatus(null);
         return;
       }
 
       setIsLoadingOccupancy(true);
       try {
-        const res = await fetch(`/api/rooms/occupancy?room_id=${selectedRoomId}`);
-        if (res.ok) {
-          const data = await res.json();
+        // ดึงข้อมูล occupancy
+        const occupancyRes = await fetch(`/api/rooms/occupancy?room_id=${selectedRoomId}`);
+        if (occupancyRes.ok) {
+          const data = await occupancyRes.json();
           // ตรวจสอบว่า data มี current_occupants และ max_occupants
           if (data && typeof data.current_occupants === 'number' && typeof data.max_occupants === 'number') {
             setRoomOccupancy(data);
@@ -200,18 +204,38 @@ export default function AddTenantClient() {
         } else {
           // ถ้า API error ให้ set เป็น null เพื่อแสดง "ไม่พบข้อมูลห้อง"
           setRoomOccupancy(null);
-          console.error('Failed to fetch occupancy:', res.status);
+          console.error('Failed to fetch occupancy:', occupancyRes.status);
+        }
+
+        // ดึงข้อมูลสถานะห้องจาก room details
+        const detailsRes = await fetch(`/api/rooms/${selectedRoomId}/details`);
+        if (detailsRes.ok) {
+          const detailsData = await detailsRes.json();
+          if (detailsData?.room?.status) {
+            setSelectedRoomStatus(detailsData.room.status);
+          } else {
+            // ถ้าไม่มี status ให้ดึงจาก rooms array
+            const room = rooms.find(r => r.room_id === selectedRoomId);
+            setSelectedRoomStatus(room?.status || null);
+          }
+        } else {
+          // ถ้า API error ให้ดึงจาก rooms array
+          const room = rooms.find(r => r.room_id === selectedRoomId);
+          setSelectedRoomStatus(room?.status || null);
         }
       } catch (error) {
         console.error('Error fetching room occupancy:', error);
         setRoomOccupancy(null);
+        // ถ้า error ให้ดึงจาก rooms array
+        const room = rooms.find(r => r.room_id === selectedRoomId);
+        setSelectedRoomStatus(room?.status || null);
       } finally {
         setIsLoadingOccupancy(false);
       }
     };
 
     fetchOccupancy();
-  }, [selectedRoomId]);
+  }, [selectedRoomId, rooms]);
 
   // สร้างรายการชั้น
   const floorOptions = useMemo(() => {
@@ -229,7 +253,10 @@ export default function AddTenantClient() {
     ? roomOccupancy.current_occupants >= roomOccupancy.max_occupants
     : false;
 
-  const canAddTenant = !isRoomFull && selectedRoomId !== null;
+  // ตรวจสอบว่าห้องอยู่ในสถานะ maintenance หรือไม่
+  const isRoomMaintenance = selectedRoomStatus === 'maintenance';
+
+  const canAddTenant = !isRoomFull && !isRoomMaintenance && selectedRoomId !== null;
 
   // ค้นหาผู้เช่าเก่า
   const handleSearchTenants = async () => {
@@ -250,6 +277,32 @@ export default function AddTenantClient() {
       alert('ไม่สามารถค้นหาผู้เช่าได้');
     } finally {
       setIsSearching(false);
+    }
+  };
+
+  // Auto-search เมื่อพิมพ์ (debounce)
+  useEffect(() => {
+    if (mode !== 'existing' || !canAddTenant) {
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      if (searchQuery.trim()) {
+        handleSearchTenants();
+      } else {
+        setSearchResults([]);
+      }
+    }, 500); // debounce 500ms
+
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, mode, canAddTenant]);
+
+  // จับ Enter key เพื่อค้นหา
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleSearchTenants();
     }
   };
 
@@ -324,7 +377,7 @@ export default function AddTenantClient() {
         alert('สร้างสัญญาใหม่ให้ผู้เช่าที่เคยพักแล้วสำเร็จ');
       }
 
-      router.push('/admin/tenants');
+      router.push('/admin/rooms');
     } catch (error: any) {
       console.error('Error creating tenant:', error);
       alert(`ไม่สามารถเพิ่มผู้เช่าได้: ${error.message || 'Unknown error'}`);
@@ -501,7 +554,12 @@ export default function AddTenantClient() {
                         </span>
                       )}
                     </div>
-                    {isRoomFull ? (
+                    {isRoomMaintenance ? (
+                      <div className="flex items-center gap-2 text-orange-600 font-semibold">
+                        <span>🔧</span>
+                        <span>ห้องนี้อยู่ในสถานะซ่อมบำรุง</span>
+                      </div>
+                    ) : isRoomFull ? (
                       <div className="flex items-center gap-2 text-red-600 font-semibold">
                         <span>🔴</span>
                         <span>ห้องนี้เต็มแล้ว</span>
@@ -571,6 +629,7 @@ export default function AddTenantClient() {
                     className="flex-1 border rounded-md px-3 py-2 text-sm"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={handleKeyDown}
                     placeholder="เช่น นางสาว..., 08x..., email@example.com"
                     disabled={!canAddTenant}
                   />
@@ -645,6 +704,13 @@ export default function AddTenantClient() {
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
                 <p className="text-sm text-yellow-800">
                   ⚠️ กรุณาเลือกห้องก่อนกรอกข้อมูลผู้เช่า
+                </p>
+              </div>
+            )}
+            {selectedRoomId && isRoomMaintenance && (
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-4">
+                <p className="text-sm text-orange-800 font-semibold">
+                  🔧 ห้องนี้อยู่ในสถานะซ่อมบำรุง (maintenance) ไม่สามารถเพิ่มผู้เช่าได้
                 </p>
               </div>
             )}
@@ -749,7 +815,7 @@ export default function AddTenantClient() {
                       ? 'bg-blue-600 hover:bg-blue-700'
                       : 'bg-gray-400 cursor-not-allowed'
                   }`}
-                  title={!canAddTenant ? 'ห้องนี้มีผู้เข้าพักครบแล้ว' : ''}
+                  title={!canAddTenant ? (isRoomMaintenance ? 'ห้องนี้อยู่ในสถานะซ่อมบำรุง' : 'ห้องนี้มีผู้เข้าพักครบแล้ว') : ''}
                 >
                   {isSubmitting ? 'กำลังบันทึก...' : 'บันทึก'}
                 </button>

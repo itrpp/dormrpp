@@ -137,8 +137,34 @@ export interface Announcement {
   title: string;
   content: string;
   target_audience?: string | null;
+  target_role?: 'all' | 'tenant' | 'admin' | null; // ใช้แทน target_audience
   is_active: boolean;
+  is_published?: boolean | null; // ใช้แทน is_active สำหรับ publishing
+  publish_start?: Date | null;
+  publish_end?: Date | null;
   published_at?: Date | null;
+  created_by_ad_username?: string | null;
   created_at?: Date | null;
   updated_at?: Date | null;
+  is_deleted?: boolean | null;
+}
+
+// ไฟล์แนบประกาศ
+export interface AnnouncementFile {
+  file_id: number;
+  announcement_id: number;
+  file_name: string;
+  file_path: string; // path ใน server เช่น /uploads/announcements/2025-10/xxx.pdf
+  file_type: string; // MIME type เช่น application/pdf
+  file_size: number; // bytes
+  created_at?: Date | null;
+}
+
+// การอ่านประกาศ (read tracking)
+export interface AnnouncementRead {
+  read_id: number;
+  announcement_id: number;
+  tenant_id?: number | null; // null ถ้าเป็น admin
+  user_ad_username?: string | null; // AD username
+  read_at?: Date | null;
 }

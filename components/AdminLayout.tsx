@@ -1,0 +1,253 @@
+'use client';
+
+import { useState } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import LogoutButton from './LogoutButton';
+
+interface AdminLayoutProps {
+  children: React.ReactNode;
+  sessionName?: string;
+}
+
+export default function AdminLayout({ children, sessionName }: AdminLayoutProps) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const pathname = usePathname();
+
+  const menuItems = [
+    { href: '/admin', label: 'หน้าหลัก', icon: '🏠' },
+    { href: '/admin/rooms', label: 'ห้องพัก', icon: '🏢' },
+    { href: '/admin/tenants', label: 'ผู้เช่า', icon: '👥' },
+    { href: '/admin/utility-readings', label: 'บันทึกเลขมิเตอร์', icon: '📝' },
+    { href: '/meters', label: '💧⚡ มิเตอร์น้ำ-ไฟ', icon: '' },
+    { href: '/admin/bills', label: 'บิลค่าใช้จ่าย', icon: '💰' },
+    { href: 'https://services.rpphosp.go.th/auth', label: 'การซ่อมบำรุง', icon: '🔧', external: true },
+    { href: '/admin/announcements', label: 'ประกาศ', icon: '📢' },
+  ];
+
+  const isActive = (href: string) => {
+    if (href === '/admin') {
+      return pathname === '/admin';
+    }
+    if (href.startsWith('http')) {
+      return false;
+    }
+    return pathname?.startsWith(href);
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex">
+      {/* Sidebar - Desktop */}
+      <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:fixed lg:inset-y-0 lg:z-30 bg-white border-r border-gray-200">
+        {/* Logo Section */}
+        <div className="flex items-center gap-3 px-4 py-4 border-b border-gray-200">
+          <img
+            src="/logo.jpg"
+            alt="หอพักรวงผึ้ง"
+            className="h-10 w-10 object-cover rounded-full flex-shrink-0"
+          />
+          <div className="min-w-0">
+            <h1 className="text-sm font-bold text-gray-900 truncate">
+              ระบบจัดการหอพัก
+            </h1>
+            <p className="text-xs text-gray-500 truncate">
+              โรงพยาบาลราชพิพัฒน์
+            </p>
+          </div>
+        </div>
+
+        {/* Navigation Menu */}
+        <nav className="flex-1 overflow-y-auto py-4">
+          <div className="px-2 space-y-1">
+            {menuItems.map((item) => {
+              const active = isActive(item.href);
+              const MenuLink = item.external ? 'a' : Link;
+              const linkProps = item.external
+                ? { href: item.href, target: '_blank', rel: 'noopener noreferrer' }
+                : { href: item.href };
+
+              return (
+                <MenuLink
+                  key={item.href}
+                  {...linkProps}
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                    active
+                      ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                      : 'text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  {item.icon && <span className="text-lg">{item.icon}</span>}
+                  <span>{item.label}</span>
+                </MenuLink>
+              );
+            })}
+          </div>
+        </nav>
+      </aside>
+
+      {/* Mobile Sidebar Overlay */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Mobile Sidebar */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-gray-200 transform transition-transform duration-300 ease-in-out lg:hidden ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="flex flex-col h-full">
+          {/* Mobile Sidebar Header */}
+          <div className="flex items-center justify-between px-4 py-4 border-b border-gray-200">
+            <div className="flex items-center gap-3">
+              <img
+                src="/logo.jpg"
+                alt="หอพักรวงผึ้ง"
+                className="h-10 w-10 object-cover rounded-full"
+              />
+              <div>
+                <h1 className="text-sm font-bold text-gray-900">ระบบจัดการหอพัก</h1>
+                <p className="text-xs text-gray-500">โรงพยาบาลราชพิพัฒน์</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="p-2 rounded-md text-gray-500 hover:bg-gray-100"
+            >
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Mobile Navigation */}
+          <nav className="flex-1 overflow-y-auto py-4">
+            <div className="px-2 space-y-1">
+              {menuItems.map((item) => {
+                const active = isActive(item.href);
+                const MenuLink = item.external ? 'a' : Link;
+                const linkProps = item.external
+                  ? { href: item.href, target: '_blank', rel: 'noopener noreferrer' }
+                  : { href: item.href };
+
+                return (
+                  <MenuLink
+                    key={item.href}
+                    {...linkProps}
+                    onClick={() => !item.external && setSidebarOpen(false)}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                      active
+                        ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                        : 'text-gray-700 hover:bg-gray-100'
+                    }`}
+                  >
+                    {item.icon && <span className="text-lg">{item.icon}</span>}
+                    <span>{item.label}</span>
+                  </MenuLink>
+                );
+              })}
+            </div>
+          </nav>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col lg:pl-64">
+        {/* Top Header */}
+        <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-20">
+          <div className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
+            <div className="flex items-center justify-between">
+              {/* Mobile Menu Button */}
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="lg:hidden p-2 rounded-md text-gray-500 hover:bg-gray-100"
+              >
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+
+              {/* Desktop Title - Dynamic based on pathname */}
+              <div className="hidden lg:block">
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {pathname === '/admin' ? 'หน้าหลัก' : 
+                   pathname?.startsWith('/admin/rooms') ? 'ห้องพัก' :
+                   pathname?.startsWith('/admin/tenants') ? 'ผู้เช่า' :
+                   pathname?.startsWith('/admin/utility-readings') ? 'บันทึกเลขมิเตอร์' :
+                   pathname?.startsWith('/admin/bills') ? 'บิลค่าใช้จ่าย' :
+                   pathname?.startsWith('/admin/announcements') ? 'ประกาศ' :
+                   pathname?.startsWith('/meters') ? '💧⚡ มิเตอร์น้ำและไฟฟ้า' :
+                   'ระบบจัดการหอพัก'}
+                </h2>
+              </div>
+
+              {/* Mobile Title */}
+              <div className="lg:hidden flex-1 ml-3">
+                <h2 className="text-base font-semibold text-gray-900">
+                  {pathname === '/admin' ? 'หน้าหลัก' : 
+                   pathname?.startsWith('/admin/rooms') ? 'ห้องพัก' :
+                   pathname?.startsWith('/admin/tenants') ? 'ผู้เช่า' :
+                   pathname?.startsWith('/admin/utility-readings') ? 'บันทึกเลขมิเตอร์' :
+                   pathname?.startsWith('/admin/bills') ? 'บิลค่าใช้จ่าย' :
+                   pathname?.startsWith('/admin/announcements') ? 'ประกาศ' :
+                   pathname?.startsWith('/meters') ? '💧⚡ มิเตอร์' :
+                   'ระบบจัดการหอพัก'}
+                </h2>
+              </div>
+
+              {/* Right Side Actions - User Info and Logout */}
+              {sessionName && (
+                <div className="flex items-center gap-3 ml-auto">
+                  {/* Desktop User Info */}
+                  <div className="hidden lg:flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
+                        <span className="text-xs font-medium text-blue-700">
+                          {sessionName.charAt(0) || 'U'}
+                        </span>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate max-w-[150px]">
+                          {sessionName}
+                        </p>
+                        <p className="text-xs text-gray-500">ผู้ดูแลระบบ</p>
+                      </div>
+                    </div>
+                    <LogoutButton />
+                  </div>
+
+                  {/* Mobile User Info */}
+                  <div className="lg:hidden flex items-center gap-2">
+                    <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
+                      <span className="text-xs font-medium text-blue-700">
+                        {sessionName.charAt(0) || 'U'}
+                      </span>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-gray-900 truncate max-w-[100px]">
+                        {sessionName}
+                      </p>
+                      <p className="text-[10px] text-gray-500">ผู้ดูแลระบบ</p>
+                    </div>
+                    <LogoutButton />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
+
+        {/* Page Content */}
+        <main className="flex-1 overflow-y-auto">
+          <div className="px-4 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8">
+            {children}
+          </div>
+        </main>
+      </div>
+    </div>
+  );
+}
+

@@ -601,6 +601,9 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
         });
         setRoomOccupancies(occupancyMap);
       }
+      
+      // Redirect ไปหน้า rooms
+      window.location.href = '/admin/rooms';
     } catch (error: any) {
       console.error('Error moving out tenant:', error);
       alert(`ไม่สามารถย้ายผู้เช่าออกได้: ${error.message || 'Unknown error'}`);

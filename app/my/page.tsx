@@ -59,7 +59,41 @@ async function getTenantRoom(tenantId: number = 1) {
 
 export default async function TenantHomePage() {
   // TODO: Get tenant_id from session/auth
-  const tenant = await getTenantRoom(1);
+  let tenant;
+  try {
+    tenant = await getTenantRoom(1);
+  } catch (error: any) {
+    // ถ้าเกิด error (เช่น Too many connections) ให้แสดงหน้า error
+    console.error('Error loading tenant data:', error);
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <h1 className="text-2xl font-bold text-gray-800 mb-4">
+            เกิดข้อผิดพลาดในการโหลดข้อมูล
+          </h1>
+          <p className="text-gray-600 mb-4">
+            {error.message?.includes('Too many connections') 
+              ? 'ระบบกำลังใช้งานหนัก กรุณาลองใหม่อีกครั้งในภายหลัง'
+              : 'ไม่สามารถเชื่อมต่อกับฐานข้อมูลได้'}
+          </p>
+          <div className="flex gap-4 justify-center">
+            <Link
+              href="/my/announcements"
+              className="text-blue-600 hover:text-blue-800 px-4 py-2 border border-blue-600 rounded-lg"
+            >
+              ดูประกาศ
+            </Link>
+            <Link
+              href="/my"
+              className="text-blue-600 hover:text-blue-800 px-4 py-2 border border-blue-600 rounded-lg"
+            >
+              ลองใหม่
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!tenant) {
     return (
@@ -69,10 +103,10 @@ export default async function TenantHomePage() {
             ไม่พบข้อมูลผู้เช่า
           </h1>
           <Link
-            href="/"
+            href="/my/announcements"
             className="text-blue-600 hover:text-blue-800"
           >
-            กลับหน้าหลัก
+            ดูประกาศ
           </Link>
         </div>
       </div>
@@ -86,7 +120,10 @@ export default async function TenantHomePage() {
           สวัสดี, {tenant.first_name} {tenant.last_name}
         </h1>
         <p className="text-gray-600">
-          ข้อมูลห้องพักของคุณ
+          ข้อมูลห้องพักของคุณ - หอพักรวงผึ้ง
+        </p>
+        <p className="text-sm text-gray-500 mt-1">
+          โรงพยาบาลราชพิพัฒน์
         </p>
       </div>
 
@@ -123,6 +160,13 @@ export default async function TenantHomePage() {
         >
           <h3 className="text-xl font-semibold mb-2 text-gray-800">บิลค่าใช้จ่าย</h3>
           <p className="text-gray-600">ดูและชำระบิลค่าใช้จ่ายของคุณ</p>
+        </Link>
+        <Link
+          href="/my/announcements"
+          className="bg-white shadow rounded-lg p-6 hover:shadow-lg transition-shadow"
+        >
+          <h3 className="text-xl font-semibold mb-2 text-gray-800">📢 ประกาศ</h3>
+          <p className="text-gray-600">ดูประกาศล่าสุดจากหอพัก</p>
         </Link>
         <a
           href="https://services.rpphosp.go.th/auth"

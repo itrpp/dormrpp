@@ -88,8 +88,18 @@ interface BillForm {
 
 export default function AdminBillsClient() {
   const now = new Date();
-  const [year, setYear] = useState(now.getFullYear() + 543);
-  const [month, setMonth] = useState(now.getMonth() + 1);
+  
+  // แปลง พ.ศ. เป็น ค.ศ. สำหรับ month picker
+  const beYear = now.getFullYear() + 543;
+  const beMonth = now.getMonth() + 1;
+  const adYear = now.getFullYear();
+  const adMonth = String(now.getMonth() + 1).padStart(2, '0');
+  const initialMonthValue = `${adYear}-${adMonth}`;
+  const maxMonthValue = `${adYear}-${adMonth}`; // จำกัดไม่ให้เลือกเกินเดือนปัจจุบัน
+  
+  const [monthValue, setMonthValue] = useState(initialMonthValue); // Format: "YYYY-MM" (ค.ศ.)
+  const [year, setYear] = useState(beYear); // พ.ศ.
+  const [month, setMonth] = useState(beMonth); // เดือน (1-12)
   const [bills, setBills] = useState<DetailedBill[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -101,10 +111,19 @@ export default function AdminBillsClient() {
     water: { meter_start: number | null; meter_end: number | null } | null;
   }>({ electric: null, water: null });
   const [isLoadingReadings, setIsLoadingReadings] = useState(false);
+  // สำหรับ modal form
+  const formBeYear = now.getFullYear() + 543;
+  const formBeMonth = now.getMonth() + 1;
+  const formAdYear = now.getFullYear();
+  const formAdMonth = String(now.getMonth() + 1).padStart(2, '0');
+  const formInitialMonthValue = `${formAdYear}-${formAdMonth}`;
+  const formMaxMonthValue = `${formAdYear}-${formAdMonth}`;
+  
+  const [formMonthValue, setFormMonthValue] = useState(formInitialMonthValue);
   const [form, setForm] = useState<BillForm>({
     contract_id: '',
-    billing_year: now.getFullYear() + 543,
-    billing_month: now.getMonth() + 1,
+    billing_year: formBeYear,
+    billing_month: formBeMonth,
     electricity: {
       meter_start: '',
       meter_end: '',
@@ -119,6 +138,18 @@ export default function AdminBillsClient() {
     () => contracts.find((c) => c.contract_id === form.contract_id) || null,
     [contracts, form.contract_id]
   );
+
+  // แปลง month value (ค.ศ.) เป็น year และ month (พ.ศ.)
+  useEffect(() => {
+    if (monthValue) {
+      const [adYearStr, monthStr] = monthValue.split('-');
+      const adYear = Number(adYearStr);
+      const monthNum = Number(monthStr);
+      const beYear = adYear + 543;
+      setYear(beYear);
+      setMonth(monthNum);
+    }
+  }, [monthValue]);
 
   // ดึงข้อมูลบิล
   const fetchBills = async () => {
@@ -182,6 +213,18 @@ export default function AdminBillsClient() {
     setIsCreateModalOpen(true);
   };
 
+  // แปลง form month value (ค.ศ.) เป็น year และ month (พ.ศ.) สำหรับ modal
+  useEffect(() => {
+    if (formMonthValue) {
+      const [adYearStr, monthStr] = formMonthValue.split('-');
+      const adYear = Number(adYearStr);
+      const monthNum = Number(monthStr);
+      const beYear = adYear + 543;
+      setForm({ ...form, billing_year: beYear, billing_month: monthNum });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formMonthValue]);
+
   // ดึง utility readings เมื่อเลือก contract และ billing cycle
   useEffect(() => {
     const fetchUtilityReadings = async () => {
@@ -240,10 +283,11 @@ export default function AdminBillsClient() {
   const closeCreateModal = () => {
     setIsCreateModalOpen(false);
     // Reset form
+    setFormMonthValue(formInitialMonthValue);
     setForm({
       contract_id: '',
-      billing_year: now.getFullYear() + 543,
-      billing_month: now.getMonth() + 1,
+      billing_year: formBeYear,
+      billing_month: formBeMonth,
       electricity: {
         meter_start: '',
         meter_end: '',
@@ -511,25 +555,19 @@ const formatInteger = (num: number | null | undefined): string => {
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-gray-800">จัดการบิลค่าใช้จ่าย</h1>
-        <div className="flex gap-2">
-          <input
-            type="number"
-            placeholder="ปี"
-            className="border rounded px-3 py-2"
-            value={year}
-            onChange={(e) => setYear(Number(e.target.value))}
-          />
-          <select
-            className="border rounded px-3 py-2"
-            value={month}
-            onChange={(e) => setMonth(Number(e.target.value))}
-          >
-            {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
-              <option key={m} value={m}>
-                {getMonthNameThai(m)}
-              </option>
-            ))}
-          </select>
+        <div className="flex gap-2 items-end">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              📅 เลือกรอบบิล (เดือน/ปี)
+            </label>
+            <input
+              type="month"
+              className="border border-gray-300 rounded-lg px-4 py-2.5 text-base focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+              value={monthValue}
+              onChange={(e) => setMonthValue(e.target.value)}
+              max={maxMonthValue}
+            />
+          </div>
           <button
             onClick={fetchBills}
             className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
@@ -791,35 +829,21 @@ const formatInteger = (num: number | null | undefined): string => {
                 </select>
               </div>
 
-              {/* ปี */}
+              {/* รอบบิล (เดือน/ปี) */}
               <div>
                 <label className="block text-sm font-medium mb-1">
-                  ปี (พ.ศ.) <span className="text-red-500">*</span>
+                  📅 รอบบิล (เดือน/ปี) <span className="text-red-500">*</span>
                 </label>
                 <input
-                  type="number"
-                  className="w-full border rounded-md px-3 py-2"
-                  value={form.billing_year}
-                  onChange={(e) => setForm({ ...form, billing_year: Number(e.target.value) })}
+                  type="month"
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-base focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                  value={formMonthValue}
+                  onChange={(e) => setFormMonthValue(e.target.value)}
+                  max={formMaxMonthValue}
                 />
-              </div>
-
-              {/* เดือน */}
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  เดือน <span className="text-red-500">*</span>
-                </label>
-                <select
-                  className="w-full border rounded-md px-3 py-2"
-                  value={form.billing_month}
-                  onChange={(e) => setForm({ ...form, billing_month: Number(e.target.value) })}
-                >
-                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
-                    <option key={m} value={m}>
-                      {getMonthNameThai(m)}
-                    </option>
-                  ))}
-                </select>
+                <p className="mt-1 text-xs text-gray-500">
+                  {getMonthNameThai(form.billing_month)} {form.billing_year} (พ.ศ.)
+                </p>
               </div>
 
 

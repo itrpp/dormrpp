@@ -52,7 +52,7 @@ async function ensureIsDeletedColumn(): Promise<void> {
             console.warn('Failed to create is_deleted column:', alterError.message);
             // ถ้าเป็น connection error ให้ตั้ง flag เป็น true เพื่อไม่ให้ retry ซ้ำ
             if (alterError.code === 'ER_CON_COUNT_ERROR' || alterError.message?.includes('Too many connections')) {
-              isDeletedColumnChecked = true; // ตั้งเป็น true เพื่อไม่ให้ retry
+              isDeletedColumnChecked = true; // ตั้งเป็น true เพื่อไม่ให้ retry (silent fallback)
             }
           }
         }
@@ -60,7 +60,7 @@ async function ensureIsDeletedColumn(): Promise<void> {
     } catch (error: any) {
       // ถ้าเป็น connection error ให้ตั้ง flag เป็น true เพื่อไม่ให้ retry ซ้ำ
       if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
-        console.warn('Too many connections while checking is_deleted column, assuming column exists');
+        // Silent fallback - ไม่ log เพื่อลด log noise
         isDeletedColumnChecked = true; // ตั้งเป็น true เพื่อไม่ให้ retry
       } else {
         console.warn('Error checking is_deleted column:', error.message);

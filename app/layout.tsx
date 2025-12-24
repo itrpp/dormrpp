@@ -3,8 +3,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'หอพักรวงผึ้ง RPP',
-  description: 'ระบบจัดการหอพัก รวงผึ้ง RPP',
+  title: 'หอพักรวงผึ้ง - โรงพยาบาลราชพิพัฒน์',
+  description: 'ระบบจัดการหอพักรวงผึ้ง โรงพยาบาลราชพิพัฒน์',
   icons: {
     icon: [
       { url: '/favicon.ico', sizes: 'any' },
@@ -22,7 +22,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="th">
-      <body>{children}</body>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }
