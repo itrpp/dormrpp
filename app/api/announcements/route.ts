@@ -1,6 +1,6 @@
 // app/api/announcements/route.ts
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { query, pool } from '@/lib/db';
 import { getSession } from '@/lib/auth/session';
 import type { Announcement } from '@/types/db';
 
@@ -38,21 +38,14 @@ export async function GET(req: Request) {
 
     // Filter ตาม scope
     if (scope === 'active') {
-      const now = new Date();
-      const userRole = session?.role || 'tenant';
-      
-      // ตรวจสอบ role
-      sql += ` AND (a.target_role = 'all' OR a.target_role = ?)`;
-      params.push(userRole === 'admin' || userRole === 'superUser' ? 'admin' : 'tenant');
-      
-      // ตรวจสอบ publishing window
-      sql += ` AND a.is_published = 1`;
-      sql += ` AND (a.publish_start IS NULL OR a.publish_start <= ?)`;
-      sql += ` AND (a.publish_end IS NULL OR a.publish_end >= ?)`;
-      params.push(now, now);
-      
-      // ไม่แสดงที่ถูกลบ
-      sql += ` AND COALESCE(a.is_deleted, 0) = 0`;
+      // ไม่จำกัดการเข้าถึง - แสดงเฉพาะที่ published แล้ว
+      // ใช้ status สำหรับ query (รองรับ backward compatibility)
+      sql += ` AND (
+        a.status = 'published'
+        OR 
+        (a.status IS NULL AND a.is_published = 1)
+      )`;
+      // ไม่ตรวจสอบ target_role, publish_start, publish_end - ให้เห็นได้ทุกคน
     } else {
       // scope=all (admin only) - แสดงทั้งหมดรวม draft และ expired
       if (q) {
@@ -104,15 +97,13 @@ export async function GET(req: Request) {
       const countParams: any[] = [];
       
       if (scope === 'active') {
-        const now = new Date();
-        const userRole = session?.role || 'tenant';
-        countSql += ` AND (target_role = 'all' OR target_role = ?)`;
-        countParams.push(userRole === 'admin' || userRole === 'superUser' ? 'admin' : 'tenant');
-        countSql += ` AND is_published = 1`;
-        countSql += ` AND (publish_start IS NULL OR publish_start <= ?)`;
-        countSql += ` AND (publish_end IS NULL OR publish_end >= ?)`;
-        countSql += ` AND COALESCE(is_deleted, 0) = 0`;
-        countParams.push(now, now);
+        // ไม่จำกัดการเข้าถึง - แสดงเฉพาะที่ published แล้ว
+        countSql += ` AND (
+          status = 'published'
+          OR 
+          (status IS NULL AND is_published = 1)
+        )`;
+        // ไม่ตรวจสอบ target_role, publish_start, publish_end - ให้เห็นได้ทุกคน
         if (q) {
           countSql += ` AND (title LIKE ? OR content LIKE ?)`;
           countParams.push(`%${q}%`, `%${q}%`);
@@ -127,22 +118,24 @@ export async function GET(req: Request) {
       const [countResult] = await query<{ total: number }>(countSql, countParams);
       const total = countResult?.total || 0;
 
-      // ตรวจสอบ unread สำหรับ tenant
+      // ไม่ตรวจสอบ unread (ตัดฟีเจอร์การจำกัดออก)
       const announcementsWithUnread = await Promise.all(
         announcements.map(async (ann) => {
-          let unread = false;
-          if (session && (session.role === 'regular' || !session.role)) {
-            try {
-              const [readResult] = await query<{ read_id: number }>(
-                `SELECT read_id FROM announcement_reads 
-                 WHERE announcement_id = ? 
-                 AND (tenant_id = ? OR user_ad_username = ?)
-                 LIMIT 1`,
-                [ann.announcement_id, session.id, session.username]
-              );
-              unread = !readResult;
-            } catch {
-              unread = true; // ถ้า error ให้ถือว่า unread
+          let unread = false; // ไม่ใช้ unread tracking
+          
+          // กำหนด status จากฐานข้อมูล (รองรับ backward compatibility)
+          let status: string = 'draft';
+          if (ann.status) {
+            status = ann.status;
+          } else if (ann.is_published || ann.is_active) {
+            // Backward compatibility: ถ้าไม่มี status แต่มี is_published/is_active
+            const now = new Date();
+            if (ann.publish_start && new Date(ann.publish_start) > now) {
+              status = 'scheduled';
+            } else if (ann.publish_end && new Date(ann.publish_end) < now) {
+              status = 'expired';
+            } else {
+              status = 'published';
             }
           }
           
@@ -152,7 +145,8 @@ export async function GET(req: Request) {
             content: ann.content || '', // ส่ง content เต็มกลับไป
             excerpt: ann.content ? (ann.content.substring(0, 150) + (ann.content.length > 150 ? '...' : '')) : '',
             target_role: ann.target_role || ann.target_audience || 'all',
-            is_published: ann.is_published !== undefined ? ann.is_published : ann.is_active,
+            status: status,
+            is_published: Boolean(ann.is_published !== undefined ? ann.is_published : (ann.is_active !== undefined ? ann.is_active : false)), // Legacy: เก็บไว้สำหรับ backward compatibility
             publish_start: ann.publish_start,
             publish_end: ann.publish_end,
             created_at: ann.created_at,
@@ -234,7 +228,7 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
-    const { title, content, target_role, is_published, publish_start, publish_end } = body;
+    const { title, content, target_role, status, is_published, publish_start, publish_end } = body;
 
     if (!title || !content) {
       return NextResponse.json(
@@ -251,45 +245,77 @@ export async function POST(req: Request) {
       );
     }
 
+    // กำหนด status อัตโนมัติถ้าไม่ได้ระบุ
+    let finalStatus: string = status || 'draft';
+    if (!status && is_published !== undefined) {
+      // Backward compatibility: ถ้าใช้ is_published แทน status
+      const now = new Date();
+      if (publish_start && new Date(publish_start) > now) {
+        finalStatus = 'scheduled';
+      } else if (is_published) {
+        finalStatus = 'published';
+      } else {
+        finalStatus = 'draft';
+      }
+    }
+
     try {
-      const [result] = await query<{ insertId: number }>(
+      // ใช้ pool.query โดยตรงสำหรับ INSERT เพื่อให้ได้ result object ที่มี insertId
+      // รองรับทั้ง status และ is_published (backward compatibility)
+      const [result] = await pool.query(
         `INSERT INTO announcements 
-         (title, content, target_role, is_published, publish_start, publish_end, created_by_ad_username, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+         (title, content, target_role, status, is_published, publish_start, publish_end, created_by_ad_username, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
         [
           title,
           content,
           target_role || 'all',
-          is_published !== undefined ? (is_published ? 1 : 0) : 1,
+          finalStatus,
+          is_published !== undefined ? (is_published ? 1 : 0) : (finalStatus === 'published' || finalStatus === 'scheduled' ? 1 : 0),
           publish_start ? new Date(publish_start) : null,
           publish_end ? new Date(publish_end) : null,
           session.username,
         ]
-      );
+      ) as any;
+
+      const insertId = result?.insertId;
+      if (!insertId) {
+        throw new Error('Failed to get insertId from query result');
+      }
 
       return NextResponse.json(
-        { announcement_id: result?.insertId },
+        { announcement_id: insertId },
         { status: 201 }
       );
     } catch (error: any) {
       // Fallback สำหรับ schema เก่า
       if (error.message?.includes("Unknown column")) {
-        const [result] = await query<{ insertId: number }>(
-          `INSERT INTO announcements 
-           (title, content, target_audience, is_active, published_at, created_at)
-           VALUES (?, ?, ?, ?, NOW(), NOW())`,
-          [
-            title,
-            content,
-            target_role || 'all',
-            is_published !== undefined ? (is_published ? 1 : 0) : 1,
-          ]
-        );
-        
-        return NextResponse.json(
-          { announcement_id: result?.insertId },
-          { status: 201 }
-        );
+        try {
+          const [result] = await pool.query(
+            `INSERT INTO announcements 
+             (title, content, target_audience, is_active, published_at, created_at)
+             VALUES (?, ?, ?, ?, NOW(), NOW())`,
+            [
+              title,
+              content,
+              target_role || 'all',
+              is_published !== undefined ? (is_published ? 1 : 0) : 1,
+            ]
+          ) as any;
+          
+          const insertId = result?.insertId;
+          if (!insertId) {
+            throw new Error('Failed to get insertId from fallback query result');
+          }
+
+          return NextResponse.json(
+            { announcement_id: insertId },
+            { status: 201 }
+          );
+        } catch (fallbackError: any) {
+          console.error('Fallback query also failed:', fallbackError);
+          throw fallbackError;
+        }
       }
       throw error;
     }

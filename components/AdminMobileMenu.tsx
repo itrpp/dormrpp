@@ -23,7 +23,7 @@ export default function AdminMobileMenu({ sessionName }: MobileMenuProps) {
     { href: '/admin/bills', label: 'บิลค่าใช้จ่าย' },
     { href: 'https://services.rpphosp.go.th/auth', label: 'การซ่อมบำรุง', external: true },
     { href: '/admin/announcements', label: 'ประกาศ' },
-    { href: '/meters', label: '💧⚡ มิเตอร์น้ำ-ไฟ' },
+    { href: '/meters', label: 'ตรวจสอบ💧⚡ มิเตอร์น้ำ-ไฟ' },
   ];
 
   const isActive = (href: string) => {

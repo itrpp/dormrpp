@@ -297,7 +297,7 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
             href="/admin/tenants/add"
             className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
         >
-            เพิ่มผู้เช่าใหม่ (เลือกห้อง)
+            เพิ่มผู้เช่า
           </a>
         </div>
       </div>
@@ -365,6 +365,9 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
             <option value="all">ทั้งหมด</option>
             <option value="active">ปัจจุบันพักอยู่ (active)</option>
             <option value="inactive">ไม่พักแล้ว (inactive)</option>
+            <option value="pending">รอเข้าพัก (pending)</option>
+            <option value="cancelled">ยกเลิกการเช่า (cancelled)</option>
+            <option value="other">อื่นๆ (other)</option>
           </select>
         </div>
       </div>

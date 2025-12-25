@@ -90,14 +90,29 @@ export default function UtilityReadingsClient() {
   useEffect(() => {
     const fetchCycle = async () => {
       setIsLoadingCycle(true);
+      // Clear ข้อมูลเก่าก่อนดึงข้อมูลใหม่
+      setCycleId(null);
+      setRooms([]);
+      setRoomForms(new Map());
+      setSavedReadings([]);
+      
       try {
         const res = await fetch(`/api/billing/cycle?year=${year}&month=${month}`);
         if (res.ok) {
           const data = await res.json();
-          setCycleId(data.cycle_id);
+          if (data.cycle_id) {
+            setCycleId(data.cycle_id);
+          } else {
+            // ไม่พบรอบบิล
+            setCycleId(null);
+          }
+        } else {
+          // ไม่พบรอบบิล
+          setCycleId(null);
         }
       } catch (error) {
         console.error('Error fetching cycle:', error);
+        setCycleId(null);
       } finally {
         setIsLoadingCycle(false);
       }
@@ -281,26 +296,6 @@ export default function UtilityReadingsClient() {
     const form = forms.get(roomId);
     if (form) {
       form[field][subField] = value;
-      
-      // ตรวจสอบว่า meter_end ต้องมากกว่าหรือเท่ากับ meter_start
-      if (subField === 'meter_end' && value !== '' && form[field].meter_start !== '') {
-        const start = Number(form[field].meter_start);
-        const end = Number(value);
-        if (end < start) {
-          alert(`ค่าสิ้นสุด (${end}) ต้องมากกว่าหรือเท่ากับค่าเริ่มต้น (${start}) สำหรับ${field === 'electric' ? 'ค่าไฟฟ้า' : 'ค่าน้ำ'}`);
-          // Reset ค่าสิ้นสุดเป็นค่าเริ่มต้น
-          form[field].meter_end = form[field].meter_start;
-        }
-      } else if (subField === 'meter_start' && value !== '' && form[field].meter_end !== '') {
-        const start = Number(value);
-        const end = Number(form[field].meter_end);
-        if (end < start) {
-          alert(`ค่าสิ้นสุด (${end}) ต้องมากกว่าหรือเท่ากับค่าเริ่มต้น (${start}) สำหรับ${field === 'electric' ? 'ค่าไฟฟ้า' : 'ค่าน้ำ'}`);
-          // Reset ค่าสิ้นสุดเป็นค่าเริ่มต้นใหม่
-          form[field].meter_end = value;
-        }
-      }
-      
       forms.set(roomId, form);
       setRoomForms(forms);
     }
@@ -491,7 +486,7 @@ export default function UtilityReadingsClient() {
                 max={maxMonthValue}
               />
               <p className="mt-2 text-xs text-gray-500">
-                รอบบิล: {getMonthNameThai(month)} {year} (พ.ศ.)
+                รอบบิล: {getMonthNameThai(month)} {year} 
               </p>
             </div>
             <div className="flex items-end">
@@ -505,12 +500,20 @@ export default function UtilityReadingsClient() {
                     กำลังโหลดรอบบิล...
                   </div>
                 )}
-                {cycleId && !isLoadingCycle && (
+                {!isLoadingCycle && cycleId && (
                   <div className="flex items-center gap-2 text-sm text-green-600 font-medium">
                     <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                     </svg>
                     พร้อมบันทึก: {getMonthNameThai(month)} {year}
+                  </div>
+                )}
+                {!isLoadingCycle && !cycleId && (
+                  <div className="flex items-center gap-2 text-sm text-red-600 font-medium">
+                    <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    ไม่พบรอบบิลสำหรับเดือน/ปีที่เลือก
                   </div>
                 )}
               </div>
@@ -531,7 +534,20 @@ export default function UtilityReadingsClient() {
       </div>
 
       {/* ตารางบันทึกเลขมิเตอร์ */}
-      {isLoadingRooms ? (
+      {!cycleId ? (
+        !isLoadingCycle ? (
+          <div className="bg-white shadow rounded-lg p-8 text-center">
+            <div className="flex flex-col items-center gap-4">
+              <svg className="h-16 w-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <p className="text-gray-600 text-lg">กรุณาเลือกรอบบิลที่ต้องการบันทึกข้อมูล</p>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center py-8">กำลังโหลดรอบบิล...</div>
+        )
+      ) : isLoadingRooms ? (
         <div className="text-center py-8">กำลังโหลดข้อมูล...</div>
       ) : (
         <div className="bg-white shadow rounded-lg overflow-hidden">
@@ -606,7 +622,7 @@ export default function UtilityReadingsClient() {
                       {/* ไฟฟ้า */}
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-center bg-yellow-50 border border-gray-300">
                         <span className="font-medium text-yellow-700">
-                          {form.electric.previous_end !== null ? form.electric.previous_end : '-'}
+                        {form.electric.previous_end !== null ? form.electric.previous_end : '-'}
                         </span>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap border border-gray-300">
@@ -638,7 +654,7 @@ export default function UtilityReadingsClient() {
                       {/* น้ำ */}
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-center bg-blue-50 border-l-2 border-r border-t border-b border-gray-300">
                         <span className="font-medium text-blue-700">
-                          {form.water.previous_end !== null ? form.water.previous_end : '-'}
+                        {form.water.previous_end !== null ? form.water.previous_end : '-'}
                         </span>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap border-l-2 border-r border-t border-b border-gray-300">

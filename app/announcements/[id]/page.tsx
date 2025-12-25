@@ -7,17 +7,18 @@ import PublicLayout from '@/components/PublicLayout';
 
 async function getAnnouncement(id: number) {
   try {
+    // ไม่จำกัดการเข้าถึง - แสดงเฉพาะที่ published แล้ว
     const [announcement] = await query<any>(
       `SELECT 
         a.*,
         (SELECT COUNT(*) FROM announcement_files af WHERE af.announcement_id = a.announcement_id) as file_count
       FROM announcements a
       WHERE a.announcement_id = ?
-        AND (a.target_role = 'all' OR a.target_role = 'tenant')
-        AND (a.is_published = 1 OR a.is_active = 1)
-        AND COALESCE(a.is_deleted, 0) = 0
-        AND (a.publish_start IS NULL OR a.publish_start <= NOW())
-        AND (a.publish_end IS NULL OR a.publish_end >= NOW())`,
+        AND (
+          a.status = 'published'
+          OR 
+          (a.status IS NULL AND COALESCE(a.is_published, 0) = 1)
+        )`,
       [id]
     );
 
@@ -44,8 +45,11 @@ async function getAnnouncement(id: number) {
         const [announcement] = await query<any>(
           `SELECT * FROM announcements 
            WHERE announcement_id = ?
-             AND (target_audience = 'all' OR target_audience = 'tenant')
-             AND is_active = 1`,
+             AND (
+               status = 'published'
+               OR 
+               (status IS NULL AND COALESCE(is_published, 0) = 1)
+             )`,
           [id]
         );
         return announcement ? { announcement, files: [] } : null;

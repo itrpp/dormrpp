@@ -3,6 +3,8 @@ import { query, queryOne, pool } from '@/lib/db';
 import type { Bill, BillUtilityReading, BillingCycle, UtilityRate } from '@/types/db';
 
 export interface BillWithDetails extends Bill {
+  room_id?: number;
+  tenant_id?: number;
   room_number: string;
   building_name: string;
   tenant_name: string;

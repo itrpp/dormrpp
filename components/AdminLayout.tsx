@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import LogoutButton from './LogoutButton';
@@ -12,14 +12,30 @@ interface AdminLayoutProps {
 
 export default function AdminLayout({ children, sessionName }: AdminLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const pathname = usePathname();
+
+  // โหลดสถานะ sidebar จาก localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('adminSidebarCollapsed');
+    if (saved !== null) {
+      setSidebarCollapsed(saved === 'true');
+    }
+  }, []);
+
+  // บันทึกสถานะ sidebar ลง localStorage
+  const toggleSidebar = () => {
+    const newState = !sidebarCollapsed;
+    setSidebarCollapsed(newState);
+    localStorage.setItem('adminSidebarCollapsed', String(newState));
+  };
 
   const menuItems = [
     { href: '/admin', label: 'หน้าหลัก', icon: '🏠' },
     { href: '/admin/rooms', label: 'ห้องพัก', icon: '🏢' },
     { href: '/admin/tenants', label: 'ผู้เช่า', icon: '👥' },
-    { href: '/admin/utility-readings', label: 'บันทึกเลขมิเตอร์', icon: '📝' },
-    { href: '/meters', label: '💧⚡ มิเตอร์น้ำ-ไฟ', icon: '' },
+      { href: '/admin/utility-readings', label: 'บันทึกเลขมิเตอร์', icon: '📝' },
+      { href: '/meters', label: '💧⚡ตรวจสอบ มิเตอร์น้ำ-ไฟ', icon: '' },
     { href: '/admin/bills', label: 'บิลค่าใช้จ่าย', icon: '💰' },
     { href: 'https://services.rpphosp.go.th/auth', label: 'การซ่อมบำรุง', icon: '🔧', external: true },
     { href: '/admin/announcements', label: 'ประกาศ', icon: '📢' },
@@ -38,27 +54,46 @@ export default function AdminLayout({ children, sessionName }: AdminLayoutProps)
   return (
     <div className="min-h-screen bg-gray-50 flex">
       {/* Sidebar - Desktop */}
-      <aside className="hidden lg:flex lg:flex-col lg:w-64 lg:fixed lg:inset-y-0 lg:z-30 bg-white border-r border-gray-200">
+      <aside className={`hidden lg:flex lg:flex-col lg:fixed lg:inset-y-0 lg:z-30 bg-white border-r border-gray-200 transition-all duration-300 ${
+        sidebarCollapsed ? 'lg:w-16' : 'lg:w-64'
+      }`}>
         {/* Logo Section */}
-        <div className="flex items-center gap-3 px-4 py-4 border-b border-gray-200">
+        <div className={`flex items-center gap-3 px-4 py-4 border-b border-gray-200 ${
+          sidebarCollapsed ? 'justify-center' : ''
+        }`}>
           <img
             src="/logo.jpg"
             alt="หอพักรวงผึ้ง"
             className="h-10 w-10 object-cover rounded-full flex-shrink-0"
           />
-          <div className="min-w-0">
-            <h1 className="text-sm font-bold text-gray-900 truncate">
-              ระบบจัดการหอพัก
-            </h1>
-            <p className="text-xs text-gray-500 truncate">
-              โรงพยาบาลราชพิพัฒน์
-            </p>
-          </div>
+          {!sidebarCollapsed && (
+            <div className="min-w-0">
+              <h1 className="text-sm font-bold text-gray-900 truncate">
+                ระบบจัดการหอพัก
+              </h1>
+              <p className="text-xs text-gray-500 truncate">
+                โรงพยาบาลราชพิพัฒน์
+              </p>
+            </div>
+          )}
+          <button
+            onClick={toggleSidebar}
+            className="ml-auto p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors"
+            title={sidebarCollapsed ? 'ขยายเมนู' : 'ยุบเมนู'}
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              {sidebarCollapsed ? (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              )}
+            </svg>
+          </button>
         </div>
 
         {/* Navigation Menu */}
         <nav className="flex-1 overflow-y-auto py-4">
-          <div className="px-2 space-y-1">
+          <div className={`space-y-1 ${sidebarCollapsed ? 'px-2' : 'px-2'}`}>
             {menuItems.map((item) => {
               const active = isActive(item.href);
               const MenuLink = item.external ? 'a' : Link;
@@ -70,14 +105,17 @@ export default function AdminLayout({ children, sessionName }: AdminLayoutProps)
                 <MenuLink
                   key={item.href}
                   {...linkProps}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  className={`flex items-center gap-3 rounded-lg text-sm font-medium transition-colors ${
+                    sidebarCollapsed ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5'
+                  } ${
                     active
                       ? 'bg-blue-50 text-blue-700 border border-blue-200'
                       : 'text-gray-700 hover:bg-gray-100'
                   }`}
+                  title={sidebarCollapsed ? item.label : ''}
                 >
-                  {item.icon && <span className="text-lg">{item.icon}</span>}
-                  <span>{item.label}</span>
+                  {item.icon && <span className="text-lg flex-shrink-0">{item.icon}</span>}
+                  {!sidebarCollapsed && <span>{item.label}</span>}
                 </MenuLink>
               );
             })}
@@ -155,7 +193,9 @@ export default function AdminLayout({ children, sessionName }: AdminLayoutProps)
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col lg:pl-64">
+      <div className={`flex-1 flex flex-col transition-all duration-300 ${
+        sidebarCollapsed ? 'lg:pl-16' : 'lg:pl-64'
+      }`}>
         {/* Top Header */}
         <header className="bg-white shadow-sm border-b border-gray-200 sticky top-0 z-20">
           <div className="px-4 sm:px-6 lg:px-8 py-3 sm:py-4">
@@ -179,7 +219,7 @@ export default function AdminLayout({ children, sessionName }: AdminLayoutProps)
                    pathname?.startsWith('/admin/utility-readings') ? 'บันทึกเลขมิเตอร์' :
                    pathname?.startsWith('/admin/bills') ? 'บิลค่าใช้จ่าย' :
                    pathname?.startsWith('/admin/announcements') ? 'ประกาศ' :
-                   pathname?.startsWith('/meters') ? '💧⚡ มิเตอร์น้ำและไฟฟ้า' :
+                   pathname?.startsWith('/meters') ? 'ตรวจสอบ💧⚡ มิเตอร์น้ำและไฟฟ้า' :
                    'ระบบจัดการหอพัก'}
                 </h2>
               </div>

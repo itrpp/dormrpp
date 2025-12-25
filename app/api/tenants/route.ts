@@ -145,25 +145,31 @@ export async function POST(req: Request) {
       move_in_date,
     } = body;
 
-    if (!first_name || !last_name || !room_number) {
+    if (!first_name || !last_name) {
       return NextResponse.json(
-        { error: 'first_name, last_name, room_number จำเป็นต้องกรอก' },
+        { error: 'first_name และ last_name จำเป็นต้องกรอก' },
         { status: 400 }
       );
     }
 
-    // หา room_id จาก room_number
-    const room = await query<{ room_id: number; building_id: number }>(
-      'SELECT room_id, building_id FROM rooms WHERE room_number = ? LIMIT 1',
-      [room_number]
-    );
-    if (room.length === 0) {
-      return NextResponse.json(
-        { error: 'ไม่พบหมายเลขห้องในระบบ' },
-        { status: 400 }
+    // ถ้ามี room_number ให้หา room_id
+    let room_id: number | null = null;
+    if (room_number) {
+      const room = await query<{ room_id: number; building_id: number }>(
+        'SELECT room_id, building_id FROM rooms WHERE room_number = ? LIMIT 1',
+        [room_number]
       );
+      if (room.length === 0) {
+        return NextResponse.json(
+          { error: 'ไม่พบหมายเลขห้องในระบบ' },
+          { status: 400 }
+        );
+      }
+      room_id = room[0].room_id;
     }
-    const room_id = room[0].room_id;
+
+    // กำหนด status: ถ้าไม่มี room_number ให้เป็น 'pending' (รอเข้าพัก)
+    const tenantStatus = room_number ? (status || 'active') : 'pending';
 
     // insert tenant
     let tenant_id: number;
@@ -173,7 +179,7 @@ export async function POST(req: Request) {
       INSERT INTO tenants (first_name_th, last_name_th, email, phone, status, is_deleted)
       VALUES (?, ?, ?, ?, ?, 0)
     `,
-      [first_name, last_name, email || null, phone || null, status || 'active']
+      [first_name, last_name, email || null, phone || null, tenantStatus]
     );
       tenant_id = (result as any).insertId;
     } catch (insertErr: any) {
@@ -184,7 +190,7 @@ export async function POST(req: Request) {
           INSERT INTO tenants (first_name_th, last_name_th, email, phone, status)
           VALUES (?, ?, ?, ?, ?)
         `,
-          [first_name, last_name, email || null, phone || null, status || 'active']
+          [first_name, last_name, email || null, phone || null, tenantStatus]
         );
         tenant_id = (fallbackResult as any).insertId;
       } else {
@@ -192,8 +198,8 @@ export async function POST(req: Request) {
       }
     }
 
-    // สร้าง contract active ใหม่
-    if (status === 'active') {
+    // สร้าง contract active ใหม่ (เฉพาะเมื่อมี room_number)
+    if (room_number && room_id && tenantStatus === 'active') {
       try {
         // ตรวจสอบว่าห้องสามารถเพิ่มผู้เข้าพักได้หรือไม่
         const availability = await checkRoomAvailability(room_id);

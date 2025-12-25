@@ -72,7 +72,7 @@ interface Contract {
 }
 
 interface BillForm {
-  contract_id: number | '';
+  contract_ids: number[]; // เปลี่ยนเป็น array เพื่อรองรับหลายสัญญาเช่า
   billing_year: number;
   billing_month: number;
   electricity: {
@@ -121,7 +121,7 @@ export default function AdminBillsClient() {
   
   const [formMonthValue, setFormMonthValue] = useState(formInitialMonthValue);
   const [form, setForm] = useState<BillForm>({
-    contract_id: '',
+    contract_ids: [], // เปลี่ยนเป็น array
     billing_year: formBeYear,
     billing_month: formBeMonth,
     electricity: {
@@ -134,9 +134,9 @@ export default function AdminBillsClient() {
     },
     status: 'draft',
   });
-  const selectedContract = useMemo(
-    () => contracts.find((c) => c.contract_id === form.contract_id) || null,
-    [contracts, form.contract_id]
+  const selectedContracts = useMemo(
+    () => contracts.filter((c) => form.contract_ids.includes(c.contract_id)),
+    [contracts, form.contract_ids]
   );
 
   // แปลง month value (ค.ศ.) เป็น year และ month (พ.ศ.)
@@ -225,15 +225,17 @@ export default function AdminBillsClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formMonthValue]);
 
-  // ดึง utility readings เมื่อเลือก contract และ billing cycle
+  // ดึง utility readings เมื่อเลือก contract และ billing cycle (สำหรับ contract แรกที่เลือก)
   useEffect(() => {
     const fetchUtilityReadings = async () => {
-      if (!form.contract_id || !form.billing_year || !form.billing_month) {
+      if (form.contract_ids.length === 0 || !form.billing_year || !form.billing_month) {
         setUtilityReadings({ electric: null, water: null });
         return;
       }
 
-      const selectedContract = contracts.find(c => c.contract_id === form.contract_id);
+      // ใช้ contract แรกที่เลือกเพื่อแสดง utility readings
+      const firstContractId = form.contract_ids[0];
+      const selectedContract = contracts.find(c => c.contract_id === firstContractId);
       if (!selectedContract) {
         setUtilityReadings({ electric: null, water: null });
         return;
@@ -277,7 +279,7 @@ export default function AdminBillsClient() {
     };
 
     fetchUtilityReadings();
-  }, [form.contract_id, form.billing_year, form.billing_month, contracts]);
+  }, [form.contract_ids, form.billing_year, form.billing_month, contracts]);
 
   // ปิด modal
   const closeCreateModal = () => {
@@ -285,7 +287,7 @@ export default function AdminBillsClient() {
     // Reset form
     setFormMonthValue(formInitialMonthValue);
     setForm({
-      contract_id: '',
+      contract_ids: [], // เปลี่ยนเป็น array
       billing_year: formBeYear,
       billing_month: formBeMonth,
       electricity: {
@@ -301,88 +303,89 @@ export default function AdminBillsClient() {
     setUtilityReadings({ electric: null, water: null });
   };
 
-  // สร้างบิล (ตามโครงสร้างใหม่)
+  // สร้างบิล (ตามโครงสร้างใหม่) - รองรับหลายสัญญาเช่า
   const handleCreateBill = async () => {
-    if (!form.contract_id || !form.billing_year || !form.billing_month) {
+    if (form.contract_ids.length === 0 || !form.billing_year || !form.billing_month) {
       alert('กรุณาเลือกสัญญาเช่าและรอบบิล');
       return;
     }
 
-    // ป้องกันการสร้างบิลซ้ำในรอบบิลเดียวกัน (อ้างอิงเดือน/ปีจาก dropdown ในโมดัล)
-    // ใช้ข้อมูลจาก API ตามปี/เดือนที่เลือก ไม่ผูกกับตัวกรองปี/เดือนของหน้าหลัก
+    // ดึงหรือสร้าง billing cycle
+    let cycleId: number;
     try {
-      const dupRes = await fetch(
-        `/api/bills/detailed?year=${form.billing_year}&month=${form.billing_month}`
-      );
-      if (dupRes.ok) {
-        const dupData = await dupRes.json();
-        const hasDuplicate = Array.isArray(dupData)
-          ? dupData.some(
-              (bill: DetailedBill) =>
-                bill.contract_id === form.contract_id &&
-                bill.billing_year === form.billing_year &&
-                bill.billing_month === form.billing_month
-            )
-          : false;
-        if (hasDuplicate) {
-          alert('สัญญานี้มีการออกบิลรอบนี้แล้ว');
-          return;
-        }
-      }
-    } catch (dupErr) {
-      console.error('Error checking duplicate bills:', dupErr);
-      alert('ไม่สามารถตรวจสอบบิลซ้ำได้ กรุณาลองใหม่');
-      return;
-    }
-
-    try {
-      const selectedContract = contracts.find(c => c.contract_id === form.contract_id);
-      if (!selectedContract) {
-        alert('ไม่พบสัญญาเช่าที่เลือก');
-        return;
-      }
-
-      // ดึงหรือสร้าง billing cycle
       const cycleRes = await fetch(`/api/billing/cycle?year=${form.billing_year}&month=${form.billing_month}`);
       if (!cycleRes.ok) {
         const errorData = await cycleRes.json().catch(() => ({}));
         throw new Error(errorData.error || 'Failed to get/create billing cycle');
       }
       const cycleData = await cycleRes.json();
-      const cycleId = cycleData.cycle_id;
-
-      // ตรวจสอบว่ามี utility readings หรือไม่
-      if (!utilityReadings.electric && !utilityReadings.water) {
-        alert('กรุณาบันทึกเลขมิเตอร์ก่อนสร้างบิล (ไปที่หน้า "บันทึกเลขมิเตอร์")');
-        return;
-      }
-
-      // สร้างบิลสำหรับ contract นี้
-      // ระบบจะคำนวณ electric_amount และ water_amount จาก utility readings อัตโนมัติ
-      // ไม่ต้องบันทึก utility readings อีกครั้ง เพราะบันทึกไว้แล้วในหน้า "บันทึกเลขมิเตอร์"
-      const billRes = await fetch('/api/bills', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contract_id: Number(form.contract_id),
-          cycle_id: cycleId,
-          maintenance_fee: MAINTENANCE_FEE,
-          electric_amount: 0, // จะคำนวณจาก utility readings และ rates
-          water_amount: 0, // จะคำนวณจาก utility readings และ rates
-          status: form.status,
-        }),
-      });
-
-      if (!billRes.ok) {
-        const errorData = await billRes.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to create bill');
-      }
-
-      alert('สร้างบิลสำเร็จ');
-      closeCreateModal();
-      fetchBills(); // Refresh bills list
+      cycleId = cycleData.cycle_id;
     } catch (error: any) {
-      console.error('Error creating bill:', error);
+      alert(`ไม่สามารถดึงรอบบิลได้: ${error.message || 'Unknown error'}`);
+      return;
+    }
+
+    // ตรวจสอบบิลซ้ำและสร้างบิลสำหรับทุก contract ที่เลือก
+    try {
+      const dupRes = await fetch(
+        `/api/bills/detailed?year=${form.billing_year}&month=${form.billing_month}`
+      );
+      const existingBills: DetailedBill[] = dupRes.ok ? await dupRes.json() : [];
+
+      const contractsToProcess = contracts.filter(c => form.contract_ids.includes(c.contract_id));
+      const successCount: number[] = [];
+      const errorMessages: string[] = [];
+
+      for (const contract of contractsToProcess) {
+        // ตรวจสอบบิลซ้ำ
+        const hasDuplicate = existingBills.some(
+          (bill: DetailedBill) =>
+            bill.contract_id === contract.contract_id &&
+            bill.billing_year === form.billing_year &&
+            bill.billing_month === form.billing_month
+        );
+
+        if (hasDuplicate) {
+          errorMessages.push(`${contract.building_name} - ห้อง ${contract.room_number}: มีบิลแล้ว`);
+          continue;
+        }
+
+        // สร้างบิลสำหรับ contract นี้
+        const billRes = await fetch('/api/bills', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contract_id: contract.contract_id,
+            cycle_id: cycleId,
+            maintenance_fee: MAINTENANCE_FEE,
+            electric_amount: 0, // จะคำนวณจาก utility readings และ rates
+            water_amount: 0, // จะคำนวณจาก utility readings และ rates
+            status: form.status,
+          }),
+        });
+
+        if (billRes.ok) {
+          successCount.push(contract.contract_id);
+        } else {
+          const errorData = await billRes.json().catch(() => ({}));
+          errorMessages.push(`${contract.building_name} - ห้อง ${contract.room_number}: ${errorData.error || 'Failed to create bill'}`);
+        }
+      }
+
+      // แสดงผลลัพธ์
+      if (successCount.length > 0) {
+        alert(`สร้างบิลสำเร็จ ${successCount.length} ใบ`);
+      }
+      if (errorMessages.length > 0) {
+        alert('เกิดข้อผิดพลาด:\n' + errorMessages.join('\n'));
+      }
+
+      if (successCount.length > 0) {
+        closeCreateModal();
+        fetchBills(); // Refresh bills list
+      }
+    } catch (error: any) {
+      console.error('Error creating bills:', error);
       alert(`ไม่สามารถสร้างบิลได้: ${error.message || 'Unknown error'}`);
     }
   };
@@ -560,7 +563,7 @@ const formatInteger = (num: number | null | undefined): string => {
             <label className="block text-xs font-medium text-gray-700 mb-1">
               📅 เลือกรอบบิล (เดือน/ปี)
             </label>
-            <input
+          <input
               type="month"
               className="border border-gray-300 rounded-lg px-4 py-2.5 text-base focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
               value={monthValue}
@@ -809,24 +812,54 @@ const formatInteger = (num: number | null | undefined): string => {
             <h2 className="text-2xl font-bold mb-4">สร้างบิลใหม่</h2>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              {/* เลือกสัญญาเช่า */}
+              {/* เลือกสัญญาเช่า (แบบ checkbox) */}
               <div>
-                <label className="block text-sm font-medium mb-1">
+                <label className="block text-sm font-medium mb-2">
                   เลือกสัญญาเช่า (ผู้เช่า) <span className="text-red-500">*</span>
                 </label>
-                <select
-                  className="w-full border rounded-md px-3 py-2"
-                  value={form.contract_id}
-                  onChange={(e) => setForm({ ...form, contract_id: e.target.value ? Number(e.target.value) : '' })}
-                  disabled={isLoadingContracts}
-                >
-                  <option value="">-- เลือกสัญญาเช่า --</option>
-                  {contracts.map((contract) => (
-                    <option key={contract.contract_id} value={contract.contract_id}>
-                      {contract.building_name} - ห้อง {contract.room_number} - {contract.first_name_th} {contract.last_name_th}
-                    </option>
-                  ))}
-                </select>
+                <div className="w-full border rounded-md px-3 py-2 max-h-60 overflow-y-auto bg-white">
+                  {isLoadingContracts ? (
+                    <p className="text-sm text-gray-500">กำลังโหลด...</p>
+                  ) : contracts.length === 0 ? (
+                    <p className="text-sm text-gray-500">ไม่มีสัญญาเช่า</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {contracts.map((contract) => (
+                        <label
+                          key={contract.contract_id}
+                          className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-2 rounded"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={form.contract_ids.includes(contract.contract_id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setForm({
+                                  ...form,
+                                  contract_ids: [...form.contract_ids, contract.contract_id],
+                                });
+                              } else {
+                                setForm({
+                                  ...form,
+                                  contract_ids: form.contract_ids.filter(id => id !== contract.contract_id),
+                                });
+                              }
+                            }}
+                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                          />
+                          <span className="text-sm text-gray-700">
+                            {contract.building_name} - ห้อง {contract.room_number} - {contract.first_name_th} {contract.last_name_th}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {form.contract_ids.length > 0 && (
+                  <p className="mt-2 text-xs text-gray-500">
+                    เลือกแล้ว {form.contract_ids.length} สัญญา
+                  </p>
+                )}
               </div>
 
               {/* รอบบิล (เดือน/ปี) */}
@@ -842,7 +875,7 @@ const formatInteger = (num: number | null | undefined): string => {
                   max={formMaxMonthValue}
                 />
                 <p className="mt-1 text-xs text-gray-500">
-                  {getMonthNameThai(form.billing_month)} {form.billing_year} (พ.ศ.)
+                  {getMonthNameThai(form.billing_month)} {form.billing_year} 
                 </p>
               </div>
 
@@ -893,15 +926,15 @@ const formatInteger = (num: number | null | undefined): string => {
               ) : (
                 <div className="text-sm text-gray-500 space-y-2">
                   <div>ยังไม่มีการบันทึกเลขมิเตอร์สำหรับรอบบิลนี้</div>
-                  {selectedContract && (
+                  {selectedContracts.length > 0 && (
                     <button
                       type="button"
                       onClick={() =>
-                        (window.location.href = `/admin/utility-readings?room_id=${selectedContract.room_id}`)
+                        (window.location.href = `/admin/utility-readings?room_id=${selectedContracts[0].room_id}`)
                       }
                       className="inline-flex items-center px-3 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700"
                     >
-                      ไปหน้าบันทึกเลขมิเตอร์ (ห้อง {selectedContract.room_number})
+                      ไปหน้าบันทึกเลขมิเตอร์ (ห้อง {selectedContracts[0].room_number})
                     </button>
                   )}
                 </div>
@@ -931,15 +964,15 @@ const formatInteger = (num: number | null | undefined): string => {
               ) : (
                 <div className="text-sm text-gray-500 space-y-2">
                   <div>ยังไม่มีการบันทึกเลขมิเตอร์สำหรับรอบบิลนี้</div>
-                  {selectedContract && (
+                  {selectedContracts.length > 0 && (
                     <button
                       type="button"
                       onClick={() =>
-                        (window.location.href = `/admin/utility-readings?room_id=${selectedContract.room_id}`)
+                        (window.location.href = `/admin/utility-readings?room_id=${selectedContracts[0].room_id}`)
                       }
                       className="inline-flex items-center px-3 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700"
                     >
-                      ไปหน้าบันทึกเลขมิเตอร์ (ห้อง {selectedContract.room_number})
+                      ไปหน้าบันทึกเลขมิเตอร์ (ห้อง {selectedContracts[0].room_number})
                     </button>
                   )}
                 </div>

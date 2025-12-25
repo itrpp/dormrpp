@@ -59,7 +59,7 @@ export async function POST(req: Request) {
       // แปลง LDAPUserData เป็น ActiveDirectoryUser สำหรับ role determination
       // หมายเหตุ: groups ใน LDAPUserData ใช้ semicolon (;) เป็นตัวแยก ไม่ใช่ comma (,)
       const memberOfArray = authResult.user.groups 
-        ? authResult.user.groups.split(';').map(g => g.trim()).filter(g => g.length > 0)
+        ? authResult.user.groups.split(';').map((g: string) => g.trim()).filter((g: string) => g.length > 0)
         : [];
       
       const adUser: ActiveDirectoryUser = {

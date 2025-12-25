@@ -1,6 +1,7 @@
 // app/my/bills/page.tsx - Tenant can see own bills
 import Link from 'next/link';
 import { getBillsByMonth } from '@/lib/repositories/bills';
+import type { BillWithDetails } from '@/lib/repositories/bills';
 
 // Note: In a real app, you would get tenant_id and room_id from session/auth
 async function getTenantBills(roomId: number = 1) {
@@ -13,7 +14,7 @@ async function getTenantBills(roomId: number = 1) {
 
 export default async function TenantBillsPage() {
   // TODO: Get room_id from session/auth based on tenant
-  const bills = await getTenantBills(1);
+  const bills: BillWithDetails[] = await getTenantBills(1);
 
   return (
     <div className="max-w-6xl mx-auto">

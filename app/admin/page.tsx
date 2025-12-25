@@ -1,5 +1,6 @@
 // app/admin/page.tsx - Admin dashboard
 import { query } from '@/lib/db';
+import { getAllRoomsOccupancy } from '@/lib/repositories/room-occupancy';
 import DashboardCharts from './DashboardCharts';
 
 interface DashboardStats {
@@ -36,15 +37,45 @@ async function getDashboardStats(): Promise<DashboardStats> {
   const currentMonth = now.getMonth() + 1; // 1-12
 
   try {
-    // 1. สถิติห้องพัก - รวม query เป็นอันเดียว
-    let roomStats: { status: string; count: number }[] = [];
+    // 1. สถิติห้องพัก - ใช้ข้อมูล occupancy เพื่อคำนวณสถานะตามจำนวนผู้เข้าพักจริง
+    let totalRooms = 0;
+    let availableRooms = 0;
+    let occupiedRooms = 0;
+    let maintenanceRooms = 0;
+    
     try {
-      roomStats = await query<{ status: string; count: number }>(
-        `SELECT status, COUNT(*) as count 
-         FROM rooms 
-         WHERE COALESCE(is_deleted, 0) = 0
-         GROUP BY status`
-      );
+      // ดึงข้อมูลห้องทั้งหมด
+      const allRooms = await query<{ room_id: number; status: string }>(
+        `SELECT room_id, status 
+       FROM rooms 
+         WHERE COALESCE(is_deleted, 0) = 0`
+    );
+    
+      totalRooms = allRooms.length;
+      
+      // ดึงข้อมูล occupancy ของห้องทั้งหมด
+      const occupancies = await getAllRoomsOccupancy();
+      const occupancyMap = new Map<number, { current_occupants: number }>();
+      occupancies.forEach((occ) => {
+        if (occ && occ.room_id) {
+          occupancyMap.set(occ.room_id, { current_occupants: occ.current_occupants || 0 });
+        }
+      });
+      
+      // นับสถานะตามจำนวนผู้เข้าพักจริง (เหมือน logic ในหน้าห้องพัก)
+      for (const room of allRooms) {
+        const occupancy = occupancyMap.get(room.room_id);
+        const currentOccupants = occupancy?.current_occupants || 0;
+        
+        // กำหนดสถานะตามจำนวนผู้เข้าพัก
+        if (room.status === 'maintenance') {
+          maintenanceRooms++;
+        } else if (currentOccupants > 0) {
+          occupiedRooms++;
+        } else {
+          availableRooms++;
+        }
+      }
     } catch (error: any) {
       if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
         // Silent fallback - ไม่ log เพื่อลด log noise
@@ -52,17 +83,16 @@ async function getDashboardStats(): Promise<DashboardStats> {
         throw error;
       }
     }
-    
-    const totalRooms = roomStats.reduce((sum, r) => sum + (r.count || 0), 0);
-    const availableRooms = roomStats.find(r => r.status === 'available')?.count || 0;
-    const occupiedRooms = roomStats.find(r => r.status === 'occupied')?.count || 0;
-    const maintenanceRooms = roomStats.find(r => r.status === 'maintenance')?.count || 0;
 
     // 2. สถิติผู้เช่า
+    // ผู้เช่า pending รอเข้าพัก (นับเฉพาะที่มี status = 'pending')
     let totalTenants = 0;
     try {
       const [totalTenantsResult] = await query<{ count: number }>(
-        'SELECT COUNT(*) as count FROM tenants WHERE COALESCE(is_deleted, 0) = 0'
+        `SELECT COUNT(*) as count 
+         FROM tenants 
+         WHERE COALESCE(status, 'inactive') = 'pending' 
+         AND COALESCE(is_deleted, 0) = 0`
       );
       totalTenants = totalTenantsResult?.count || 0;
     } catch (error: any) {
@@ -74,42 +104,44 @@ async function getDashboardStats(): Promise<DashboardStats> {
     }
 
     // ผู้เช่าใหม่เดือนนี้ (จาก contracts.start_date)
+    // Reset: ตั้งค่าเป็น 0 ชั่วคราว
     let newTenantsThisMonth = 0;
-    try {
-      const [newTenantsResult] = await query<{ count: number }>(
-        `SELECT COUNT(DISTINCT c.tenant_id) as count 
-         FROM contracts c 
-         WHERE YEAR(c.start_date) = ? AND MONTH(c.start_date) = ?`,
-        [currentYear, currentMonth]
-      );
-      newTenantsThisMonth = newTenantsResult?.count || 0;
-    } catch (error: any) {
-      // Fallback: ถ้าไม่มีตาราง contracts หรือ Too many connections
-      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
-        // Silent fallback - ไม่ log เพื่อลด log noise
-      } else {
-        // Log เฉพาะ error อื่นๆ ที่ไม่ใช่ connection error
-      }
-    }
+    // try {
+    //   const [newTenantsResult] = await query<{ count: number }>(
+    //     `SELECT COUNT(DISTINCT c.tenant_id) as count 
+    //      FROM contracts c 
+    //      WHERE YEAR(c.start_date) = ? AND MONTH(c.start_date) = ?`,
+    //     [currentYear, currentMonth]
+    //   );
+    //   newTenantsThisMonth = newTenantsResult?.count || 0;
+    // } catch (error: any) {
+    //   // Fallback: ถ้าไม่มีตาราง contracts หรือ Too many connections
+    //   if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+    //     // Silent fallback - ไม่ log เพื่อลด log noise
+    //   } else {
+    //     // Log เฉพาะ error อื่นๆ ที่ไม่ใช่ connection error
+    //   }
+    // }
 
     // ผู้เช่าออกเดือนนี้ (จาก contracts.end_date)
+    // Reset: ตั้งค่าเป็น 0 ชั่วคราว
     let leftTenantsThisMonth = 0;
-    try {
-      const [leftTenantsResult] = await query<{ count: number }>(
-        `SELECT COUNT(DISTINCT c.tenant_id) as count 
-         FROM contracts c 
-         WHERE YEAR(c.end_date) = ? AND MONTH(c.end_date) = ? AND c.end_date IS NOT NULL`,
-        [currentYear, currentMonth]
-      );
-      leftTenantsThisMonth = leftTenantsResult?.count || 0;
-    } catch (error: any) {
-      // Fallback: ถ้าไม่มีตาราง contracts หรือ Too many connections
-      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
-        // Silent fallback - ไม่ log เพื่อลด log noise
-      } else {
-        // Log เฉพาะ error อื่นๆ ที่ไม่ใช่ connection error
-      }
-    }
+    // try {
+    //   const [leftTenantsResult] = await query<{ count: number }>(
+    //     `SELECT COUNT(DISTINCT c.tenant_id) as count 
+    //      FROM contracts c 
+    //      WHERE YEAR(c.end_date) = ? AND MONTH(c.end_date) = ? AND c.end_date IS NOT NULL`,
+    //     [currentYear, currentMonth]
+    //   );
+    //   leftTenantsThisMonth = leftTenantsResult?.count || 0;
+    // } catch (error: any) {
+    //   // Fallback: ถ้าไม่มีตาราง contracts หรือ Too many connections
+    //   if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+    //     // Silent fallback - ไม่ log เพื่อลด log noise
+    //   } else {
+    //     // Log เฉพาะ error อื่นๆ ที่ไม่ใช่ connection error
+    //   }
+    // }
 
     // ผู้เช่าปัจจุบัน (contracts.status = 'active')
     let currentTenants = 0;
@@ -158,29 +190,29 @@ async function getDashboardStats(): Promise<DashboardStats> {
     let totalExpenses = 0;
     
     try {
-      const [revenueThisMonthResult, totalRevenueResult, expensesThisMonthResult, totalExpensesResult] = await Promise.all([
-        query<{ total: number }>(
-          `SELECT COALESCE(SUM(b.total_amount), 0) as total 
-           FROM bills b
-           JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
-           WHERE cy.billing_year = ? AND cy.billing_month = ?`,
-          [buddhistYear, currentMonth]
-        ),
-        query<{ total: number }>(
-          'SELECT COALESCE(SUM(total_amount), 0) as total FROM bills'
-        ),
-        query<{ total: number }>(
-          `SELECT COALESCE(SUM(b.maintenance_fee), 0) as total 
-           FROM bills b
-           JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
-           WHERE cy.billing_year = ? AND cy.billing_month = ?`,
-          [buddhistYear, currentMonth]
-        ),
-        query<{ total: number }>(
-          'SELECT COALESCE(SUM(maintenance_fee), 0) as total FROM bills'
-        )
-      ]);
-      
+    const [revenueThisMonthResult, totalRevenueResult, expensesThisMonthResult, totalExpensesResult] = await Promise.all([
+      query<{ total: number }>(
+        `SELECT COALESCE(SUM(b.total_amount), 0) as total 
+         FROM bills b
+         JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
+         WHERE cy.billing_year = ? AND cy.billing_month = ?`,
+        [buddhistYear, currentMonth]
+      ),
+      query<{ total: number }>(
+        'SELECT COALESCE(SUM(total_amount), 0) as total FROM bills'
+      ),
+      query<{ total: number }>(
+        `SELECT COALESCE(SUM(b.maintenance_fee), 0) as total 
+         FROM bills b
+         JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
+         WHERE cy.billing_year = ? AND cy.billing_month = ?`,
+        [buddhistYear, currentMonth]
+      ),
+      query<{ total: number }>(
+        'SELECT COALESCE(SUM(maintenance_fee), 0) as total FROM bills'
+      )
+    ]);
+    
       revenueThisMonth = revenueThisMonthResult[0]?.total || 0;
       totalRevenue = totalRevenueResult[0]?.total || 0;
       expensesThisMonth = expensesThisMonthResult[0]?.total || 0;
@@ -276,7 +308,7 @@ async function getChartData() {
     if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
       // Silent fallback - ไม่ log เพื่อลด log noise
     } else {
-      console.error('Error fetching room status data:', error);
+    console.error('Error fetching room status data:', error);
     }
   }
 
@@ -453,7 +485,7 @@ export default async function AdminDashboard() {
       {/* สถิติทั้งหมด */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-3">
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-9 gap-3">
-          {/* สถิติห้องพัก */}
+      {/* สถิติห้องพัก */}
           <div>
             <p className="text-xs text-gray-600 mb-1">ห้องพักทั้งหมด</p>
             <p className="text-2xl font-bold text-blue-600">
@@ -477,11 +509,11 @@ export default async function AdminDashboard() {
             <p className="text-2xl font-bold text-gray-600">
               {formatNumber(stats.maintenanceRooms)} <span className="text-sm font-normal text-gray-500">ห้อง</span>
             </p>
-          </div>
+      </div>
 
-          {/* สถิติผู้เช่า */}
+      {/* สถิติผู้เช่า */}
           <div>
-            <p className="text-xs text-gray-600 mb-1">ผู้เช่าทั้งหมด</p>
+            <p className="text-xs text-gray-600 mb-1">pending รอเข้าพัก</p>
             <p className="text-2xl font-bold text-purple-600">
               {formatNumber(stats.totalTenants)} <span className="text-sm font-normal text-gray-500">คน</span>
             </p>
@@ -503,9 +535,9 @@ export default async function AdminDashboard() {
             <p className="text-2xl font-bold text-cyan-600">
               {formatNumber(stats.currentTenants)} <span className="text-sm font-normal text-gray-500">คน</span>
             </p>
-          </div>
+      </div>
 
-          {/* สถิติอื่นๆ */}
+      {/* สถิติอื่นๆ */}
           <div>
             <p className="text-xs text-gray-600 mb-1">อัตราการเข้าพัก</p>
             <p className="text-2xl font-bold text-violet-600">

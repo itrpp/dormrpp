@@ -59,32 +59,32 @@ async function getLatestAnnouncements() {
     let announcements: any[] = [];
     
     try {
+      // ไม่จำกัดการเข้าถึง - แสดงเฉพาะที่ published แล้ว
       announcements = await query<any>(
         `SELECT 
           a.announcement_id,
           a.title,
           a.content,
-          COALESCE(a.target_role, a.target_audience, 'all') as target_role,
-          COALESCE(a.is_published, a.is_active, 0) as is_published,
+          COALESCE(a.target_role, 'all') as target_role,
+          COALESCE(a.is_published, 0) as is_published,
           a.publish_start,
           a.publish_end,
           a.created_at,
           (SELECT COUNT(*) FROM announcement_files af WHERE af.announcement_id = a.announcement_id) as file_count
         FROM announcements a
-        WHERE (COALESCE(a.target_role, a.target_audience, 'all') = 'all' 
-               OR COALESCE(a.target_role, a.target_audience, 'all') = 'tenant')
-          AND COALESCE(a.is_published, a.is_active, 0) = 1
-          AND COALESCE(a.is_deleted, 0) = 0
-          AND (a.publish_start IS NULL OR DATE(a.publish_start) <= ?)
-          AND (a.publish_end IS NULL OR DATE(a.publish_end) >= ?)
+        WHERE (
+          a.status = 'published'
+          OR 
+          (a.status IS NULL AND COALESCE(a.is_published, 0) = 1)
+        )
         ORDER BY a.created_at DESC
-        LIMIT 5`,
-        [nowDateStr, nowDateStr]
+        LIMIT 5`
       );
     } catch (queryError: any) {
       // ถ้า query ผิดพลาด ลอง query แบบง่ายๆ (ไม่ใช้เงื่อนไข publish_start/publish_end)
       if (queryError.message?.includes("Unknown column") || queryError.message?.includes("doesn't exist")) {
         try {
+          // ไม่จำกัดการเข้าถึง - แสดงเฉพาะที่ published แล้ว
           announcements = await query<any>(
             `SELECT 
               a.announcement_id,
@@ -97,10 +97,11 @@ async function getLatestAnnouncements() {
               a.created_at,
               (SELECT COUNT(*) FROM announcement_files af WHERE af.announcement_id = a.announcement_id) as file_count
             FROM announcements a
-            WHERE (COALESCE(a.target_role, 'all') = 'all' 
-                   OR COALESCE(a.target_role, 'all') = 'tenant')
-              AND COALESCE(a.is_published, 0) = 1
-              AND COALESCE(a.is_deleted, 0) = 0
+            WHERE (
+              a.status = 'published'
+              OR 
+              (a.status IS NULL AND COALESCE(a.is_published, 0) = 1)
+            )
             ORDER BY a.created_at DESC
             LIMIT 5`
           );
@@ -116,6 +117,7 @@ async function getLatestAnnouncements() {
     // ถ้ายังไม่มีข้อมูล ลอง query แบบง่ายที่สุด (ไม่ใช้เงื่อนไข publish และ is_deleted)
     if (!announcements || announcements.length === 0) {
       try {
+        // ไม่จำกัดการเข้าถึง - แสดงเฉพาะที่ published แล้ว
         announcements = await query<any>(
           `SELECT 
             announcement_id,
@@ -128,9 +130,11 @@ async function getLatestAnnouncements() {
             created_at,
             0 as file_count
           FROM announcements
-          WHERE (COALESCE(target_role, 'all') = 'all' 
-                 OR COALESCE(target_role, 'all') = 'tenant')
-            AND COALESCE(is_published, 0) = 1
+          WHERE (
+            status = 'published'
+            OR 
+            (status IS NULL AND COALESCE(is_published, 0) = 1)
+          )
           ORDER BY created_at DESC
           LIMIT 5`
         );
@@ -164,10 +168,11 @@ async function getLatestAnnouncements() {
           created_at,
           0 as file_count
         FROM announcements
-        WHERE (COALESCE(target_role, 'all') = 'all' 
-               OR COALESCE(target_role, 'all') = 'tenant')
-          AND COALESCE(is_published, 0) = 1
-          AND COALESCE(is_deleted, 0) = 0
+        WHERE (
+          status = 'published'
+          OR 
+          (status IS NULL AND COALESCE(is_published, 0) = 1)
+        )
         ORDER BY created_at DESC
         LIMIT 5`
       );
@@ -189,7 +194,11 @@ async function getLatestAnnouncements() {
             created_at,
             0 as file_count
           FROM announcements
-          WHERE COALESCE(is_deleted, 0) = 0
+          WHERE (
+            status = 'published'
+            OR 
+            (status IS NULL AND COALESCE(is_published, 1) = 1)
+          )
           ORDER BY created_at DESC
           LIMIT 5`
         );
@@ -322,10 +331,12 @@ export default async function HomePage() {
                       </p>
                       <p className="text-xs text-gray-500">
                         {announcement.created_at
-                          ? new Date(announcement.created_at).toLocaleDateString('th-TH', {
+                          ? new Date(announcement.created_at).toLocaleString('th-TH', {
                               year: 'numeric',
                               month: 'long',
                               day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
                             })
                           : ''}
                       </p>

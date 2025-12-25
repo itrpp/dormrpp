@@ -217,16 +217,24 @@ export default function MetersClient({
                 onChange={(e) => setMonthValue(e.target.value)}
                 max={maxMonthValue}
               />
-              {selectedCycleId && (
-                <p className="mt-2 text-sm text-gray-600">
-                  รอบบิลที่เลือก: {(() => {
-                    const selectedCycle = initialCycles.find(c => c.cycle_id === selectedCycleId);
-                    return selectedCycle ? `${getMonthName(selectedCycle.billing_month)} ${selectedCycle.billing_year} (พ.ศ.)` : '';
+              {monthValue && (
+                <p className="mt-2 text-xs text-gray-500">
+                  {(() => {
+                    const [adYearStr, monthStr] = monthValue.split('-');
+                    const adYear = Number(adYearStr);
+                    const monthNum = Number(monthStr);
+                    const beYear = adYear + 543;
+                    return `รอบบิล: ${getMonthName(monthNum)} ${beYear} `;
                   })()}
                 </p>
               )}
+              {selectedCycleId && (
+                <p className="mt-1 text-sm text-green-600 font-medium">
+                  ✓ พร้อมแสดงข้อมูล
+                </p>
+              )}
               {monthValue && !selectedCycleId && (
-                <p className="mt-2 text-xs text-amber-600">
+                <p className="mt-1 text-xs text-amber-600">
                   ⚠️ ไม่พบรอบบิลสำหรับเดือน/ปีที่เลือก
                 </p>
               )}

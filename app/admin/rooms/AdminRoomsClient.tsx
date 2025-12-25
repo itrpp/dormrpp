@@ -35,6 +35,7 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
   const [selectedBuilding, setSelectedBuilding] = useState<string>('all');
   const [selectedFloor, setSelectedFloor] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [selectedOccupancy, setSelectedOccupancy] = useState<string>('all'); // Filter จำนวนผู้เข้าพัก
 
   // state สำหรับ pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -201,14 +202,7 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
         }
       }
 
-      // 3) filter ประเภทห้อง (ลบออกเพราะไม่มี room_type_id ในโครงสร้างใหม่)
-      // if (selectedRoomType !== 'all') {
-      //   if (!r.room_type_id || String(r.room_type_id) !== String(selectedRoomType)) {
-      //     return false;
-      //   }
-      // }
-
-      // 4) filter สถานะ (ตรวจสอบตามจำนวนผู้เข้าพัก)
+      // 3) filter สถานะ (ตรวจสอบตามจำนวนผู้เข้าพัก)
       if (selectedStatus !== 'all') {
         const occupancy = roomOccupancies.get(r.room_id);
         const currentOccupants = occupancy?.current_occupants ?? 
@@ -230,14 +224,39 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
         }
       }
 
+      // 4) filter จำนวนผู้เข้าพัก
+      if (selectedOccupancy !== 'all') {
+        const occupancy = roomOccupancies.get(r.room_id);
+        const currentOccupants = occupancy?.current_occupants ?? 
+          (roomTenants.get(r.room_id)?.length || 0);
+        const maxOccupants = occupancy?.max_occupants ?? 2;
+        
+        if (selectedOccupancy === 'empty') {
+          // ว่าง (0 คน)
+          if (currentOccupants !== 0) {
+            return false;
+          }
+        } else if (selectedOccupancy === 'available') {
+          // มีที่ว่าง (1 ถึง max-1 คน)
+          if (currentOccupants === 0 || currentOccupants >= maxOccupants) {
+            return false;
+          }
+        } else if (selectedOccupancy === 'full') {
+          // เต็ม (เท่ากับ max)
+          if (currentOccupants < maxOccupants) {
+            return false;
+          }
+        }
+      }
+
       return true;
     });
-  }, [rooms, selectedBuilding, selectedFloor, selectedStatus, roomOccupancies, roomTenants]);
+  }, [rooms, selectedBuilding, selectedFloor, selectedStatus, selectedOccupancy, roomOccupancies, roomTenants]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedBuilding, selectedFloor, selectedStatus]);
+  }, [selectedBuilding, selectedFloor, selectedStatus, selectedOccupancy]);
 
   // คำนวณ pagination
   const totalPages = Math.ceil(filteredRooms.length / itemsPerPage);
@@ -691,6 +710,28 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
             <option value="available">ว่าง (available)</option>
             <option value="occupied">มีผู้เช่า (occupied)</option>
             <option value="maintenance">ซ่อมบำรุง (maintenance)</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            จำนวนผู้เข้าพัก
+          </label>
+          <select
+            className="border rounded-md px-3 py-2 text-sm"
+            value={selectedOccupancy}
+            onChange={(e) => setSelectedOccupancy(e.target.value)}
+            style={{
+              color: selectedOccupancy === 'empty' ? '#6b7280' : 
+                     selectedOccupancy === 'available' ? '#16a34a' : 
+                     selectedOccupancy === 'full' ? '#dc2626' : 
+                     '#374151'
+            }}
+          >
+            <option value="all">ทั้งหมด</option>
+            <option value="empty">⚪ ว่าง (0 คน)</option>
+            <option value="available">🟢 มีที่ว่าง</option>
+            <option value="full">🔴 เต็ม</option>
           </select>
         </div>
       </div>

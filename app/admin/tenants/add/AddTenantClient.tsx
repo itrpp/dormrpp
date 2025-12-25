@@ -11,9 +11,10 @@ interface Room {
   building_id: number;
   building_name: string;
   room_type_name: string | null;
-  max_occupants: number;
-  current_occupants: number;
+  max_occupants?: number;
+  current_occupants?: number;
   status?: 'available' | 'occupied' | 'maintenance';
+  occupancy_status?: 'empty' | 'available' | 'full';
 }
 
 interface RoomOccupancy {
@@ -146,23 +147,48 @@ export default function AddTenantClient() {
 
       setIsLoadingRooms(true);
       try {
+        // ดึงข้อมูลห้อง
         let url = `/api/rooms?building_id=${selectedBuildingId}`;
         const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          // กรองตามชั้น
-          let filteredRooms = data;
-          if (selectedFloor !== 'all') {
-            filteredRooms = data.filter((r: any) => r.floor_no === Number(selectedFloor));
-          }
-          setRooms(filteredRooms);
+        if (!res.ok) {
+          throw new Error('Failed to fetch rooms');
+        }
+        const roomsData = await res.json();
 
-          // ถ้ามี initialRoomId ให้เลือกห้องนั้นอัตโนมัติ
-          if (initialRoomId) {
-            const found = filteredRooms.find((r: any) => r.room_id === initialRoomId);
-            if (found) {
-              setSelectedRoomId(initialRoomId);
-            }
+        // ดึงข้อมูล occupancy
+        let occupanciesData: any[] = [];
+        try {
+          const occupancyRes = await fetch(`/api/rooms/occupancy?building_id=${selectedBuildingId}`);
+          if (occupancyRes.ok) {
+            occupanciesData = await occupancyRes.json();
+          }
+        } catch (error) {
+          console.warn('Error fetching occupancy:', error);
+        }
+
+        // รวมข้อมูล occupancy เข้ากับ rooms
+        const roomsWithOccupancy = roomsData.map((room: any) => {
+          const occupancy = occupanciesData.find((occ: any) => occ.room_id === room.room_id);
+          return {
+            ...room,
+            current_occupants: occupancy?.current_occupants ?? 0,
+            max_occupants: occupancy?.max_occupants ?? 2,
+            occupancy_status: occupancy?.occupancy_status ?? 'empty',
+          };
+        });
+
+        // กรองตามชั้น
+        let filteredRooms = roomsWithOccupancy;
+        if (selectedFloor !== 'all') {
+          filteredRooms = roomsWithOccupancy.filter((r: any) => r.floor_no === Number(selectedFloor));
+        }
+        setRooms(filteredRooms);
+
+        // ถ้ามี initialRoomId ให้เลือกห้องนั้นอัตโนมัติ
+        if (initialRoomId) {
+          const found = filteredRooms.find((r: any) => r.room_id === initialRoomId);
+          if (found) {
+            setSelectedRoomId(initialRoomId);
           }
         }
       } catch (error) {
@@ -256,7 +282,8 @@ export default function AddTenantClient() {
   // ตรวจสอบว่าห้องอยู่ในสถานะ maintenance หรือไม่
   const isRoomMaintenance = selectedRoomStatus === 'maintenance';
 
-  const canAddTenant = !isRoomFull && !isRoomMaintenance && selectedRoomId !== null;
+  // สามารถเพิ่มผู้เช่าได้ถ้า: ไม่มีห้อง (เพิ่มผู้เช่าโดยไม่เลือกห้อง) หรือ (มีห้องและห้องไม่เต็มและไม่ใช่ maintenance)
+  const canAddTenant = selectedRoomId === null || (!isRoomFull && !isRoomMaintenance);
 
   // ค้นหาผู้เช่าเก่า
   const handleSearchTenants = async () => {
@@ -282,7 +309,7 @@ export default function AddTenantClient() {
 
   // Auto-search เมื่อพิมพ์ (debounce)
   useEffect(() => {
-    if (mode !== 'existing' || !canAddTenant) {
+    if (mode !== 'existing') {
       return;
     }
 
@@ -296,7 +323,7 @@ export default function AddTenantClient() {
 
     return () => clearTimeout(timeoutId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, mode, canAddTenant]);
+  }, [searchQuery, mode]);
 
   // จับ Enter key เพื่อค้นหา
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -310,11 +337,6 @@ export default function AddTenantClient() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!selectedRoomId) {
-      alert('กรุณาเลือกห้อง');
-      return;
-    }
-
     if (mode === 'new') {
       if (!form.first_name || !form.last_name) {
         alert('กรุณากรอกชื่อและนามสกุล');
@@ -325,17 +347,31 @@ export default function AddTenantClient() {
         alert('กรุณาเลือกผู้เช่าที่เคยพักแล้ว');
         return;
       }
+      // โหมดผู้เช่าเคยพักแล้ว: ต้องมีห้อง
+      if (!selectedRoomId) {
+        alert('กรุณาเลือกห้องสำหรับผู้เช่าที่เคยพักแล้ว');
+        return;
+      }
+    }
+
+    // ถ้าเลือกห้องแล้ว ตรวจสอบว่าห้องสามารถเพิ่มผู้เช่าได้หรือไม่
+    if (selectedRoomId) {
+      if (isRoomMaintenance) {
+        alert('ห้องนี้อยู่ในสถานะซ่อมบำรุง ไม่สามารถเพิ่มผู้เช่าได้');
+        return;
+      }
+      if (isRoomFull) {
+        alert('ห้องนี้มีผู้เข้าพักครบแล้ว ไม่สามารถเพิ่มผู้เช่าได้');
+        return;
+      }
     }
 
     setIsSubmitting(true);
     try {
-      const selectedRoom = rooms.find(r => r.room_id === selectedRoomId);
-      if (!selectedRoom) {
-        throw new Error('ไม่พบข้อมูลห้อง');
-      }
-
       if (mode === 'new') {
-        // โหมดผู้เช่าใหม่: ใช้ API เดิม /api/tenants เพื่อสร้าง tenant + contract
+        // โหมดผู้เช่าใหม่
+        const selectedRoom = selectedRoomId ? rooms.find(r => r.room_id === selectedRoomId) : null;
+        
         const res = await fetch('/api/tenants', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -344,8 +380,8 @@ export default function AddTenantClient() {
             last_name: form.last_name,
             email: form.email || null,
             phone: form.phone || null,
-            room_number: selectedRoom.room_number,
-            status: 'active',
+            room_number: selectedRoom?.room_number || null, // null ถ้าไม่เลือกห้อง
+            status: selectedRoom ? 'active' : 'pending', // 'pending' ถ้าไม่เลือกห้อง
             move_in_date: form.start_date || new Date().toISOString().slice(0, 10),
           }),
         });
@@ -355,9 +391,18 @@ export default function AddTenantClient() {
           throw new Error(errorData.error || 'ไม่สามารถเพิ่มผู้เช่าได้');
         }
 
-        alert('เพิ่มผู้เช่าใหม่สำเร็จ');
+        if (selectedRoom) {
+          alert('เพิ่มผู้เช่าใหม่สำเร็จ');
+        } else {
+          alert('เพิ่มผู้เช่าใหม่สำเร็จ (สถานะ: รอเข้าพัก)');
+        }
       } else {
-        // โหมดผู้เช่าเคยพักแล้ว: สร้าง contract ใหม่ให้ tenant เดิม
+        // โหมดผู้เช่าเคยพักแล้ว: ต้องมีห้อง
+        const selectedRoom = rooms.find(r => r.room_id === selectedRoomId);
+        if (!selectedRoom) {
+          throw new Error('ไม่พบข้อมูลห้อง');
+        }
+
         const res = await fetch('/api/contracts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -509,12 +554,26 @@ export default function AddTenantClient() {
                         }
                       >
                         <option value="">-- เลือกห้อง --</option>
-                        {rooms.map((room) => (
-                          <option key={room.room_id} value={room.room_id}>
-                            ห้อง {room.room_number}
-                            {room.floor_no ? ` (ชั้น ${room.floor_no})` : ''}
-                          </option>
-                        ))}
+                        {rooms.map((room) => {
+                          // สร้างข้อความแสดงสถานะ
+                          const statusText = room.status === 'maintenance' 
+                            ? '🔧 ซ่อมบำรุง' 
+                            : room.occupancy_status === 'full'
+                            ? '🔴 เต็ม'
+                            : room.occupancy_status === 'available'
+                            ? '🟢 มีผู้เช่า'
+                            : '⚪ ว่าง';
+                          
+                          // จำนวนผู้เข้าพัก
+                          const occupantsText = `${room.current_occupants ?? 0}/${room.max_occupants ?? 2}`;
+                          
+                          return (
+                            <option key={room.room_id} value={room.room_id}>
+                              ห้อง {room.room_number}
+                              {room.floor_no ? ` (ชั้น ${room.floor_no})` : ''} - {statusText} - {occupantsText} คน
+                            </option>
+                          );
+                        })}
                       </select>
                     )}
                   </div>
@@ -631,12 +690,11 @@ export default function AddTenantClient() {
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={handleKeyDown}
                     placeholder="เช่น นางสาว..., 08x..., email@example.com"
-                    disabled={!canAddTenant}
                   />
                   <button
                     type="button"
                     onClick={handleSearchTenants}
-                    disabled={!canAddTenant || isSearching}
+                    disabled={isSearching}
                     className="px-4 py-2 rounded-md bg-gray-700 text-white text-sm hover:bg-gray-800 disabled:bg-gray-400"
                   >
                     {isSearching ? 'กำลังค้นหา...' : 'ค้นหา'}
@@ -700,10 +758,10 @@ export default function AddTenantClient() {
               </div>
             )}
             
-            {!selectedRoomId && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-                <p className="text-sm text-yellow-800">
-                  ⚠️ กรุณาเลือกห้องก่อนกรอกข้อมูลผู้เช่า
+            {!selectedRoomId && mode === 'new' && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <p className="text-sm text-blue-800">
+                  💡 คุณสามารถเพิ่มผู้เช่าได้โดยไม่ต้องเลือกห้อง (สถานะ: รอเข้าพัก) หรือเลือกห้องเพื่อเพิ่มผู้เช่าเข้าพักทันที
                 </p>
               </div>
             )}
@@ -711,6 +769,13 @@ export default function AddTenantClient() {
               <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-4">
                 <p className="text-sm text-orange-800 font-semibold">
                   🔧 ห้องนี้อยู่ในสถานะซ่อมบำรุง (maintenance) ไม่สามารถเพิ่มผู้เช่าได้
+                </p>
+              </div>
+            )}
+            {mode === 'existing' && !selectedRoomId && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                <p className="text-sm text-yellow-800">
+                  ⚠️ สำหรับผู้เช่าที่เคยพักแล้ว จำเป็นต้องเลือกห้อง
                 </p>
               </div>
             )}
@@ -727,7 +792,7 @@ export default function AddTenantClient() {
                     value={mode === 'new' ? form.first_name : selectedTenant?.first_name || ''}
                     onChange={(e) => setForm({ ...form, first_name: e.target.value })}
                     required={mode === 'new'}
-                    disabled={!canAddTenant || mode === 'existing'}
+                    disabled={mode === 'existing'}
                   />
                 </div>
 
@@ -741,7 +806,7 @@ export default function AddTenantClient() {
                     value={mode === 'new' ? form.last_name : selectedTenant?.last_name || ''}
                     onChange={(e) => setForm({ ...form, last_name: e.target.value })}
                     required={mode === 'new'}
-                    disabled={!canAddTenant || mode === 'existing'}
+                    disabled={mode === 'existing'}
                   />
                 </div>
 
@@ -754,7 +819,7 @@ export default function AddTenantClient() {
                     className="w-full border rounded-md px-3 py-2 text-sm"
                     value={mode === 'new' ? form.phone : selectedTenant?.phone || ''}
                     onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                    disabled={!canAddTenant || mode === 'existing'}
+                    disabled={mode === 'existing'}
                   />
                 </div>
 
@@ -767,7 +832,7 @@ export default function AddTenantClient() {
                     className="w-full border rounded-md px-3 py-2 text-sm"
                     value={mode === 'new' ? form.email : selectedTenant?.email || ''}
                     onChange={(e) => setForm({ ...form, email: e.target.value })}
-                    disabled={!canAddTenant || mode === 'existing'}
+                    disabled={mode === 'existing'}
                   />
                 </div>
 
@@ -780,8 +845,8 @@ export default function AddTenantClient() {
                     className="w-full border rounded-md px-3 py-2 text-sm"
                     value={form.start_date}
                     onChange={(e) => setForm({ ...form, start_date: e.target.value })}
-                    required
-                    disabled={!canAddTenant}
+                    required={selectedRoomId !== null}
+                    disabled={mode === 'existing' && !selectedRoomId}
                   />
                 </div>
 
@@ -794,7 +859,6 @@ export default function AddTenantClient() {
                     rows={3}
                     value={form.notes}
                     onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                    disabled={!canAddTenant}
                   />
                 </div>
               </div>
@@ -809,13 +873,13 @@ export default function AddTenantClient() {
                 </button>
                 <button
                   type="submit"
-                  disabled={!canAddTenant || isSubmitting}
+                  disabled={isSubmitting || (mode === 'existing' && !selectedRoomId)}
                   className={`px-4 py-2 rounded-md text-white ${
-                    canAddTenant
-                      ? 'bg-blue-600 hover:bg-blue-700'
-                      : 'bg-gray-400 cursor-not-allowed'
+                    isSubmitting || (mode === 'existing' && !selectedRoomId)
+                      ? 'bg-gray-400 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700'
                   }`}
-                  title={!canAddTenant ? (isRoomMaintenance ? 'ห้องนี้อยู่ในสถานะซ่อมบำรุง' : 'ห้องนี้มีผู้เข้าพักครบแล้ว') : ''}
+                  title={mode === 'existing' && !selectedRoomId ? 'กรุณาเลือกห้องสำหรับผู้เช่าที่เคยพักแล้ว' : ''}
                 >
                   {isSubmitting ? 'กำลังบันทึก...' : 'บันทึก'}
                 </button>

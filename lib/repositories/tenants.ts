@@ -1,5 +1,5 @@
 // lib/repositories/tenants.ts
-import { query, queryOne, pool } from '@/lib/db';
+import { query, queryOne, pool, isTooManyConnectionsError } from '@/lib/db';
 import type { Tenant, Contract } from '@/types/db';
 
 export interface TenantWithRoom {
@@ -31,48 +31,76 @@ export type AdminTenantRow = {
 };
 
 export async function getAllTenantsForAdmin(): Promise<AdminTenantRow[]> {
-  const sql = `
-    SELECT 
-      t.tenant_id,
-      t.first_name_th AS first_name,
-      t.last_name_th AS last_name,
-      t.email,
-      t.phone,
-      COALESCE(t.status, 'inactive') AS status,
-      c.start_date AS move_in_date,
-      r.room_number,
-      r.floor_no,
-      b.building_id,
-      b.name_th AS building_name
-    FROM tenants t
-    LEFT JOIN contracts c
-      ON c.tenant_id = t.tenant_id
-      AND c.status = 'active'
-    LEFT JOIN rooms r
-      ON r.room_id = c.room_id
-    LEFT JOIN buildings b
-      ON b.building_id = r.building_id
-    WHERE COALESCE(t.is_deleted, 0) = 0
-    ORDER BY 
-      COALESCE(b.building_id, 999999) ASC,
-      CASE 
-        WHEN r.room_number IS NULL THEN 999999
-        WHEN r.room_number REGEXP '^[0-9]+$' THEN CAST(r.room_number AS UNSIGNED)
-        ELSE 999999
-      END ASC,
-      r.room_number ASC,
-      t.tenant_id DESC
-  `;
-  
-  const results = await query<AdminTenantRow>(sql);
-  // กรองข้อมูลที่ซ้ำซ้อน
-  const uniqueResults = new Map<number, AdminTenantRow>();
-  results.forEach((row) => {
-    if (!uniqueResults.has(row.tenant_id)) {
-      uniqueResults.set(row.tenant_id, row);
+  let retryCount = 0;
+  const maxRetries = 3;
+  const baseRetryDelay = 500;
+
+  while (retryCount <= maxRetries) {
+    try {
+      const sql = `
+        SELECT 
+          t.tenant_id,
+          t.first_name_th AS first_name,
+          t.last_name_th AS last_name,
+          t.email,
+          t.phone,
+          COALESCE(t.status, 'inactive') AS status,
+          c.start_date AS move_in_date,
+          r.room_number,
+          r.floor_no,
+          b.building_id,
+          b.name_th AS building_name
+        FROM tenants t
+        LEFT JOIN contracts c
+          ON c.tenant_id = t.tenant_id
+          AND c.status = 'active'
+        LEFT JOIN rooms r
+          ON r.room_id = c.room_id
+        LEFT JOIN buildings b
+          ON b.building_id = r.building_id
+        WHERE COALESCE(t.is_deleted, 0) = 0
+        ORDER BY 
+          COALESCE(b.building_id, 999999) ASC,
+          CASE 
+            WHEN r.room_number IS NULL THEN 999999
+            WHEN r.room_number REGEXP '^[0-9]+$' THEN CAST(r.room_number AS UNSIGNED)
+            ELSE 999999
+          END ASC,
+          r.room_number ASC,
+          t.tenant_id DESC
+      `;
+      
+      const results = await query<AdminTenantRow>(sql);
+      // กรองข้อมูลที่ซ้ำซ้อน
+      const uniqueResults = new Map<number, AdminTenantRow>();
+      results.forEach((row) => {
+        if (!uniqueResults.has(row.tenant_id)) {
+          uniqueResults.set(row.tenant_id, row);
+        }
+      });
+      return Array.from(uniqueResults.values());
+    } catch (error: any) {
+      // ถ้าเป็น "Too many connections" error และยัง retry ไม่หมด ให้ retry
+      if (isTooManyConnectionsError(error) && retryCount < maxRetries) {
+        retryCount++;
+        const delay = baseRetryDelay * retryCount;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue; // retry
+      }
+      
+      // ถ้า retry หมดแล้วหรือไม่ใช่ connection error
+      if (isTooManyConnectionsError(error)) {
+        // Silent fallback - return array ว่างแทน
+        return [];
+      }
+      
+      // ถ้าไม่ใช่ connection error ให้ throw ต่อ
+      throw error;
     }
-  });
-  return Array.from(uniqueResults.values());
+  }
+  
+  // ไม่ควรมาถึงจุดนี้ แต่ถ้ามาให้ return array ว่าง
+  return [];
 }
 
 export async function getAllTenants(roomId?: number): Promise<TenantWithRoom[]> {

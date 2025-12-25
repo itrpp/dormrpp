@@ -228,8 +228,9 @@ export default async function MetersPage() {
   // ตรวจสอบว่าเป็น admin หรือไม่
   const isAdmin = session && (session.role === 'admin' || session.role === 'superUser');
 
-  // ถ้าเป็น admin ให้ใช้ AdminLayout, ถ้าไม่ใช่ให้ใช้ PublicLayout
-  if (isAdmin) {
+  // ถ้ามี session (login แล้ว) ให้ใช้ AdminLayout เพื่อคงสถานะ login
+  // ถ้าไม่มี session (ยังไม่ login) ให้ใช้ PublicLayout
+  if (session) {
     return (
       <AdminLayoutClient sessionName={session?.name}>
         <MetersClient

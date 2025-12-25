@@ -61,12 +61,14 @@ export async function query<T = any>(sql: string, params?: any[]): Promise<T[]> 
   let retryCount = 0;
   const maxRetries = 2; // retry 2 ครั้ง
   const baseRetryDelay = 500; // ลด delay เป็น 500ms
+  let lastError: any = null;
 
   while (retryCount <= maxRetries) {
     try {
       const [rows] = await pool.query(sql, params);
       return rows as T[];
     } catch (error: any) {
+      lastError = error;
       // ถ้าเป็น error "Too many connections" ให้ retry โดยไม่ log
       if (isTooManyConnectionsError(error) && retryCount < maxRetries) {
         retryCount++;
@@ -76,8 +78,7 @@ export async function query<T = any>(sql: string, params?: any[]): Promise<T[]> 
         continue; // retry
       }
       
-      // ถ้าไม่ใช่ connection error หรือ retry หมดแล้ว ให้ throw error
-      // ไม่ log error ที่เป็น "Too many connections" เพราะจะทำให้ log เยอะเกินไป
+      // ถ้าไม่ใช่ connection error ให้ throw error ทันที
       if (!isTooManyConnectionsError(error)) {
       console.error('SQL Error:', error.message);
         if (sql && sql.length < 500) {
@@ -88,13 +89,19 @@ export async function query<T = any>(sql: string, params?: any[]): Promise<T[]> 
         if (params && params.length > 0) {
       console.error('SQL Params:', params);
         }
-      }
       throw error;
+    }
     }
   }
   
-  // ไม่ควรมาถึงจุดนี้ แต่ถ้ามาให้ throw error
-  throw new Error('Failed to execute query after retries');
+  // ถ้า retry หมดแล้วและเป็น "Too many connections" error ให้ return empty array แทน throw
+  if (lastError && isTooManyConnectionsError(lastError)) {
+    // Silent fallback - return empty array เพื่อไม่ให้ crash
+    return [];
+  }
+  
+  // ถ้าไม่ใช่ connection error ให้ throw error
+  throw lastError || new Error('Failed to execute query after retries');
 }
 
 export async function queryOne<T = any>(sql: string, params?: any[]): Promise<T | null> {

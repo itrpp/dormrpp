@@ -74,46 +74,20 @@ export async function GET(
       );
     }
 
-    // ตรวจสอบสิทธิ์การเข้าถึง
-    const userRole = session?.role || 'tenant'; // ถ้าไม่มี session ให้ถือว่าเป็น tenant
-    const targetRole = announcement.target_role || announcement.target_audience || 'all';
-
-    // Admin สามารถเข้าถึงได้เสมอ
-    if (userRole !== 'admin' && userRole !== 'superUser') {
-      // ตรวจสอบ target_role - ถ้าเป็น admin-only และ user ไม่ใช่ admin ให้ปฏิเสธ
-      if (targetRole === 'admin') {
-        return NextResponse.json(
-          { error: 'Forbidden' },
-          { status: 403 }
-        );
-      }
-
-      // ตรวจสอบ publishing window
-      const now = new Date();
-      const isPublished = announcement.is_published !== undefined 
-        ? announcement.is_published 
-        : announcement.is_active;
+    // ไม่จำกัดการเข้าถึง - ให้เห็นได้ทุกคน (เฉพาะที่ published)
+    // ถ้าไม่ใช่ admin ให้ตรวจสอบว่า published แล้ว
+    if (!session || (session.role !== 'admin' && session.role !== 'superUser')) {
+      // ตรวจสอบ status หรือ is_published (backward compatibility)
+      const isPublished = announcement.status === 'published' || 
+                         (announcement.status === null && Boolean(announcement.is_published));
       
       if (!isPublished) {
         return NextResponse.json(
           { error: 'Announcement not published' },
-          { status: 403 }
+          { status: 404 }
         );
       }
-
-      if (announcement.publish_start && new Date(announcement.publish_start) > now) {
-        return NextResponse.json(
-          { error: 'Announcement not yet published' },
-          { status: 403 }
-        );
-      }
-
-      if (announcement.publish_end && new Date(announcement.publish_end) < now) {
-        return NextResponse.json(
-          { error: 'Announcement expired' },
-          { status: 403 }
-        );
-      }
+      // ไม่ตรวจสอบ target_role, publish_start, publish_end - ให้เห็นได้ทุกคน
     }
 
     // อ่านไฟล์จาก disk

@@ -1,18 +1,11 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import type { AnnouncementStatus } from '@/types/db';
+import type { AdminAnnouncementForClient } from './page';
 
-interface Announcement {
-  announcement_id: number;
-  title: string;
-  content: string;
-  target_role: string;
-  is_published: boolean;
-  publish_start: string | null;
-  publish_end: string | null;
-  created_at: string;
-  file_count?: number;
-}
+// ใช้ type เดียวกับ page.tsx
+type Announcement = AdminAnnouncementForClient;
 
 interface AnnouncementFile {
   file_id: number;
@@ -27,7 +20,8 @@ interface AnnouncementForm {
   title: string;
   content: string;
   target_role: 'all' | 'tenant' | 'admin';
-  is_published: boolean;
+  status?: AnnouncementStatus | null;
+  is_published?: boolean | null; // Legacy: เก็บไว้สำหรับ backward compatibility
   publish_start: string;
   publish_end: string;
 }
@@ -38,17 +32,48 @@ type Props = {
 
 export default function AdminAnnouncementsClient({ initialAnnouncements }: Props) {
   const [announcements, setAnnouncements] = useState(initialAnnouncements);
+  
+  // โหลดค่า filter จาก localStorage เมื่อ component mount
   const [searchText, setSearchText] = useState('');
   const [selectedRole, setSelectedRole] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
+
+  // โหลดค่า filter จาก localStorage เมื่อ component mount
+  useEffect(() => {
+    const savedSearchText = localStorage.getItem('adminAnnouncements_searchText');
+    const savedSelectedRole = localStorage.getItem('adminAnnouncements_selectedRole');
+    const savedSelectedStatus = localStorage.getItem('adminAnnouncements_selectedStatus');
+    
+    if (savedSearchText !== null) {
+      setSearchText(savedSearchText);
+    }
+    if (savedSelectedRole !== null) {
+      setSelectedRole(savedSelectedRole);
+    }
+    if (savedSelectedStatus !== null) {
+      setSelectedStatus(savedSelectedStatus);
+    }
+  }, []);
+
+  // บันทึกค่า filter ลง localStorage เมื่อมีการเปลี่ยนแปลง
+  useEffect(() => {
+    localStorage.setItem('adminAnnouncements_searchText', searchText);
+  }, [searchText]);
+
+  useEffect(() => {
+    localStorage.setItem('adminAnnouncements_selectedRole', selectedRole);
+  }, [selectedRole]);
+
+  useEffect(() => {
+    localStorage.setItem('adminAnnouncements_selectedStatus', selectedStatus);
+  }, [selectedStatus]);
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [form, setForm] = useState<AnnouncementForm>({
     title: '',
     content: '',
-    target_role: 'all',
-    is_published: true,
+    target_role: 'all', // ใช้ค่า default 'all' เสมอ
     publish_start: '',
     publish_end: '',
   });
@@ -57,26 +82,78 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // Get status label helper function (รองรับ status workflow และ backward compatibility)
+  const getStatusLabel = (announcement: Announcement): AnnouncementStatus => {
+    // ถ้ามี status ใช้ status โดยตรง
+    if (announcement.status) {
+      return announcement.status;
+    }
+    
+    // Backward compatibility: ถ้าไม่มี status ใช้ is_published
+    if (announcement.is_published === false || announcement.is_published === null) {
+      return 'draft';
+    }
+    
+    // ตรวจสอบ publish_start และ publish_end
+    const now = new Date();
+    if (announcement.publish_start && new Date(announcement.publish_start) > now) {
+      return 'scheduled';
+    }
+    if (announcement.publish_end && new Date(announcement.publish_end) < now) {
+      return 'expired';
+    }
+    
+    return 'published';
+  };
+  
+  // Get status display label (ภาษาไทย)
+  const getStatusDisplayLabel = (status: AnnouncementStatus): string => {
+    const labels: Record<AnnouncementStatus, string> = {
+      draft: 'ร่าง',
+      scheduled: 'ตั้งเวลาไว้',
+      published: 'เผยแพร่แล้ว',
+      paused: 'ปิดชั่วคราว',
+      expired: 'หมดอายุ',
+      cancelled: 'ยกเลิก',
+    };
+    return labels[status] || status;
+  };
+  
+  // Get status color class
+  const getStatusColorClass = (status: AnnouncementStatus): string => {
+    const colors: Record<AnnouncementStatus, string> = {
+      draft: 'bg-gray-100 text-gray-800',
+      scheduled: 'bg-blue-100 text-blue-800',
+      published: 'bg-green-100 text-green-800',
+      paused: 'bg-yellow-100 text-yellow-800',
+      expired: 'bg-red-100 text-red-800',
+      cancelled: 'bg-gray-200 text-gray-900',
+    };
+    return colors[status] || 'bg-gray-100 text-gray-800';
+  };
+
   // Filter announcements
   const filteredAnnouncements = useMemo(() => {
     return announcements.filter((ann) => {
+      // Filter by search text
       if (searchText && !ann.title.toLowerCase().includes(searchText.toLowerCase()) && 
           !ann.content.toLowerCase().includes(searchText.toLowerCase())) {
         return false;
       }
+      
+      // Filter by role
       if (selectedRole !== 'all' && ann.target_role !== selectedRole) {
         return false;
       }
+      
+      // Filter by status - ใช้ getStatusLabel เพื่อให้สอดคล้องกับการแสดงผล
       if (selectedStatus !== 'all') {
-        if (selectedStatus === 'published' && !ann.is_published) return false;
-        if (selectedStatus === 'draft' && ann.is_published) return false;
-        if (selectedStatus === 'expired') {
-          if (ann.publish_end && new Date(ann.publish_end) < new Date()) {
-            return true;
-          }
+        const status = getStatusLabel(ann);
+        if (selectedStatus !== status) {
           return false;
         }
       }
+      
       return true;
     });
   }, [announcements, searchText, selectedRole, selectedStatus]);
@@ -84,18 +161,41 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
   // Load announcements
   const loadAnnouncements = async () => {
     try {
-      const response = await fetch('/api/announcements?scope=all');
+      console.log('[loadAnnouncements] Fetching announcements...');
+      const response = await fetch('/api/announcements?scope=all', {
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        console.error('Failed to load announcements:', errorData);
+        throw new Error(errorData.error || `HTTP ${response.status}: Failed to load`);
+      }
+      
       const data = await response.json();
       if (data.data) {
-        // ตรวจสอบและแปลงข้อมูลให้แน่ใจว่ามี content
+        // ตรวจสอบและแปลงข้อมูลให้แน่ใจว่ามี content และ status
         const announcementsWithContent = data.data.map((ann: any) => ({
           ...ann,
           content: ann.content || '', // ตรวจสอบว่า content มีค่า
+          status: ann.status || null, // ใช้ status จาก API
+          is_published: Boolean(ann.is_published !== undefined ? ann.is_published : (ann.is_active !== undefined ? ann.is_active : false)), // Legacy: เก็บไว้สำหรับ backward compatibility
         }));
         setAnnouncements(announcementsWithContent);
+        console.log(`[loadAnnouncements] Loaded ${announcementsWithContent.length} announcements`);
+        console.log('[loadAnnouncements] Sample announcement:', announcementsWithContent[0] ? {
+          id: announcementsWithContent[0].announcement_id,
+          title: announcementsWithContent[0].title,
+          status: announcementsWithContent[0].status,
+          is_published: announcementsWithContent[0].is_published,
+        } : 'No announcements');
+      } else {
+        console.warn('[loadAnnouncements] No data in response:', data);
+        setAnnouncements([]);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading announcements:', error);
+      alert(`เกิดข้อผิดพลาดในการโหลดประกาศ: ${error.message || 'ไม่สามารถโหลดได้'}`);
     }
   };
 
@@ -105,8 +205,7 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
     setForm({
       title: '',
       content: '',
-      target_role: 'all',
-      is_published: true,
+      target_role: 'all', // ใช้ค่า default 'all' เสมอ
       publish_start: '',
       publish_end: '',
     });
@@ -123,7 +222,9 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
     let content = announcement.content || '';
     if (!content && announcement.announcement_id) {
       try {
-        const detailResponse = await fetch(`/api/announcements/${announcement.announcement_id}`);
+        const detailResponse = await fetch(`/api/announcements/${announcement.announcement_id}`, {
+          credentials: 'include',
+        });
         const detailData = await detailResponse.json();
         if (detailData.announcement?.content) {
           content = detailData.announcement.content;
@@ -137,15 +238,16 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
       announcement_id: announcement.announcement_id,
       title: announcement.title || '',
       content: content,
-      target_role: (announcement.target_role || 'all') as 'all' | 'tenant' | 'admin',
-      is_published: announcement.is_published,
+      target_role: 'all', // ใช้ค่า default 'all' เสมอ
       publish_start: announcement.publish_start ? announcement.publish_start.split('T')[0] : '',
       publish_end: announcement.publish_end ? announcement.publish_end.split('T')[0] : '',
     });
     
     // Load files
     try {
-      const response = await fetch(`/api/announcements/${announcement.announcement_id}/files`);
+      const response = await fetch(`/api/announcements/${announcement.announcement_id}/files`, {
+        credentials: 'include',
+      });
       const data = await response.json();
       setUploadedFiles(data.files || []);
     } catch (error) {
@@ -172,22 +274,33 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
       
       const method = isEditing ? 'PUT' : 'POST';
       
+      const requestBody = {
+        title: form.title,
+        content: form.content,
+        target_role: 'all', // ใช้ค่า default 'all' เสมอ
+        publish_start: form.publish_start || null,
+        publish_end: form.publish_end || null,
+      };
+
+      console.log(`[handleSave] ${method} ${url}`, requestBody);
+
       const response = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: form.title,
-          content: form.content,
-          target_role: form.target_role,
-          is_published: form.is_published,
-          publish_start: form.publish_start || null,
-          publish_end: form.publish_end || null,
-        }),
+        credentials: 'include',
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to save');
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        console.error('Failed to save announcement:', errorData);
+        
+        // ถ้าเป็น 403 Unauthorized แสดงข้อความที่ชัดเจน
+        if (response.status === 403) {
+          throw new Error('ไม่มีสิทธิ์เข้าถึง กรุณา login ใหม่');
+        }
+        
+        throw new Error(errorData.error || `HTTP ${response.status}: Failed to save`);
       }
 
       const result = await response.json();
@@ -202,11 +315,14 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
 
         const uploadResponse = await fetch(`/api/announcements/${announcementId}/files`, {
           method: 'POST',
+          credentials: 'include',
           body: formData,
         });
 
         if (!uploadResponse.ok) {
-          console.error('Failed to upload files');
+          const uploadError = await uploadResponse.json().catch(() => ({ error: 'Unknown error' }));
+          console.error('Failed to upload files:', uploadError);
+          alert(`บันทึกประกาศสำเร็จ แต่ไม่สามารถอัปโหลดไฟล์ได้: ${uploadError.error || 'Unknown error'}`);
         }
       }
 
@@ -214,7 +330,8 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
       setIsModalOpen(false);
       alert(isEditing ? 'แก้ไขประกาศสำเร็จ' : 'สร้างประกาศสำเร็จ');
     } catch (error: any) {
-      alert(error.message || 'เกิดข้อผิดพลาด');
+      console.error('Error saving announcement:', error);
+      alert(`เกิดข้อผิดพลาด: ${error.message || 'ไม่สามารถบันทึกได้'}`);
     } finally {
       setLoading(false);
     }
@@ -227,41 +344,110 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
     }
 
     try {
+      console.log(`[handleDelete] DELETE /api/announcements/${id}`);
+      
       const response = await fetch(`/api/announcements/${id}`, {
         method: 'DELETE',
+        credentials: 'include',
       });
 
       if (!response.ok) {
-        throw new Error('Failed to delete');
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        console.error('Failed to delete announcement:', errorData);
+        throw new Error(errorData.error || `HTTP ${response.status}: Failed to delete`);
       }
 
       await loadAnnouncements();
       alert('ลบประกาศสำเร็จ');
-    } catch (error) {
-      alert('เกิดข้อผิดพลาดในการลบ');
+    } catch (error: any) {
+      console.error('Error deleting announcement:', error);
+      alert(`เกิดข้อผิดพลาดในการลบ: ${error.message || 'ไม่สามารถลบได้'}`);
     }
   };
 
-  // Toggle publish status
-  const handleTogglePublish = async (announcement: Announcement) => {
+  // Update status helper function
+  const updateStatus = async (announcement: Announcement, newStatus: AnnouncementStatus, confirmMessage: string) => {
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+
     try {
+      console.log(`[updateStatus] Updating announcement ${announcement.announcement_id} to ${newStatus}`);
+      
+      // กำหนด status ตาม logic
+      let finalStatus = newStatus;
+      const now = new Date();
+      
+      // ถ้าเป็น publish ให้ตรวจสอบ publish_start
+      if (newStatus === 'published') {
+        if (announcement.publish_start && new Date(announcement.publish_start) > now) {
+          finalStatus = 'scheduled';
+        }
+      }
+      
       const response = await fetch(`/api/announcements/${announcement.announcement_id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
-          ...announcement,
-          is_published: !announcement.is_published,
+          title: announcement.title,
+          content: announcement.content,
+          target_role: announcement.target_role || 'all',
+          status: finalStatus,
+          publish_start: announcement.publish_start || null,
+          publish_end: announcement.publish_end || null,
         }),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to update');
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        console.error(`Failed to update status to ${newStatus}:`, errorData);
+        
+        // ถ้าเป็น 403 Unauthorized แสดงข้อความที่ชัดเจน
+        if (response.status === 403) {
+          throw new Error('ไม่มีสิทธิ์เข้าถึง กรุณา login ใหม่');
+        }
+        
+        throw new Error(errorData.error || `HTTP ${response.status}: Failed to update`);
       }
 
+      // Reload เพื่อให้แน่ใจว่าข้อมูลตรงกับ server (อัปเดต status จากฐานข้อมูล)
       await loadAnnouncements();
-    } catch (error) {
-      alert('เกิดข้อผิดพลาด');
+      
+      const statusLabels: Record<AnnouncementStatus, string> = {
+        draft: 'บันทึกร่าง',
+        scheduled: 'ตั้งเวลาเผยแพร่',
+        published: 'เผยแพร่',
+        paused: 'ปิดชั่วคราว',
+        expired: 'หมดอายุ',
+        cancelled: 'ยกเลิก',
+      };
+      
+      alert(`${statusLabels[finalStatus]}สำเร็จ`);
+    } catch (error: any) {
+      console.error(`Error updating status to ${newStatus}:`, error);
+      alert(`เกิดข้อผิดพลาด: ${error.message || 'ไม่สามารถอัปเดตสถานะได้'}`);
     }
+  };
+
+  // Publish announcement
+  const handlePublish = async (announcement: Announcement) => {
+    await updateStatus(announcement, 'published', 'คุณต้องการเผยแพร่ประกาศนี้หรือไม่?');
+  };
+
+  // Unpublish announcement (เปลี่ยนเป็น draft)
+  const handleUnpublish = async (announcement: Announcement) => {
+    await updateStatus(announcement, 'draft', 'คุณต้องการยกเลิกการเผยแพร่ประกาศนี้หรือไม่?');
+  };
+
+  // Pause announcement
+  const handlePause = async (announcement: Announcement) => {
+    await updateStatus(announcement, 'paused', 'คุณต้องการปิดชั่วคราวประกาศนี้หรือไม่?');
+  };
+
+  // Cancel announcement
+  const handleCancel = async (announcement: Announcement) => {
+    await updateStatus(announcement, 'cancelled', 'คุณต้องการยกเลิกประกาศนี้ถาวรหรือไม่? (ไม่สามารถแก้ไขได้)');
   };
 
   // Delete file
@@ -273,6 +459,7 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
     try {
       const response = await fetch(`/api/announcements/files/${fileId}`, {
         method: 'DELETE',
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -293,14 +480,6 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
-  // Get status label
-  const getStatusLabel = (announcement: Announcement) => {
-    if (!announcement.is_published) return 'draft';
-    if (announcement.publish_end && new Date(announcement.publish_end) < new Date()) {
-      return 'expired';
-    }
-    return 'published';
-  };
 
   return (
     <div>
@@ -335,7 +514,6 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
               value={selectedRole}
               onChange={(e) => setSelectedRole(e.target.value)}
             >
-              <option value="all">ทุกกลุ่ม</option>
               <option value="all">ทุกคน</option>
               <option value="tenant">ผู้เช่า</option>
               <option value="admin">Admin</option>
@@ -349,9 +527,12 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
               onChange={(e) => setSelectedStatus(e.target.value)}
             >
               <option value="all">ทั้งหมด</option>
-              <option value="published">เผยแพร่แล้ว</option>
               <option value="draft">ร่าง</option>
+              <option value="scheduled">ตั้งเวลาไว้</option>
+              <option value="published">เผยแพร่</option>
+              <option value="paused">ปิดชั่วคราว</option>
               <option value="expired">หมดอายุ</option>
+              <option value="cancelled">ยกเลิก</option>
             </select>
           </div>
         </div>
@@ -402,18 +583,39 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
                        announcement.target_role === 'tenant' ? 'ผู้เช่า' : 'Admin'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span
-                        className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                          status === 'published'
-                            ? 'bg-green-100 text-green-800'
-                            : status === 'draft'
-                            ? 'bg-gray-100 text-gray-800'
-                            : 'bg-red-100 text-red-800'
-                        }`}
-                      >
-                        {status === 'published' ? 'เผยแพร่แล้ว' : 
-                         status === 'draft' ? 'ร่าง' : 'หมดอายุ'}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColorClass(status)}`}
+                        >
+                          {getStatusDisplayLabel(status)}
+                        </span>
+                        {status !== 'cancelled' && (
+                          <select
+                            value={status}
+                            onChange={(e) => {
+                              const newStatus = e.target.value as AnnouncementStatus;
+                              const confirmMessages: Record<AnnouncementStatus, string> = {
+                                draft: 'คุณต้องการเปลี่ยนสถานะเป็น "ร่าง" หรือไม่?',
+                                scheduled: 'คุณต้องการเปลี่ยนสถานะเป็น "ตั้งเวลาไว้" หรือไม่?',
+                                published: 'คุณต้องการเปลี่ยนสถานะเป็น "เผยแพร่แล้ว" หรือไม่?',
+                                paused: 'คุณต้องการเปลี่ยนสถานะเป็น "ปิดชั่วคราว" หรือไม่?',
+                                expired: 'คุณต้องการเปลี่ยนสถานะเป็น "หมดอายุ" หรือไม่?',
+                                cancelled: 'คุณต้องการเปลี่ยนสถานะเป็น "ยกเลิก" หรือไม่? (ไม่สามารถแก้ไขได้)',
+                              };
+                              updateStatus(announcement, newStatus, confirmMessages[newStatus]);
+                            }}
+                            className="text-xs border rounded px-2 py-1 bg-white hover:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <option value="draft">ร่าง</option>
+                            <option value="scheduled">ตั้งเวลาไว้</option>
+                            <option value="published">เผยแพร่</option>
+                            <option value="paused">ปิดชั่วคราว</option>
+                            <option value="expired">หมดอายุ</option>
+                            <option value="cancelled">ยกเลิก</option>
+                          </select>
+                        )}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {announcement.publish_start
@@ -421,24 +623,103 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
                         : new Date(announcement.created_at).toLocaleDateString('th-TH')}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleEdit(announcement)}
-                          className="text-blue-600 hover:text-blue-900"
-                        >
-                          แก้ไข
-                        </button>
-                        <button
-                          onClick={() => handleTogglePublish(announcement)}
-                          className="text-green-600 hover:text-green-900"
-                        >
-                          {announcement.is_published ? 'ยกเลิกเผยแพร่' : 'เผยแพร่'}
-                        </button>
+                      <div className="flex gap-2 flex-wrap">
+                        {/* แก้ไข - แสดงได้ทุก status ยกเว้น cancelled */}
+                        {status !== 'cancelled' && (
+                          <button
+                            onClick={() => handleEdit(announcement)}
+                            className="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors"
+                            title="แก้ไขประกาศ"
+                          >
+                            ✏️ แก้ไข
+                          </button>
+                        )}
+                        
+                        {/* ปุ่มตาม status */}
+                        {status === 'draft' && (
+                          <button
+                            onClick={() => handlePublish(announcement)}
+                            className="px-3 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors"
+                            title="เผยแพร่ประกาศ"
+                          >
+                            ✅ เผยแพร่
+                          </button>
+                        )}
+                        
+                        {status === 'scheduled' && (
+                          <>
+                            <button
+                              onClick={() => handlePublish(announcement)}
+                              className="px-3 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors"
+                              title="เผยแพร่ทันที"
+                            >
+                              ✅ เผยแพร่ทันที
+                            </button>
+                            <button
+                              onClick={() => handlePause(announcement)}
+                              className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200 transition-colors"
+                              title="ปิดชั่วคราว"
+                            >
+                              ⏸️ ปิดชั่วคราว
+                            </button>
+                          </>
+                        )}
+                        
+                        {status === 'published' && (
+                          <>
+                            <button
+                              onClick={() => handlePause(announcement)}
+                              className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200 transition-colors"
+                              title="ปิดชั่วคราว"
+                            >
+                              ⏸️ ปิดชั่วคราว
+                            </button>
+                            <button
+                              onClick={() => handleUnpublish(announcement)}
+                              className="px-3 py-1 bg-orange-100 text-orange-700 rounded hover:bg-orange-200 transition-colors"
+                              title="ยกเลิกการเผยแพร่"
+                            >
+                              🚫 ยกเลิกเผยแพร่
+                            </button>
+                          </>
+                        )}
+                        
+                        {status === 'paused' && (
+                          <>
+                            <button
+                              onClick={() => handlePublish(announcement)}
+                              className="px-3 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors"
+                              title="เผยแพร่อีกครั้ง"
+                            >
+                              ✅ เผยแพร่
+                            </button>
+                            <button
+                              onClick={() => handleUnpublish(announcement)}
+                              className="px-3 py-1 bg-orange-100 text-orange-700 rounded hover:bg-orange-200 transition-colors"
+                              title="เปลี่ยนเป็นร่าง"
+                            >
+                              📝 เปลี่ยนเป็นร่าง
+                            </button>
+                          </>
+                        )}
+                        
+                        {(status === 'expired' || status === 'draft') && (
+                          <button
+                            onClick={() => handleCancel(announcement)}
+                            className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
+                            title="ยกเลิกถาวร"
+                          >
+                            ❌ ยกเลิก
+                          </button>
+                        )}
+                        
+                        {/* ลบ - แสดงได้ทุก status */}
                         <button
                           onClick={() => handleDelete(announcement.announcement_id)}
-                          className="text-red-600 hover:text-red-900"
+                          className="px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors"
+                          title="ลบประกาศ"
                         >
-                          ลบ
+                          🗑️ ลบ
                         </button>
                       </div>
                     </td>
@@ -472,31 +753,6 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    กลุ่มเป้าหมาย
-                  </label>
-                  <select
-                    className="w-full border rounded-md px-3 py-2"
-                    value={form.target_role}
-                    onChange={(e) => setForm({ ...form, target_role: e.target.value as any })}
-                  >
-                    <option value="all">ทุกคน</option>
-                    <option value="tenant">ผู้เช่า</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={form.is_published}
-                      onChange={(e) => setForm({ ...form, is_published: e.target.checked })}
-                    />
-                    <span className="text-sm font-medium text-gray-700">เผยแพร่</span>
-                  </label>
-                </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>

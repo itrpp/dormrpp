@@ -23,26 +23,56 @@ const ALLOWED_TYPES = [
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 // GET /api/announcements/[id]/files - ดึงรายการไฟล์
+// Admin สามารถดูไฟล์ได้ทุก announcement
+// Tenant สามารถดูไฟล์ได้เฉพาะ announcement ที่ published แล้ว
 export async function GET(
   req: Request,
   { params }: { params: { id: string } }
 ) {
   try {
     const session = await getSession();
-    
-    if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-
     const announcementId = parseInt(params.id, 10);
+    
     if (isNaN(announcementId)) {
       return NextResponse.json(
         { error: 'Invalid announcement ID' },
         { status: 400 }
       );
+    }
+
+    // ไม่จำกัดการเข้าถึง - ให้เห็นได้ทุกคน (เฉพาะที่ published)
+    // ถ้าไม่ใช่ admin ให้ตรวจสอบว่า published แล้ว
+    if (!session || (session.role !== 'admin' && session.role !== 'superUser')) {
+      try {
+        const [announcement] = await query<{ status?: string | null; is_published?: number | null }>(
+          `SELECT status, is_published FROM announcements WHERE announcement_id = ?`,
+          [announcementId]
+        );
+
+        if (!announcement) {
+          return NextResponse.json(
+            { error: 'Announcement not found' },
+            { status: 404 }
+          );
+        }
+
+        // ตรวจสอบ status หรือ is_published (backward compatibility)
+        const isPublished = announcement.status === 'published' || 
+                           (announcement.status === null && Boolean(announcement.is_published));
+        
+        if (!isPublished) {
+          return NextResponse.json(
+            { error: 'Announcement not published' },
+            { status: 404 }
+          );
+        }
+        // ไม่ตรวจสอบ publish_start, publish_end - ให้เห็นได้ทุกคน
+      } catch (error: any) {
+        return NextResponse.json(
+          { error: 'Failed to fetch files' },
+          { status: 500 }
+        );
+      }
     }
 
     try {

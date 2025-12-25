@@ -51,47 +51,16 @@ export async function GET(
       );
     }
 
-    // ตรวจสอบสิทธิ์การเข้าถึง
-    const userRole = session?.role || 'tenant';
-    const targetRole = announcement.target_role || announcement.target_audience || 'all';
+    // ไม่จำกัดการเข้าถึง - ให้เห็นได้ทุกคน (เฉพาะที่ published)
+    const isPublished = announcement.status === 'published' || 
+                       (announcement.status === null && Boolean(announcement.is_published));
     
-    if (targetRole !== 'all') {
-      if (targetRole === 'admin' && userRole !== 'admin' && userRole !== 'superUser') {
-        return NextResponse.json(
-          { error: 'Forbidden' },
-          { status: 403 }
-        );
-      }
-      if (targetRole === 'tenant' && (userRole === 'admin' || userRole === 'superUser')) {
-        // Admin สามารถดูได้
-      }
-    }
-
-    // ตรวจสอบ publishing window (ถ้าไม่ใช่ admin)
-    if (userRole !== 'admin' && userRole !== 'superUser') {
-      const now = new Date();
-      const isPublished = announcement.is_published !== undefined 
-        ? announcement.is_published 
-        : announcement.is_active;
-      
-      if (!isPublished) {
+    if (!isPublished) {
+      // ถ้าไม่ใช่ admin ให้แสดงเฉพาะที่ published
+      if (!session || (session.role !== 'admin' && session.role !== 'superUser')) {
         return NextResponse.json(
           { error: 'Announcement not published' },
-          { status: 403 }
-        );
-      }
-
-      if (announcement.publish_start && new Date(announcement.publish_start) > now) {
-        return NextResponse.json(
-          { error: 'Announcement not yet published' },
-          { status: 403 }
-        );
-      }
-
-      if (announcement.publish_end && new Date(announcement.publish_end) < now) {
-        return NextResponse.json(
-          { error: 'Announcement expired' },
-          { status: 403 }
+          { status: 404 }
         );
       }
     }
@@ -150,9 +119,25 @@ export async function PUT(
   try {
     const session = await getSession();
     
-    if (!session || (session.role !== 'admin' && session.role !== 'superUser')) {
+    // Debug: Log session info
+    if (!session) {
+      console.log('[PUT /api/announcements/[id]] No session found');
       return NextResponse.json(
-        { error: 'Unauthorized' },
+        { error: 'Unauthorized: No session' },
+        { status: 403 }
+      );
+    }
+    
+    console.log('[PUT /api/announcements/[id]] Session:', {
+      username: session.username,
+      role: session.role,
+      name: session.name,
+    });
+    
+    if (session.role !== 'admin' && session.role !== 'superUser') {
+      console.log('[PUT /api/announcements/[id]] Unauthorized role:', session.role);
+      return NextResponse.json(
+        { error: `Unauthorized: Role '${session.role}' is not allowed. Required: admin or superUser` },
         { status: 403 }
       );
     }
@@ -166,7 +151,7 @@ export async function PUT(
     }
 
     const body = await req.json();
-    const { title, content, target_role, is_published, publish_start, publish_end } = body;
+    const { title, content, target_role, status, is_published, publish_start, publish_end } = body;
 
     // Validation
     if (publish_start && publish_end && new Date(publish_start) > new Date(publish_end)) {
@@ -176,17 +161,35 @@ export async function PUT(
       );
     }
 
+    // กำหนด status อัตโนมัติถ้าไม่ได้ระบุ (รองรับ backward compatibility)
+    let finalStatus: string | null = status || null;
+    if (!status && is_published !== undefined) {
+      // Backward compatibility: ถ้าใช้ is_published แทน status
+      const now = new Date();
+      if (publish_start && new Date(publish_start) > now) {
+        finalStatus = 'scheduled';
+      } else if (is_published) {
+        finalStatus = 'published';
+      } else {
+        finalStatus = 'draft';
+      }
+    }
+
     try {
+      // รองรับทั้ง status และ is_published (backward compatibility)
       await query(
         `UPDATE announcements 
-         SET title = ?, content = ?, target_role = ?, is_published = ?, 
+         SET title = ?, content = ?, target_role = ?, 
+             ${finalStatus !== null ? 'status = ?,' : ''}
+             is_published = ?, 
              publish_start = ?, publish_end = ?, updated_at = NOW()
          WHERE announcement_id = ?`,
         [
           title,
           content,
           target_role || 'all',
-          is_published !== undefined ? (is_published ? 1 : 0) : 1,
+          ...(finalStatus !== null ? [finalStatus] : []),
+          is_published !== undefined ? (is_published ? 1 : 0) : (finalStatus === 'published' || finalStatus === 'scheduled' ? 1 : 0),
           publish_start ? new Date(publish_start) : null,
           publish_end ? new Date(publish_end) : null,
           announcementId,
@@ -230,9 +233,25 @@ export async function DELETE(
   try {
     const session = await getSession();
     
-    if (!session || (session.role !== 'admin' && session.role !== 'superUser')) {
+    // Debug: Log session info
+    if (!session) {
+      console.log('[DELETE /api/announcements/[id]] No session found');
       return NextResponse.json(
-        { error: 'Unauthorized' },
+        { error: 'Unauthorized: No session' },
+        { status: 403 }
+      );
+    }
+    
+    console.log('[DELETE /api/announcements/[id]] Session:', {
+      username: session.username,
+      role: session.role,
+      name: session.name,
+    });
+    
+    if (session.role !== 'admin' && session.role !== 'superUser') {
+      console.log('[DELETE /api/announcements/[id]] Unauthorized role:', session.role);
+      return NextResponse.json(
+        { error: `Unauthorized: Role '${session.role}' is not allowed. Required: admin or superUser` },
         { status: 403 }
       );
     }

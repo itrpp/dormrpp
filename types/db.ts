@@ -1,170 +1,134 @@
-// types/db.ts
-// TypeScript types for database tables (rpp_dorm schema)
+// types/db.ts - TypeScript type definitions for database entities
 
-// 1️⃣ buildings (อาคาร)
-export interface Building {
-  building_id: number;
-  name_th: string;
-  name_en?: string | null;
-  created_at?: Date | null;
-}
-
-// 2️⃣ rooms (ห้อง)
-export interface Room {
-  room_id: number;
-  building_id: number;
-  room_number: string;
-  floor_no: number | null;
-  status: 'available' | 'occupied' | 'maintenance';
-  created_at?: Date | null;
-}
-
-// 3️⃣ tenants (ผู้เช่า)
-export interface Tenant {
-  tenant_id: number;
-  first_name_th: string;
-  last_name_th: string;
-  email?: string | null;
-  phone?: string | null;
-  status: 'active' | 'inactive';
-  created_at?: Date | null;
-}
-
-// 4️⃣ contracts (สัญญาเช่า) ⭐ หัวใจระบบ
-export interface Contract {
-  contract_id: number;
-  tenant_id: number;
-  room_id: number;
-  start_date: Date;
-  end_date?: Date | null;
-  status: 'active' | 'ended';
-  created_at?: Date | null;
-}
-
-// 5️⃣ billing_cycles (รอบบิล)
-export interface BillingCycle {
-  cycle_id: number;
-  billing_year: number;
-  billing_month: number;
-  start_date: Date;
-  end_date: Date;
-  due_date: Date;
-  status: 'open' | 'closed';
-  created_at?: Date | null;
-}
-
-// 6️⃣ utility_types (ประเภทสาธารณูปโภค)
-export interface UtilityType {
-  utility_type_id: number;
-  code: string;
-  name_th: string;
-}
-
-// 7️⃣ utility_rates (อัตราค่าใช้)
-export interface UtilityRate {
-  rate_id: number;
-  utility_type_id: number;
-  rate_per_unit: number;
-  effective_date: Date;
-}
-
-// 8️⃣ bill_utility_readings (เลขมิเตอร์ต่อห้อง) ⭐ สำคัญมาก
-export interface BillUtilityReading {
-  reading_id: number;
-  room_id: number;
-  cycle_id: number;
-  utility_type_id: number;
-  meter_start: number;
-  meter_end: number;
-  created_at?: Date | null;
-}
-
-// 9️⃣ meter_photos (รูปมิเตอร์)
-export interface MeterPhoto {
-  photo_id: number;
-  reading_id: number;
-  photo_path: string;
-  taken_at?: Date | null;
-}
-
-// 🔟 bills (ใบแจ้งหนี้) ⭐ ออกบิลรายผู้เช่า
-export interface Bill {
-  bill_id: number;
-  tenant_id: number;
-  room_id: number;
-  contract_id: number | null;
-  cycle_id: number;
-  maintenance_fee: number;
-  electric_amount: number;
-  water_amount: number;
-  subtotal_amount: number;
-  total_amount: number;
-  status: 'draft' | 'sent' | 'paid';
-  created_at?: Date | null;
-}
-
-// 11️⃣ payments (การชำระเงิน)
-export interface Payment {
-  payment_id: number;
-  bill_id: number;
-  amount: number;
-  payment_method: 'cash' | 'transfer' | 'salary_deduct';
-  paid_at: Date;
-}
-
-// Legacy types (for backward compatibility during migration)
-export interface RoomType {
-  room_type_id: number;
-  name_th: string;
-  name_en?: string | null;
-  description?: string | null;
-  // รองรับคอลัมน์ name_type (ชื่อประเภทห้อง) หากมีในฐานข้อมูล
-  name_type?: string | null;
-}
-
-export interface BillOtherItem {
-  bill_other_item_id: number;
-  bill_id: number;
-  item_name: string;
-  quantity?: number | null;
-  unit_price?: number | null;
-  amount: number;
-  description?: string | null;
-}
+// Announcement types
+export type AnnouncementStatus = 'draft' | 'scheduled' | 'published' | 'paused' | 'expired' | 'cancelled';
 
 export interface Announcement {
   announcement_id: number;
   title: string;
   content: string;
-  target_audience?: string | null;
-  target_role?: 'all' | 'tenant' | 'admin' | null; // ใช้แทน target_audience
-  is_active: boolean;
-  is_published?: boolean | null; // ใช้แทน is_active สำหรับ publishing
-  publish_start?: Date | null;
-  publish_end?: Date | null;
-  published_at?: Date | null;
+  target_role?: string | null;
+  target_audience?: string | null; // Legacy field
+  status?: AnnouncementStatus | null;
+  is_published?: boolean | null; // Legacy: เก็บไว้สำหรับ backward compatibility
+  is_active?: boolean | null; // Legacy field
+  publish_start?: string | null;
+  publish_end?: string | null;
   created_by_ad_username?: string | null;
-  created_at?: Date | null;
-  updated_at?: Date | null;
-  is_deleted?: boolean | null;
+  created_at: string | Date;
+  updated_at?: string | Date | null;
+  is_deleted?: number | boolean | null; // Legacy field
 }
 
-// ไฟล์แนบประกาศ
 export interface AnnouncementFile {
   file_id: number;
   announcement_id: number;
   file_name: string;
-  file_path: string; // path ใน server เช่น /uploads/announcements/2025-10/xxx.pdf
-  file_type: string; // MIME type เช่น application/pdf
-  file_size: number; // bytes
-  created_at?: Date | null;
+  file_path: string;
+  file_type: string;
+  file_size: number;
+  created_at?: string | Date | null;
+  download_url?: string; // Optional: สำหรับ client-side
 }
 
-// การอ่านประกาศ (read tracking)
-export interface AnnouncementRead {
-  read_id: number;
-  announcement_id: number;
-  tenant_id?: number | null; // null ถ้าเป็น admin
-  user_ad_username?: string | null; // AD username
-  read_at?: Date | null;
+// Building types
+export interface Building {
+  building_id: number;
+  name_th: string;
+  name_en?: string | null;
 }
+
+// Room types
+export interface RoomType {
+  room_type_id: number;
+  id?: number; // Legacy field
+  name_th?: string | null;
+  name_en?: string | null;
+  name_type?: string | null; // Alternative name field
+  description?: string | null;
+  max_occupants?: number | null;
+}
+
+// Room types
+export interface Room {
+  room_id: number;
+  room_number: string;
+  floor_no?: number | null;
+  building_id: number;
+  room_type_id?: number | null;
+  status?: 'available' | 'occupied' | 'maintenance' | null;
+  is_deleted?: number | boolean | null;
+}
+
+// Tenant types
+export interface Tenant {
+  tenant_id: number;
+  first_name?: string | null;
+  last_name?: string | null;
+  first_name_th?: string | null; // Thai name fields
+  last_name_th?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  status?: string | null;
+  is_deleted?: number | boolean | null;
+}
+
+// Contract types
+export interface Contract {
+  contract_id: number;
+  tenant_id: number;
+  room_id: number;
+  start_date: string | Date;
+  end_date?: string | Date | null;
+  status: 'active' | 'inactive' | 'terminated' | null;
+  created_at?: string | Date | null;
+  updated_at?: string | Date | null;
+}
+
+// Bill types
+export interface BillingCycle {
+  cycle_id: number;
+  billing_year: number;
+  billing_month: number;
+  billing_date: string | Date;
+  due_date: string | Date;
+  status?: string | null;
+  created_at?: string | Date | null;
+}
+
+export interface UtilityRate {
+  rate_id: number;
+  utility_code: 'electric' | 'water';
+  rate_per_unit: number;
+  effective_from?: string | Date | null;
+  effective_to?: string | Date | null;
+  created_at?: string | Date | null;
+}
+
+export interface BillUtilityReading {
+  reading_id: number;
+  bill_id: number;
+  utility_code: 'electric' | 'water';
+  meter_start: number;
+  meter_end: number;
+  units: number;
+  rate_per_unit: number;
+  amount: number;
+}
+
+export interface Bill {
+  bill_id: number;
+  contract_id: number;
+  cycle_id: number;
+  total_amount: number;
+  maintenance_fee: number;
+  utility_amount: number;
+  electric_amount?: number; // จำนวนเงินค่าไฟฟ้า
+  water_amount?: number; // จำนวนเงินค่าน้ำ
+  subtotal_amount?: number; // ยอดรวมก่อนรวมค่าบำรุงรักษา
+  status?: 'pending' | 'paid' | 'overdue' | 'cancelled' | 'sent' | null;
+  paid_at?: string | Date | null;
+  created_at?: string | Date | null;
+  updated_at?: string | Date | null;
+}
+
