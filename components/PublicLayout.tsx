@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { getMenuItems } from '@/lib/menu-items';
 
 interface PublicLayoutProps {
   children: React.ReactNode;
@@ -29,14 +30,15 @@ export default function PublicLayout({ children, session }: PublicLayoutProps) {
     localStorage.setItem('sidebarCollapsed', String(newState));
   };
 
-  const menuItems = [
-    { href: '/', label: 'หน้าหลัก', icon: '🏠' },
-    { href: '/meters', label: 'มิเตอร์น้ำ-ไฟ', icon: '💧⚡' },
-  ];
+  // ใช้เมนูจากไฟล์ shared
+  const menuItems = getMenuItems(session?.role);
 
   const isActive = (href: string) => {
-    if (href === '/') {
-      return pathname === '/';
+    if (href === '/admin') {
+      return pathname === '/admin';
+    }
+    if (href.startsWith('http')) {
+      return false;
     }
     return pathname?.startsWith(href);
   };
@@ -86,10 +88,15 @@ export default function PublicLayout({ children, session }: PublicLayoutProps) {
           <div className={`space-y-1 ${sidebarCollapsed ? 'px-2' : 'px-2'}`}>
             {menuItems.map((item) => {
               const active = isActive(item.href);
+              const MenuLink = item.external ? 'a' : Link;
+              const linkProps = item.external
+                ? { href: item.href, target: '_blank', rel: 'noopener noreferrer' }
+                : { href: item.href };
+
               return (
-                <Link
+                <MenuLink
                   key={item.href}
-                  href={item.href}
+                  {...linkProps}
                   className={`flex items-center gap-3 rounded-lg text-sm font-medium transition-colors ${
                     sidebarCollapsed ? 'justify-center px-2 py-2.5' : 'px-3 py-2.5'
                   } ${
@@ -101,7 +108,7 @@ export default function PublicLayout({ children, session }: PublicLayoutProps) {
                 >
                   {item.icon && <span className="text-lg flex-shrink-0">{item.icon}</span>}
                   {!sidebarCollapsed && <span>{item.label}</span>}
-                </Link>
+                </MenuLink>
               );
             })}
           </div>
@@ -177,20 +184,25 @@ export default function PublicLayout({ children, session }: PublicLayoutProps) {
             <div className="px-2 space-y-1">
               {menuItems.map((item) => {
                 const active = isActive(item.href);
+                const MenuLink = item.external ? 'a' : Link;
+                const linkProps = item.external
+                  ? { href: item.href, target: '_blank', rel: 'noopener noreferrer' }
+                  : { href: item.href };
+
                 return (
-                  <Link
+                  <MenuLink
                     key={item.href}
-                    href={item.href}
-                    onClick={() => setSidebarOpen(false)}
+                    {...linkProps}
+                    onClick={() => !item.external && setSidebarOpen(false)}
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                       active
                         ? 'bg-blue-50 text-blue-700 border border-blue-200'
                         : 'text-gray-700 hover:bg-gray-100'
                     }`}
                   >
-                    <span className="text-lg">{item.icon || '📄'}</span>
+                    {item.icon && <span className="text-lg">{item.icon}</span>}
                     <span>{item.label}</span>
-                  </Link>
+                  </MenuLink>
                 );
               })}
             </div>

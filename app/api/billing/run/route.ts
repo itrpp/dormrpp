@@ -39,7 +39,9 @@ export async function POST(req: Request) {
     const waterRate = await getCurrentUtilityRate(waterTypeId);
 
     // SQL สำหรับออกบิลทั้งเดือน
-    // หลักการ: 1 tenant = 1 bill, ค่าไฟ/น้ำเหมือนกันทุกคนในห้อง
+    // หลักการ: 1 tenant = 1 bill
+    // ค่าบำรุงรักษา: แต่ละคนจ่ายเต็มจำนวน (ไม่หาร)
+    // ค่าน้ำและค่าไฟ: หารด้วยจำนวนผู้เช่าในห้อง (active contracts)
     // ใช้ JOIN กับ billing_cycles และดึงอัตราจาก utility_rates
     const sql = `
       INSERT INTO bills (
@@ -61,34 +63,9 @@ export async function POST(req: Request) {
         bc.cycle_id,
         ? AS maintenance_fee,
         
-        -- คำนวณ electric_amount = (meter_end - meter_start) * rate_per_unit
+        -- คำนวณ electric_amount = ((meter_end - meter_start) * rate_per_unit) / จำนวนผู้เช่าในห้อง
         IFNULL(
-          (e.meter_end - e.meter_start) * (
-            SELECT rate_per_unit 
-            FROM utility_rates 
-            WHERE utility_type_id = ?
-              AND effective_date <= CURDATE()
-            ORDER BY effective_date DESC 
-            LIMIT 1
-          ), 0
-        ) AS electric_amount,
-        
-        -- คำนวณ water_amount = (meter_end - meter_start) * rate_per_unit
-        IFNULL(
-          (w.meter_end - w.meter_start) * (
-            SELECT rate_per_unit 
-            FROM utility_rates 
-            WHERE utility_type_id = ?
-              AND effective_date <= CURDATE()
-            ORDER BY effective_date DESC 
-            LIMIT 1
-          ), 0
-        ) AS water_amount,
-        
-        -- subtotal_amount = maintenance_fee + electric + water
-        (
-          ? +
-          IFNULL(
+          (
             (e.meter_end - e.meter_start) * (
               SELECT rate_per_unit 
               FROM utility_rates 
@@ -96,9 +73,16 @@ export async function POST(req: Request) {
                 AND effective_date <= CURDATE()
               ORDER BY effective_date DESC 
               LIMIT 1
-            ), 0
-          ) +
-          IFNULL(
+            )
+          ) / GREATEST(
+            (SELECT COUNT(*) FROM contracts c2 WHERE c2.room_id = c.room_id AND c2.status = 'active'),
+            1
+          ), 0
+        ) AS electric_amount,
+        
+        -- คำนวณ water_amount = ((meter_end - meter_start) * rate_per_unit) / จำนวนผู้เช่าในห้อง
+        IFNULL(
+          (
             (w.meter_end - w.meter_start) * (
               SELECT rate_per_unit 
               FROM utility_rates 
@@ -106,6 +90,44 @@ export async function POST(req: Request) {
                 AND effective_date <= CURDATE()
               ORDER BY effective_date DESC 
               LIMIT 1
+            )
+          ) / GREATEST(
+            (SELECT COUNT(*) FROM contracts c2 WHERE c2.room_id = c.room_id AND c2.status = 'active'),
+            1
+          ), 0
+        ) AS water_amount,
+        
+        -- subtotal_amount = maintenance_fee + (electric / tenant_count) + (water / tenant_count)
+        (
+          ? +
+          IFNULL(
+            (
+              (e.meter_end - e.meter_start) * (
+                SELECT rate_per_unit 
+                FROM utility_rates 
+                WHERE utility_type_id = ?
+                  AND effective_date <= CURDATE()
+                ORDER BY effective_date DESC 
+                LIMIT 1
+              )
+            ) / GREATEST(
+              (SELECT COUNT(*) FROM contracts c2 WHERE c2.room_id = c.room_id AND c2.status = 'active'),
+              1
+            ), 0
+          ) +
+          IFNULL(
+            (
+              (w.meter_end - w.meter_start) * (
+                SELECT rate_per_unit 
+                FROM utility_rates 
+                WHERE utility_type_id = ?
+                  AND effective_date <= CURDATE()
+                ORDER BY effective_date DESC 
+                LIMIT 1
+              )
+            ) / GREATEST(
+              (SELECT COUNT(*) FROM contracts c2 WHERE c2.room_id = c.room_id AND c2.status = 'active'),
+              1
             ), 0
           )
         ) AS subtotal_amount,
@@ -114,23 +136,33 @@ export async function POST(req: Request) {
         (
           ? +
           IFNULL(
-            (e.meter_end - e.meter_start) * (
-              SELECT rate_per_unit 
-              FROM utility_rates 
-              WHERE utility_type_id = ?
-                AND effective_date <= CURDATE()
-              ORDER BY effective_date DESC 
-              LIMIT 1
+            (
+              (e.meter_end - e.meter_start) * (
+                SELECT rate_per_unit 
+                FROM utility_rates 
+                WHERE utility_type_id = ?
+                  AND effective_date <= CURDATE()
+                ORDER BY effective_date DESC 
+                LIMIT 1
+              )
+            ) / GREATEST(
+              (SELECT COUNT(*) FROM contracts c2 WHERE c2.room_id = c.room_id AND c2.status = 'active'),
+              1
             ), 0
           ) +
           IFNULL(
-            (w.meter_end - w.meter_start) * (
-              SELECT rate_per_unit 
-              FROM utility_rates 
-              WHERE utility_type_id = ?
-                AND effective_date <= CURDATE()
-              ORDER BY effective_date DESC 
-              LIMIT 1
+            (
+              (w.meter_end - w.meter_start) * (
+                SELECT rate_per_unit 
+                FROM utility_rates 
+                WHERE utility_type_id = ?
+                  AND effective_date <= CURDATE()
+                ORDER BY effective_date DESC 
+                LIMIT 1
+              )
+            ) / GREATEST(
+              (SELECT COUNT(*) FROM contracts c2 WHERE c2.room_id = c.room_id AND c2.status = 'active'),
+              1
             ), 0
           )
         ) AS total_amount,

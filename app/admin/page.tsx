@@ -476,7 +476,7 @@ export default async function AdminDashboard() {
     <div className="space-y-3">
       {/* Header */}
       <div className="mb-2">
-        <h1 className="text-xl font-bold text-gray-900">แดชบอร์ดผู้ดูแล</h1>
+        <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
         <p className="text-xs text-gray-500 mt-0.5">
           ภาพรวมระบบจัดการหอพักรวงผึ้ง โรงพยาบาลราชพิพัฒน์
         </p>

@@ -99,14 +99,6 @@ export default function MetersClient({
     }
   }, [monthValue, initialCycles]);
 
-  // Debug: Log initial data
-  console.log('[MetersClient] Initial data:', {
-    cyclesCount: initialCycles?.length || 0,
-    roomsCount: initialRooms?.length || 0,
-    readingsCount: initialReadings?.length || 0,
-    sampleReading: initialReadings?.[0],
-  });
-
   // สร้างรายการชั้นจาก rooms
   const floorOptions = useMemo(() => {
     const floors = new Set<number>();
@@ -131,14 +123,6 @@ export default function MetersClient({
       filtered = filtered.filter((r) => r.floor_no === selectedFloor);
     }
 
-    console.log('[MetersClient] Filtered readings:', {
-      selectedCycleId,
-      selectedFloor,
-      showRoomsWithZeroUsageWater,
-      showRoomsWithZeroUsageElectric,
-      filteredCount: filtered.length,
-    });
-
     return filtered;
   }, [initialReadings, selectedCycleId, selectedFloor, showRoomsWithZeroUsageWater, showRoomsWithZeroUsageElectric]);
 
@@ -153,11 +137,10 @@ export default function MetersClient({
 
     // เพิ่ม readings ที่มีอยู่
     if (filteredReadings && filteredReadings.length > 0) {
-      filteredReadings.forEach((reading) => {
-        if (!reading || !reading.room_id || !reading.cycle_id) {
-          console.warn('[MetersClient] Invalid reading:', reading);
-          return;
-        }
+           filteredReadings.forEach((reading) => {
+             if (!reading || !reading.room_id || !reading.cycle_id) {
+               return;
+             }
 
         const key = `${reading.room_id}-${reading.cycle_id}`;
         if (!grouped[key]) {
@@ -230,13 +213,6 @@ export default function MetersClient({
       const roomA = String(a.room.room_number || '');
       const roomB = String(b.room.room_number || '');
       return roomA.localeCompare(roomB, 'th');
-    });
-
-    console.log('[MetersClient] Grouped readings:', {
-      totalGroups: result.length,
-      showRoomsWithZeroUsageWater,
-      showRoomsWithZeroUsageElectric,
-      sampleGroup: result[0],
     });
 
     return result;

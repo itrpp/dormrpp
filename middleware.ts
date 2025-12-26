@@ -13,7 +13,9 @@ export function middleware(request: NextRequest) {
     '/login', 
     '/api/auth/login',
     '/announcements', // หน้า announcements (public)
-    '/meters', // หน้ามิเตอร์น้ำและมิเตอร์ไฟฟ้า (public)
+    '/meters', // redirect to /admin/meters
+    '/admin/meters', // หน้ามิเตอร์น้ำและมิเตอร์ไฟฟ้า (public)
+    '/admin', // dashboard (public)
     // '/my', // ซ่อนฟีเจอร์ /my ไว้ก่อน
   ];
   
@@ -45,8 +47,18 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Admin routes ต้องมี token และเป็น admin/superUser
-  if (pathname.startsWith('/admin')) {
+  // Admin routes ที่เป็น public (ไม่ต้อง authentication)
+  const publicAdminRoutes = [
+    '/admin', // dashboard
+    '/admin/meters', // หน้ามิเตอร์น้ำและไฟฟ้า
+    '/admin/announcements', // หน้า announcements (public)
+  ];
+
+  // ตรวจสอบว่าเป็น public admin route หรือไม่
+  const isPublicAdminRoute = publicAdminRoutes.some(route => pathname === route || pathname.startsWith(route + '/'));
+
+  // Admin routes อื่นๆ (ที่ไม่ใช่ public) ต้องมี token และเป็น admin/superUser
+  if (pathname.startsWith('/admin') && !isPublicAdminRoute) {
     if (!token) {
       const loginUrl = new URL('/login', request.url);
       loginUrl.searchParams.set('redirect', pathname);

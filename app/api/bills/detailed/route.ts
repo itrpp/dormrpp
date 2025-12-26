@@ -136,20 +136,12 @@ export async function GET(req: Request) {
           (ur: any) => ur.room_id === bill.room_id && ur.cycle_id === bill.cycle_id
         );
 
-        // คำนวณจำนวนเงินใหม่จาก utility readings และ rates
-        const electricReading = roomReadings.find((ur: any) => ur.utility_code === 'electric');
-        const waterReading = roomReadings.find((ur: any) => ur.utility_code === 'water');
-        
-        const electricUsage = electricReading ? (electricReading.meter_end - electricReading.meter_start) : 0;
-        const electricRate = electricReading ? (electricReading.rate_per_unit || 0) : 0;
-        const calculatedElectricAmount = electricUsage * electricRate;
-        
-        const waterUsage = waterReading ? (waterReading.meter_end - waterReading.meter_start) : 0;
-        const waterRate = waterReading ? (waterReading.rate_per_unit || 0) : 0;
-        const calculatedWaterAmount = waterUsage * waterRate;
-        
-        const calculatedSubtotal = (bill.maintenance_fee || 0) + calculatedElectricAmount + calculatedWaterAmount;
-        const calculatedTotal = calculatedSubtotal;
+        // นับจำนวนผู้เช่าในห้อง (active contracts)
+        // ใช้ subquery เพื่อนับจำนวนผู้เช่าในห้องเดียวกัน
+        // เนื่องจาก bills มีหลายแถวสำหรับห้องเดียวกัน เราจะนับจาก bills ที่มี room_id เดียวกัน
+        const roomBills = bills.filter((b: any) => b.room_id === bill.room_id && b.cycle_id === bill.cycle_id);
+        const uniqueTenants = new Set(roomBills.map((b: any) => b.tenant_id));
+        const tenantCount = uniqueTenants.size || 1;
 
         groupedBills[billKey] = {
           bill_id: bill.bill_id,
@@ -164,17 +156,17 @@ export async function GET(req: Request) {
           billing_date: bill.billing_date,
           due_date: bill.due_date,
           maintenance_fee: bill.maintenance_fee || 0,
-          // ใช้จำนวนเงินที่คำนวณใหม่จาก utility readings และ rates
-          electric_amount: calculatedElectricAmount,
-          water_amount: calculatedWaterAmount,
-          subtotal_amount: calculatedSubtotal,
-          total_amount: calculatedTotal,
+          // ใช้จำนวนเงินจากฐานข้อมูลโดยตรง (ไม่ต้องคำนวณใหม่)
+          electric_amount: bill.electric_amount || 0,
+          water_amount: bill.water_amount || 0,
+          subtotal_amount: bill.subtotal_amount || 0,
+          total_amount: bill.total_amount || 0,
           status: bill.status || 'draft',
+          tenant_count: tenantCount, // เพิ่มจำนวนผู้เช่าในห้อง
           tenants: [],
           utility_readings: roomReadings.map((ur: any) => {
             const usage = ur.meter_end - ur.meter_start;
             const rate = ur.rate_per_unit || 0;
-            const calculatedAmount = usage * rate;
             return {
               reading_id: ur.reading_id,
               utility_type: ur.utility_code,
@@ -183,7 +175,6 @@ export async function GET(req: Request) {
               meter_end: ur.meter_end,
               usage: usage,
               rate_per_unit: rate,
-              calculated_amount: calculatedAmount,
               created_at: ur.created_at,
             };
           }),

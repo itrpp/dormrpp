@@ -103,6 +103,15 @@ export async function POST(req: Request) {
       [room_id, cycle_id]
     );
 
+    // นับจำนวนผู้เช่าในห้อง (active contracts)
+    const tenantCountResult = await query(
+      `SELECT COUNT(*) as count FROM contracts WHERE room_id = ? AND status = 'active'`,
+      [room_id]
+    );
+    const tenantCount = tenantCountResult && tenantCountResult.length > 0 
+      ? Math.max(Number(tenantCountResult[0].count) || 1, 1) // อย่างน้อย 1 คน
+      : 1;
+
     // คำนวณ electric_amount
     const electricReading = utilityReadings.find((r: any) => r.code === 'electric');
     if (electricReading) {
@@ -110,7 +119,8 @@ export async function POST(req: Request) {
       if (electricTypeId) {
         const rate = await getCurrentUtilityRate(electricTypeId, cycleDate);
         const usage = (electricReading.meter_end || 0) - (electricReading.meter_start || 0);
-        calculatedElectricAmount = usage * rate;
+        // หารด้วยจำนวนผู้เช่าในห้อง
+        calculatedElectricAmount = (usage * rate) / tenantCount;
       }
     }
 
@@ -121,16 +131,18 @@ export async function POST(req: Request) {
       if (waterTypeId) {
         const rate = await getCurrentUtilityRate(waterTypeId, cycleDate);
         const usage = (waterReading.meter_end || 0) - (waterReading.meter_start || 0);
-        calculatedWaterAmount = usage * rate;
+        // หารด้วยจำนวนผู้เช่าในห้อง
+        calculatedWaterAmount = (usage * rate) / tenantCount;
       }
     }
 
     // ใช้ค่าที่คำนวณได้ หรือค่าที่ส่งมา (ถ้ามี)
+    // ถ้ามีค่าส่งมาแล้วก็ต้องหารด้วยจำนวนผู้เช่าด้วย
     const finalElectricAmount = electric_amount !== undefined && electric_amount !== 0 
-      ? Number(electric_amount) 
+      ? Number(electric_amount) / tenantCount
       : calculatedElectricAmount;
-    const finalWaterAmount = water_amount !== undefined && water_amount !== 0 
-      ? Number(water_amount) 
+    const finalWaterAmount = water_amount !== undefined && water_amount !== 0
+      ? Number(water_amount) / tenantCount
       : calculatedWaterAmount;
 
     // คำนวณ subtotal และ total

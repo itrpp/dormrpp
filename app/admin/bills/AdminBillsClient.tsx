@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import { getMonthNameThai } from '@/lib/date-utils';
 
 // ค่าบำรุงรักษาคงที่
@@ -307,10 +308,10 @@ export default function AdminBillsClient() {
   const handleCreateBill = async () => {
     if (form.contract_ids.length === 0 || !form.billing_year || !form.billing_month) {
       alert('กรุณาเลือกสัญญาเช่าและรอบบิล');
-      return;
-    }
+        return;
+      }
 
-    // ดึงหรือสร้าง billing cycle
+      // ดึงหรือสร้าง billing cycle
     let cycleId: number;
     try {
       const cycleRes = await fetch(`/api/billing/cycle?year=${form.billing_year}&month=${form.billing_month}`);
@@ -322,7 +323,7 @@ export default function AdminBillsClient() {
       cycleId = cycleData.cycle_id;
     } catch (error: any) {
       alert(`ไม่สามารถดึงรอบบิลได้: ${error.message || 'Unknown error'}`);
-      return;
+        return;
     }
 
     // ตรวจสอบบิลซ้ำและสร้างบิลสำหรับทุก contract ที่เลือก
@@ -348,28 +349,28 @@ export default function AdminBillsClient() {
         if (hasDuplicate) {
           errorMessages.push(`${contract.building_name} - ห้อง ${contract.room_number}: มีบิลแล้ว`);
           continue;
-        }
+      }
 
-        // สร้างบิลสำหรับ contract นี้
-        const billRes = await fetch('/api/bills', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+      // สร้างบิลสำหรับ contract นี้
+      const billRes = await fetch('/api/bills', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
             contract_id: contract.contract_id,
-            cycle_id: cycleId,
-            maintenance_fee: MAINTENANCE_FEE,
-            electric_amount: 0, // จะคำนวณจาก utility readings และ rates
-            water_amount: 0, // จะคำนวณจาก utility readings และ rates
-            status: form.status,
-          }),
-        });
+          cycle_id: cycleId,
+          maintenance_fee: MAINTENANCE_FEE,
+          electric_amount: 0, // จะคำนวณจาก utility readings และ rates
+          water_amount: 0, // จะคำนวณจาก utility readings และ rates
+          status: form.status,
+        }),
+      });
 
         if (billRes.ok) {
           successCount.push(contract.contract_id);
         } else {
-          const errorData = await billRes.json().catch(() => ({}));
+        const errorData = await billRes.json().catch(() => ({}));
           errorMessages.push(`${contract.building_name} - ห้อง ${contract.room_number}: ${errorData.error || 'Failed to create bill'}`);
-        }
+      }
       }
 
       // แสดงผลลัพธ์
@@ -381,8 +382,8 @@ export default function AdminBillsClient() {
       }
 
       if (successCount.length > 0) {
-        closeCreateModal();
-        fetchBills(); // Refresh bills list
+      closeCreateModal();
+      fetchBills(); // Refresh bills list
       }
     } catch (error: any) {
       console.error('Error creating bills:', error);
@@ -424,61 +425,39 @@ export default function AdminBillsClient() {
     }
   };
 
-  // คำนวณยอดรวม
-  // ตามตัวอย่าง: รวมยอดจากทุกบิล (ไม่ซ้ำตามจำนวนผู้เช่า)
-  const totals = useMemo(() => {
-    let totalMaintenance = 0;
-    let totalElectricity = 0;
-    let totalWater = 0;
-    let totalAmount = 0;
-
-    // ใช้ Set เพื่อไม่ให้นับบิลซ้ำ
-    const processedBills = new Set<number>();
-
-    bills.forEach((bill) => {
-      // นับบิลแค่ครั้งเดียว (ไม่นับตามจำนวนผู้เช่า)
-      if (!processedBills.has(bill.bill_id)) {
-        processedBills.add(bill.bill_id);
-        
-        // ใช้ค่าคงที่ MAINTENANCE_FEE ในการคำนวณ
-        // คำนวณจำนวนเงินจาก utility readings และ rates
-        const electricReading = bill.utility_readings?.find(
-          (ur) => ur.utility_type === 'electric' || ur.utility_type === 'electricity'
-        );
-        const waterReading = bill.utility_readings?.find(
-          (ur) => ur.utility_type === 'water'
-        );
-        
-        const electricAmount = electricReading && electricReading.usage !== undefined && electricReading.rate_per_unit !== undefined
-          ? electricReading.usage * electricReading.rate_per_unit
-          : bill.electric_amount || 0;
-        
-        const waterAmount = waterReading && waterReading.usage !== undefined && waterReading.rate_per_unit !== undefined
-          ? waterReading.usage * waterReading.rate_per_unit
-          : bill.water_amount || 0;
-        
-        totalMaintenance += MAINTENANCE_FEE;
-        totalElectricity += electricAmount;
-        totalWater += waterAmount;
-        totalAmount += MAINTENANCE_FEE + electricAmount + waterAmount;
+  // Export Excel
+  const handleExportExcel = async () => {
+    try {
+      const res = await fetch(`/api/bills/export/excel?year=${year}&month=${month}`);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to export Excel');
       }
-    });
 
-    return {
-      maintenance: totalMaintenance,
-      electricity: totalElectricity,
-      water: totalWater,
-      total: totalAmount,
-    };
-  }, [bills]);
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `บิล_${year}_${month}_ทั้งหมด.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error: any) {
+      console.error('Error exporting Excel:', error);
+      alert(`ไม่สามารถส่งออก Excel ได้: ${error.message || 'Unknown error'}`);
+    }
+  };
 
   // จัดรูปแบบตัวเลข
   const formatNumber = (num: number | null | undefined): string => {
-    if (num === null || num === undefined) return '-';
+    if (num === null || num === undefined || isNaN(Number(num))) return '-';
+    const numValue = Number(num);
+    if (isNaN(numValue)) return '-';
     return new Intl.NumberFormat('th-TH', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    }).format(num);
+    }).format(numValue);
   };
 
 // จัดรูปแบบตัวเลขจำนวนเต็ม (ไม่แสดงทศนิยม) สำหรับเลขมิเตอร์เริ่มต้น/สิ้นสุด
@@ -554,6 +533,51 @@ const formatInteger = (num: number | null | undefined): string => {
     return rows;
   }, [bills]);
 
+  // คำนวณยอดรวมจากยอดที่แสดงจริงในแต่ละแถว
+  // คำนวณจาก tableRows โดยตรงเพื่อให้ตรงกับที่แสดงในตาราง
+  const totals = useMemo(() => {
+    let totalMaintenance = 0;
+    let totalElectricity = 0;
+    let totalWater = 0;
+    let totalAmount = 0;
+
+    // คำนวณจาก tableRows โดยตรง
+    tableRows.forEach((row) => {
+      // ค่าบำรุงรักษา: แสดงเฉพาะผู้เช่าคนแรก (isFirstTenant)
+      if (row.isFirstTenant) {
+        totalMaintenance += MAINTENANCE_FEE;
+      }
+
+      // ค่าไฟฟ้า: ใช้ค่าจากฐานข้อมูล (electric_amount) - แสดงทุกแถว
+      // แปลงเป็นตัวเลขและตรวจสอบว่าไม่ใช่ NaN
+      const electricAmount = Number(row.bill.electric_amount) || 0;
+      if (!isNaN(electricAmount)) {
+        totalElectricity += electricAmount;
+      }
+
+      // ค่าน้ำ: ใช้ค่าจากฐานข้อมูล (water_amount) - แสดงทุกแถว
+      // แปลงเป็นตัวเลขและตรวจสอบว่าไม่ใช่ NaN
+      const waterAmount = Number(row.bill.water_amount) || 0;
+      if (!isNaN(waterAmount)) {
+        totalWater += waterAmount;
+      }
+
+      // รวม: ใช้ค่าจากฐานข้อมูล (total_amount) - แสดงทุกแถว
+      // แปลงเป็นตัวเลขและตรวจสอบว่าไม่ใช่ NaN
+      const total = Number(row.bill.total_amount) || 0;
+      if (!isNaN(total)) {
+        totalAmount += total;
+      }
+    });
+
+    return {
+      maintenance: totalMaintenance,
+      electricity: totalElectricity,
+      water: totalWater,
+      total: totalAmount,
+    };
+  }, [tableRows]);
+
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
@@ -590,6 +614,18 @@ const formatInteger = (num: number | null | undefined): string => {
           >
             {isRunningBilling ? 'กำลังออกบิล...' : 'ออกบิลทั้งเดือน'}
           </button>
+          {bills.length > 0 && (
+            <button
+              onClick={handleExportExcel}
+              className="bg-green-700 text-white px-4 py-2 rounded-lg hover:bg-green-800 flex items-center gap-2"
+              title="ส่งออกเป็น Excel"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Export Excel
+            </button>
+          )}
         </div>
       </div>
 
@@ -670,14 +706,16 @@ const formatInteger = (num: number | null | undefined): string => {
                 <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 border">
                   จำนวนเงิน
                 </th>
-                <th className="px-3 py-2 border"></th>
+                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 border">
+                  จัดการ
+                </th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {tableRows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={15}
+                    colSpan={16}
                     className="px-6 py-4 text-center text-sm text-gray-500"
                   >
                     ไม่พบข้อมูล
@@ -725,12 +763,11 @@ const formatInteger = (num: number | null | undefined): string => {
                         : '-'}
                     </td>
                     <td className="px-3 py-2 text-right border">
-                      {/* จำนวนเงิน: คำนวณจาก usage * rate_per_unit */}
-                      {row.isFirstTenant && electricity && electricity.usage !== undefined && electricity.rate_per_unit !== undefined
-                        ? formatNumber(electricity.usage * electricity.rate_per_unit)
-                        : row.bill.electric_amount
-                        ? formatNumber(row.bill.electric_amount)
-                        : '-'}
+                      {/* จำนวนเงิน: ใช้ค่าจากฐานข้อมูลโดยตรง (electric_amount) */}
+                      {(() => {
+                        const electricAmount = row.bill.electric_amount || 0;
+                        return electricAmount > 0 ? formatNumber(electricAmount) : '-';
+                      })()}
                     </td>
                     {/* น้ำ */}
                     <td className="px-3 py-2 text-center border">
@@ -753,26 +790,64 @@ const formatInteger = (num: number | null | undefined): string => {
                         : '-'}
                     </td>
                     <td className="px-3 py-2 text-right border">
-                      {/* จำนวนเงิน: คำนวณจาก usage * rate_per_unit */}
-                      {row.isFirstTenant && water && water.usage !== undefined && water.rate_per_unit !== undefined
-                        ? formatNumber(water.usage * water.rate_per_unit)
-                        : row.bill.water_amount
-                        ? formatNumber(row.bill.water_amount)
-                        : '-'}
+                      {/* จำนวนเงิน: ใช้ค่าจากฐานข้อมูลโดยตรง (water_amount) */}
+                      {(() => {
+                        const waterAmount = row.bill.water_amount || 0;
+                        return waterAmount > 0 ? formatNumber(waterAmount) : '-';
+                      })()}
                     </td>
                     {/* รวม */}
                     <td className="px-3 py-2 text-right font-medium border">
-                      {/* คำนวณรวมใหม่: maintenance_fee + (electric usage * rate) + (water usage * rate) */}
+                      {/* ใช้ค่าจากฐานข้อมูลโดยตรง (total_amount) */}
                       {(() => {
-                        const electricAmount = row.isFirstTenant && electricity && electricity.usage !== undefined && electricity.rate_per_unit !== undefined
-                          ? electricity.usage * electricity.rate_per_unit
-                          : row.bill.electric_amount || 0;
-                        const waterAmount = row.isFirstTenant && water && water.usage !== undefined && water.rate_per_unit !== undefined
-                          ? water.usage * water.rate_per_unit
-                          : row.bill.water_amount || 0;
-                        const total = MAINTENANCE_FEE + electricAmount + waterAmount;
-                        return formatNumber(total);
+                        const total = row.bill.total_amount || 0;
+                        return total > 0 ? formatNumber(total) : '-';
                       })()}
+                    </td>
+                    {/* จัดการ */}
+                    <td className="px-3 py-2 text-center border">
+                      <div className="flex gap-2 justify-center">
+                        <Link
+                          href={`/admin/bills/preview/${row.bill.bill_id}`}
+                          className="bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700 flex items-center gap-1"
+                          title="ดูพรีวิว"
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                          Preview
+                        </Link>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await fetch(`/api/bills/export/individual/${row.bill.bill_id}`);
+                              if (!res.ok) {
+                                const errorData = await res.json().catch(() => ({}));
+                                throw new Error(errorData.error || 'Failed to export');
+                              }
+                              const blob = await res.blob();
+                              const url = window.URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = `บิล_${row.bill.bill_id}.xlsx`;
+                              document.body.appendChild(a);
+                              a.click();
+                              window.URL.revokeObjectURL(url);
+                              document.body.removeChild(a);
+                            } catch (error: any) {
+                              alert(`ไม่สามารถส่งออกได้: ${error.message || 'Unknown error'}`);
+                            }
+                          }}
+                          className="bg-green-700 text-white px-2 py-1 rounded text-xs hover:bg-green-800 flex items-center gap-1"
+                          title="Export Excel"
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          </svg>
+                          Export
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   );
@@ -798,6 +873,7 @@ const formatInteger = (num: number | null | undefined): string => {
                   <td className="px-3 py-2 text-right border">
                     {formatNumber(totals.total)}
                   </td>
+                  <td className="px-3 py-2 border"></td>
                 </tr>
               )}
             </tbody>
@@ -824,7 +900,7 @@ const formatInteger = (num: number | null | undefined): string => {
                     <p className="text-sm text-gray-500">ไม่มีสัญญาเช่า</p>
                   ) : (
                     <div className="space-y-2">
-                      {contracts.map((contract) => (
+                  {contracts.map((contract) => (
                         <label
                           key={contract.contract_id}
                           className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-2 rounded"
@@ -848,10 +924,10 @@ const formatInteger = (num: number | null | undefined): string => {
                             className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                           />
                           <span className="text-sm text-gray-700">
-                            {contract.building_name} - ห้อง {contract.room_number} - {contract.first_name_th} {contract.last_name_th}
+                      {contract.building_name} - ห้อง {contract.room_number} - {contract.first_name_th} {contract.last_name_th}
                           </span>
                         </label>
-                      ))}
+                  ))}
                     </div>
                   )}
                 </div>

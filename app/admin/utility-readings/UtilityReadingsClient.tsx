@@ -698,6 +698,17 @@ export default function UtilityReadingsClient() {
               </tbody>
             </table>
           </div>
+          
+          {/* ปุ่มบันทึกทั้งหมดด้านล่าง */}
+          <div className="p-4 border-t border-gray-200 bg-gray-50">
+            <button
+              onClick={saveAll}
+              disabled={isSaving || !cycleId}
+              className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
+            >
+              {isSaving ? 'กำลังบันทึก...' : 'บันทึกทั้งหมด'}
+            </button>
+          </div>
         </div>
       )}
     </div>

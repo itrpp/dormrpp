@@ -4,27 +4,21 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { getMenuItems } from '@/lib/menu-items';
 
 interface MobileMenuProps {
   sessionName?: string;
+  sessionRole?: string;
 }
 
-export default function AdminMobileMenu({ sessionName }: MobileMenuProps) {
+export default function AdminMobileMenu({ sessionName, sessionRole }: MobileMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
 
-  const menuItems = [
-    { href: '/admin', label: 'หน้าหลัก' },
-    { href: '/admin/rooms', label: 'ห้องพัก' },
-    { href: '/admin/tenants', label: 'ผู้เช่า' },
-    { href: '/admin/utility-readings', label: 'บันทึกเลขมิเตอร์' },
-    { href: '/admin/bills', label: 'บิลค่าใช้จ่าย' },
-    { href: 'https://services.rpphosp.go.th/auth', label: 'การซ่อมบำรุง', external: true },
-    { href: '/admin/announcements', label: 'ประกาศ' },
-    { href: '/meters', label: 'ตรวจสอบ💧⚡ มิเตอร์น้ำ-ไฟ' },
-  ];
+  // ใช้เมนูจากไฟล์ shared
+  const menuItems = getMenuItems(sessionRole);
 
   const isActive = (href: string) => {
     if (href === '/admin') {
@@ -102,30 +96,21 @@ export default function AdminMobileMenu({ sessionName }: MobileMenuProps) {
                   : 'text-gray-700 hover:bg-gray-50 hover:text-gray-900'
               }`;
 
-              if (item.external) {
-                return (
-                  <a
-                    key={item.href}
-                    href={item.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={className}
-                    onClick={() => setIsOpen(false)}
-                  >
-                    {item.label}
-                  </a>
-                );
-              }
+              const MenuLink = item.external ? 'a' : Link;
+              const linkProps = item.external
+                ? { href: item.href, target: '_blank', rel: 'noopener noreferrer' }
+                : { href: item.href };
 
               return (
-                <Link
+                <MenuLink
                   key={item.href}
-                  href={item.href}
+                  {...linkProps}
                   className={className}
-                  onClick={() => setIsOpen(false)}
+                  onClick={() => !item.external && setIsOpen(false)}
                 >
+                  {item.icon && <span className="mr-2">{item.icon}</span>}
                   {item.label}
-                </Link>
+                </MenuLink>
               );
             })}
           </nav>

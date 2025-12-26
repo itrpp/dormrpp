@@ -4,13 +4,15 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import LogoutButton from './LogoutButton';
+import { getMenuItems } from '@/lib/menu-items';
 
 interface AdminLayoutProps {
   children: React.ReactNode;
   sessionName?: string;
+  sessionRole?: string;
 }
 
-export default function AdminLayout({ children, sessionName }: AdminLayoutProps) {
+export default function AdminLayout({ children, sessionName, sessionRole }: AdminLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const pathname = usePathname();
@@ -30,16 +32,8 @@ export default function AdminLayout({ children, sessionName }: AdminLayoutProps)
     localStorage.setItem('adminSidebarCollapsed', String(newState));
   };
 
-  const menuItems = [
-    { href: '/admin', label: 'หน้าหลัก', icon: '🏠' },
-    { href: '/admin/rooms', label: 'ห้องพัก', icon: '🏢' },
-    { href: '/admin/tenants', label: 'ผู้เช่า', icon: '👥' },
-      { href: '/admin/utility-readings', label: 'บันทึกเลขมิเตอร์', icon: '📝' },
-      { href: '/meters', label: '💧⚡ตรวจสอบ มิเตอร์น้ำ-ไฟ', icon: '' },
-    { href: '/admin/bills', label: 'บิลค่าใช้จ่าย', icon: '💰' },
-    { href: 'https://services.rpphosp.go.th/auth', label: 'การซ่อมบำรุง', icon: '🔧', external: true },
-    { href: '/admin/announcements', label: 'ประกาศ', icon: '📢' },
-  ];
+  // ใช้เมนูจากไฟล์ shared
+  const menuItems = getMenuItems(sessionRole);
 
   const isActive = (href: string) => {
     if (href === '/admin') {
@@ -218,8 +212,9 @@ export default function AdminLayout({ children, sessionName }: AdminLayoutProps)
                    pathname?.startsWith('/admin/tenants') ? 'ผู้เช่า' :
                    pathname?.startsWith('/admin/utility-readings') ? 'บันทึกเลขมิเตอร์' :
                    pathname?.startsWith('/admin/bills') ? 'บิลค่าใช้จ่าย' :
-                   pathname?.startsWith('/admin/announcements') ? 'ประกาศ' :
-                   pathname?.startsWith('/meters') ? 'ตรวจสอบ💧⚡ มิเตอร์น้ำและไฟฟ้า' :
+                   pathname?.startsWith('/admin/announcements') ? 'จัดการประกาศ' :
+                   pathname?.startsWith('/admin/meters') ? 'ตรวจสอบ💧⚡ มิเตอร์น้ำและไฟฟ้า' :
+                   pathname?.startsWith('/announcements') ? 'ประกาศ' :
                    'ระบบจัดการหอพัก'}
                 </h2>
               </div>
@@ -232,14 +227,15 @@ export default function AdminLayout({ children, sessionName }: AdminLayoutProps)
                    pathname?.startsWith('/admin/tenants') ? 'ผู้เช่า' :
                    pathname?.startsWith('/admin/utility-readings') ? 'บันทึกเลขมิเตอร์' :
                    pathname?.startsWith('/admin/bills') ? 'บิลค่าใช้จ่าย' :
-                   pathname?.startsWith('/admin/announcements') ? 'ประกาศ' :
-                   pathname?.startsWith('/meters') ? '💧⚡ มิเตอร์' :
+                   pathname?.startsWith('/admin/announcements') ? 'จัดการประกาศ' :
+                   pathname?.startsWith('/admin/meters') ? '💧⚡ มิเตอร์' :
+                   pathname?.startsWith('/announcements') ? 'ประกาศ' :
                    'ระบบจัดการหอพัก'}
                 </h2>
               </div>
 
               {/* Right Side Actions - User Info and Logout */}
-              {sessionName && (
+              {sessionName ? (
                 <div className="flex items-center gap-3 ml-auto">
                   {/* Desktop User Info */}
                   <div className="hidden lg:flex items-center gap-3">
@@ -274,6 +270,15 @@ export default function AdminLayout({ children, sessionName }: AdminLayoutProps)
                     </div>
                     <LogoutButton />
                   </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 ml-auto">
+                  <Link
+                    href="/login"
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm whitespace-nowrap"
+                  >
+                    เข้าสู่ระบบ
+                  </Link>
                 </div>
               )}
             </div>

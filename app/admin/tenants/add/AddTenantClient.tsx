@@ -177,18 +177,18 @@ export default function AddTenantClient() {
           };
         });
 
-        // กรองตามชั้น
+          // กรองตามชั้น
         let filteredRooms = roomsWithOccupancy;
-        if (selectedFloor !== 'all') {
+          if (selectedFloor !== 'all') {
           filteredRooms = roomsWithOccupancy.filter((r: any) => r.floor_no === Number(selectedFloor));
-        }
-        setRooms(filteredRooms);
+          }
+          setRooms(filteredRooms);
 
-        // ถ้ามี initialRoomId ให้เลือกห้องนั้นอัตโนมัติ
-        if (initialRoomId) {
-          const found = filteredRooms.find((r: any) => r.room_id === initialRoomId);
-          if (found) {
-            setSelectedRoomId(initialRoomId);
+          // ถ้ามี initialRoomId ให้เลือกห้องนั้นอัตโนมัติ
+          if (initialRoomId) {
+            const found = filteredRooms.find((r: any) => r.room_id === initialRoomId);
+            if (found) {
+              setSelectedRoomId(initialRoomId);
           }
         }
       } catch (error) {
@@ -392,7 +392,7 @@ export default function AddTenantClient() {
         }
 
         if (selectedRoom) {
-          alert('เพิ่มผู้เช่าใหม่สำเร็จ');
+        alert('เพิ่มผู้เช่าใหม่สำเร็จ');
         } else {
           alert('เพิ่มผู้เช่าใหม่สำเร็จ (สถานะ: รอเข้าพัก)');
         }
@@ -568,10 +568,10 @@ export default function AddTenantClient() {
                           const occupantsText = `${room.current_occupants ?? 0}/${room.max_occupants ?? 2}`;
                           
                           return (
-                            <option key={room.room_id} value={room.room_id}>
-                              ห้อง {room.room_number}
+                          <option key={room.room_id} value={room.room_id}>
+                            ห้อง {room.room_number}
                               {room.floor_no ? ` (ชั้น ${room.floor_no})` : ''} - {statusText} - {occupantsText} คน
-                            </option>
+                          </option>
                           );
                         })}
                       </select>
