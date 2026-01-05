@@ -1,6 +1,6 @@
 // app/api/announcements/[id]/files/route.ts
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { query, pool } from '@/lib/db';
 import { getSession } from '@/lib/auth/session';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
@@ -142,7 +142,10 @@ export async function POST(
     }
 
     const formData = await req.formData();
-    const files = formData.getAll('files') as File[];
+    const fileEntries = formData.getAll('files');
+    
+    // Filter และแปลง FormDataEntryValue เป็น File
+    const files = fileEntries.filter((entry): entry is File => entry instanceof File);
 
     if (!files || files.length === 0) {
       return NextResponse.json(
@@ -195,7 +198,8 @@ export async function POST(
       const relativePath = `announcements/${yearMonth}/${fileName}`;
       
       try {
-        const [result] = await query<{ insertId: number }>(
+        // ใช้ pool.query โดยตรงสำหรับ INSERT เพื่อให้ได้ result object ที่มี insertId
+        const [result] = await pool.query(
           `INSERT INTO announcement_files 
            (announcement_id, file_name, file_path, file_type, file_size, created_at)
            VALUES (?, ?, ?, ?, ?, NOW())`,
@@ -206,10 +210,15 @@ export async function POST(
             file.type,
             file.size,
           ]
-        );
+        ) as any;
+
+        const insertId = result?.insertId;
+        if (!insertId) {
+          throw new Error('Failed to get insertId from query result');
+        }
 
         uploadedFiles.push({
-          file_id: result?.insertId,
+          file_id: insertId,
           file_name: file.name,
         });
       } catch (error: any) {
