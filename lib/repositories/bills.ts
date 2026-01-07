@@ -27,12 +27,9 @@ export async function getOrCreateBillingCycle(
   endDate?: Date,
   dueDate?: Date
 ): Promise<number> {
-  const conn = connection || await pool.getConnection();
-  const shouldRelease = !connection;
-  
-  try {
-    // ตรวจสอบว่ามี cycle อยู่แล้วหรือไม่
-    const [existing] = await conn.query(
+  // ถ้ามี connection ที่ส่งมา ให้ใช้ connection นั้น
+  if (connection) {
+    const [existing] = await connection.query(
       `SELECT cycle_id FROM billing_cycles 
        WHERE billing_year = ? AND billing_month = ?`,
       [year, month]
@@ -50,7 +47,7 @@ export async function getOrCreateBillingCycle(
     due.setDate(due.getDate() + 15); // ครบกำหนด 15 วันหลังสิ้นเดือน
     
     // สร้าง cycle ใหม่
-    const [result] = await conn.query(
+    const [result] = await connection.query(
       `INSERT INTO billing_cycles 
        (billing_year, billing_month, start_date, end_date, due_date, status)
        VALUES (?, ?, ?, ?, ?, 'open')`,
@@ -58,10 +55,37 @@ export async function getOrCreateBillingCycle(
     );
     
     return (result as any).insertId;
+  }
+  
+  // ถ้าไม่มี connection ให้ใช้ query() แทน (ใช้ connection pool)
+  const existing = await queryOne<{ cycle_id: number }>(
+    `SELECT cycle_id FROM billing_cycles 
+     WHERE billing_year = ? AND billing_month = ?`,
+    [year, month]
+  );
+  
+  if (existing) {
+    return existing.cycle_id;
+  }
+  
+  // คำนวณวันที่ถ้าไม่ได้ระบุ
+  const start = startDate || new Date(year - 543, month - 1, 1); // แปลงปี พ.ศ. เป็น ค.ศ.
+  const end = endDate || new Date(year - 543, month, 0); // วันสุดท้ายของเดือน
+  const due = dueDate || new Date(end);
+  due.setDate(due.getDate() + 15); // ครบกำหนด 15 วันหลังสิ้นเดือน
+  
+  // สร้าง cycle ใหม่ - ใช้ connection pool โดยตรง
+  const conn = await pool.getConnection();
+  try {
+    const [result] = await conn.query(
+      `INSERT INTO billing_cycles 
+       (billing_year, billing_month, start_date, end_date, due_date, status)
+       VALUES (?, ?, ?, ?, ?, 'open')`,
+      [year, month, start, end, due]
+    );
+    return (result as any).insertId || 0;
   } finally {
-    if (shouldRelease) {
-      conn.release();
-    }
+    conn.release();
   }
 }
 
@@ -247,7 +271,77 @@ export async function createBill(
     );
 
     const insertId = (result as any).insertId;
+    
+    // อัปเดต meter_photos.bill_id สำหรับรูปมิเตอร์ที่เกี่ยวข้อง
+    if (insertId) {
+      await linkMeterPhotosToBill(insertId, data.room_id, data.cycle_id, conn);
+    }
+    
     return insertId || 0;
+  } finally {
+    if (shouldRelease) {
+      conn.release();
+    }
+  }
+}
+
+/**
+ * ผูกรูปมิเตอร์กับบิลที่สร้าง
+ * หารูปมิเตอร์ที่ตรงกับ room_id, utility_type, billing_year, billing_month
+ * และ meter_value ที่ใกล้เคียงกับ meter_end ใน bill_utility_readings
+ */
+export async function linkMeterPhotosToBill(
+  billId: number,
+  roomId: number,
+  cycleId: number,
+  connection?: any
+): Promise<void> {
+  const conn = connection || await pool.getConnection();
+  const shouldRelease = !connection;
+  
+  try {
+    // ดึงข้อมูล billing cycle เพื่อหา billing_year และ billing_month
+    const [cycle] = await conn.query(
+      `SELECT billing_year, billing_month FROM billing_cycles WHERE cycle_id = ?`,
+      [cycleId]
+    );
+    
+    if (!cycle || (cycle as any[]).length === 0) {
+      return; // ไม่พบ billing cycle
+    }
+    
+    const { billing_year, billing_month } = (cycle as any[])[0];
+    
+    // ดึงข้อมูล utility readings สำหรับบิลนี้
+    const utilityReadings = await conn.query(
+      `SELECT bur.utility_type_id, bur.meter_end, ut.code AS utility_code
+       FROM bill_utility_readings bur
+       JOIN utility_types ut ON bur.utility_type_id = ut.utility_type_id
+       WHERE bur.room_id = ? AND bur.cycle_id = ?`,
+      [roomId, cycleId]
+    );
+    
+    // อัปเดต meter_photos.bill_id สำหรับแต่ละ utility type
+    for (const reading of utilityReadings[0] as any[]) {
+      const utilityType = reading.utility_code; // 'electric' or 'water'
+      const meterEnd = reading.meter_end;
+      
+      // หารูปมิเตอร์ที่ตรงกับ room_id, utility_type, billing_year, billing_month
+      // และ meter_value ที่ใกล้เคียงกับ meter_end (ยอมรับความแตกต่างไม่เกิน 10 หน่วย)
+      await conn.query(
+        `UPDATE meter_photos 
+         SET bill_id = ?
+         WHERE room_id = ?
+           AND utility_type = ?
+           AND billing_year = ?
+           AND billing_month = ?
+           AND bill_id IS NULL
+           AND ABS(meter_value - ?) <= 10
+         ORDER BY ABS(meter_value - ?) ASC
+         LIMIT 1`,
+        [billId, roomId, utilityType, billing_year, billing_month, meterEnd, meterEnd]
+      );
+    }
   } finally {
     if (shouldRelease) {
       conn.release();

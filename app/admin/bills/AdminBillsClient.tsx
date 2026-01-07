@@ -140,6 +140,31 @@ export default function AdminBillsClient() {
     [contracts, form.contract_ids]
   );
 
+  // เปลี่ยนสถานะบิล
+  const handleBillStatusChange = async (billId: number, newStatus: string) => {
+    try {
+      const res = await fetch(`/api/bills/${billId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to update bill status');
+      }
+
+      // อัปเดต state ในหน้าให้ตรงกับสถานะใหม่
+      setBills((prev) =>
+        prev.map((b) =>
+          b.bill_id === billId ? { ...b, status: newStatus } : b
+        )
+      );
+    } catch (error: any) {
+      console.error('Error updating bill status:', error);
+      alert(`ไม่สามารถอัปเดตสถานะบิลได้: ${error.message || 'Unknown error'}`);
+    }
+  };
+
   // แปลง month value (ค.ศ.) เป็น year และ month (พ.ศ.)
   useEffect(() => {
     if (monthValue) {
@@ -670,6 +695,12 @@ const formatInteger = (num: number | null | undefined): string => {
                 <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase border">
                   รวมทั้งสิ้น
                 </th>
+                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase border">
+                  สถานะบิล
+                </th>
+                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase border">
+                  จัดการ
+                </th>
               </tr>
               <tr>
                 <th className="px-3 py-2 border"></th>
@@ -706,9 +737,8 @@ const formatInteger = (num: number | null | undefined): string => {
                 <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 border">
                   จำนวนเงิน
                 </th>
-                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 border">
-                  จัดการ
-                </th>
+                <th className="px-3 py-2 border"></th>
+                <th className="px-3 py-2 border"></th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
@@ -804,6 +834,20 @@ const formatInteger = (num: number | null | undefined): string => {
                         return total > 0 ? formatNumber(total) : '-';
                       })()}
                     </td>
+                    {/* สถานะบิล */}
+                    <td className="px-3 py-2 text-center border">
+                      <select
+                        className="border rounded px-2 py-1 text-xs bg-white"
+                        value={row.bill.status || 'draft'}
+                        onChange={(e) =>
+                          handleBillStatusChange(row.bill.bill_id, e.target.value)
+                        }
+                      >
+                        <option value="draft">ร่าง</option>
+                        <option value="sent">ส่งแล้ว</option>
+                        <option value="paid">ชำระแล้ว</option>
+                      </select>
+                    </td>
                     {/* จัดการ */}
                     <td className="px-3 py-2 text-center border">
                       <div className="flex gap-2 justify-center">
@@ -873,6 +917,7 @@ const formatInteger = (num: number | null | undefined): string => {
                   <td className="px-3 py-2 text-right border">
                     {formatNumber(totals.total)}
                   </td>
+                  <td className="px-3 py-2 border"></td>
                   <td className="px-3 py-2 border"></td>
                 </tr>
               )}

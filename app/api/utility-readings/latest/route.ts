@@ -1,6 +1,6 @@
 // app/api/utility-readings/latest/route.ts
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { query, queryOne } from '@/lib/db';
 
 // บังคับให้ route นี้เป็น dynamic เพราะมีการใช้ request.url
 export const dynamic = 'force-dynamic';
@@ -39,8 +39,8 @@ export async function GET(req: Request) {
     let params: any[];
 
     if (cycleId) {
-      // ดึงข้อมูล billing_year และ billing_month ของรอบบิลปัจจุบันก่อน
-      const [currentCycle] = await query<any>(
+      // ดึงข้อมูล billing_year และ billing_month ของรอบบิลปัจจุบันก่อน (ใช้ queryOne ลด overhead)
+      const currentCycle = await queryOne<{ billing_year: number; billing_month: number }>(
         'SELECT billing_year, billing_month FROM billing_cycles WHERE cycle_id = ?',
         [Number(cycleId)]
       );
@@ -78,7 +78,12 @@ export async function GET(req: Request) {
           )
         ORDER BY bur.room_id, bc.billing_year DESC, bc.billing_month DESC, bur.utility_type_id
       `;
-      params = [...roomIdArray, currentCycle.billing_year, currentCycle.billing_year, currentCycle.billing_month];
+      params = [
+        ...roomIdArray,
+        currentCycle.billing_year,
+        currentCycle.billing_year,
+        currentCycle.billing_month,
+      ];
     } else {
       // ดึงข้อมูลล่าสุดทั้งหมด (fallback)
       const placeholders = roomIdArray.map(() => '?').join(',');

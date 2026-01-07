@@ -73,6 +73,30 @@ export default function UtilityReadingsClient() {
   const [roomForms, setRoomForms] = useState<Map<number, RoomReadingForm>>(new Map());
   const [isSaving, setIsSaving] = useState(false);
   const [savedReadings, setSavedReadings] = useState<UtilityReading[]>([]);
+  
+  // State สำหรับ checkbox เติมค่าเริ่มต้นจากเลขเดิม
+  const [autoFillFromPrevious, setAutoFillFromPrevious] = useState(false);
+  
+  // State สำหรับอัปโหลดรูปมิเตอร์
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [uploadingRoomId, setUploadingRoomId] = useState<number | null>(null);
+  const [uploadingUtilityType, setUploadingUtilityType] = useState<'electric' | 'water' | null>(null);
+  const [selectedPhoto, setSelectedPhoto] = useState<File | null>(null);
+  const [photoMeterValue, setPhotoMeterValue] = useState<string>('');
+  const [isUploading, setIsUploading] = useState(false);
+  const [editingPhotoId, setEditingPhotoId] = useState<number | null>(null); // สำหรับแก้ไขรูป
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null); // สำหรับแสดงรูป preview
+  const [existingPhotoUrl, setExistingPhotoUrl] = useState<string | null>(null); // สำหรับแสดงรูปเก่าเมื่อแก้ไข
+  
+  // State สำหรับเก็บสถานะรูปภาพ (key: `${room_id}-${utility_type}`)
+  const [photoStatus, setPhotoStatus] = useState<Map<string, {
+    photo_id: number;
+    bill_id: number | null;
+    meter_value: number;
+  }>>(new Map());
+  
+  // State สำหรับตรวจสอบว่าออกบิลแล้วหรือยัง
+  const [hasBills, setHasBills] = useState(false);
 
   // แปลง month value (ค.ศ.) เป็น year และ month (พ.ศ.)
   useEffect(() => {
@@ -86,22 +110,30 @@ export default function UtilityReadingsClient() {
     }
   }, [monthValue]);
 
-  // ดึงหรือสร้าง billing cycle
+  // ดึงหรือสร้าง billing cycle และรีเฟรชข้อมูลอัตโนมัติ
   useEffect(() => {
-    const fetchCycle = async () => {
+    const fetchCycleAndRefresh = async () => {
       setIsLoadingCycle(true);
+      setIsLoadingRooms(true);
       // Clear ข้อมูลเก่าก่อนดึงข้อมูลใหม่
       setCycleId(null);
       setRooms([]);
       setRoomForms(new Map());
       setSavedReadings([]);
+      setPhotoStatus(new Map());
+      setHasBills(false);
       
       try {
         const res = await fetch(`/api/billing/cycle?year=${year}&month=${month}`);
         if (res.ok) {
           const data = await res.json();
           if (data.cycle_id) {
-            setCycleId(data.cycle_id);
+            const newCycleId = data.cycle_id;
+            setCycleId(newCycleId);
+            
+            // รีเฟรชข้อมูลอัตโนมัติเมื่อพบ cycle_id
+            // เรียก refreshData โดยตรง (refreshData จะใช้ year และ month ที่มีอยู่แล้ว)
+            await refreshData();
           } else {
             // ไม่พบรอบบิล
             setCycleId(null);
@@ -115,10 +147,11 @@ export default function UtilityReadingsClient() {
         setCycleId(null);
       } finally {
         setIsLoadingCycle(false);
+        setIsLoadingRooms(false);
       }
     };
     if (year && month) {
-      fetchCycle();
+      fetchCycleAndRefresh();
     }
   }, [year, month]);
 
@@ -216,6 +249,81 @@ export default function UtilityReadingsClient() {
     }
   }, [cycleId, rooms.length]);
 
+  // ดึงสถานะรูปภาพและตรวจสอบว่าออกบิลแล้วหรือยัง
+  useEffect(() => {
+    const fetchPhotoStatusAndBills = async () => {
+      if (!cycleId || !year || !month) {
+        setPhotoStatus(new Map());
+        setHasBills(false);
+        return;
+      }
+
+      try {
+        // ตรวจสอบว่ามีบิลในรอบบิลนี้หรือไม่
+        const billsRes = await fetch(`/api/bills/detailed?year=${year}&month=${month}`);
+        if (billsRes.ok) {
+          const bills = await billsRes.json();
+          setHasBills(bills && bills.length > 0);
+        }
+
+        // ดึงรูปภาพทั้งหมดในรอบบิลนี้
+        const statusMap = new Map<string, {
+          photo_id: number;
+          bill_id: number | null;
+          meter_value: number;
+        }>();
+
+        // ดึงรูปภาพไฟฟ้า
+        try {
+          const electricRes = await fetch(
+            `/api/meter-photos?year=${year}&month=${month}&utility_type=electric`
+          );
+          if (electricRes.ok) {
+            const electricPhotos = await electricRes.json();
+            electricPhotos.forEach((photo: any) => {
+              const key = `${photo.room_id}-electric`;
+              statusMap.set(key, {
+                photo_id: photo.photo_id,
+                bill_id: photo.bill_id,
+                meter_value: photo.meter_value,
+              });
+            });
+          }
+        } catch (error) {
+          console.error('Error fetching electric photos:', error);
+        }
+
+        // ดึงรูปภาพน้ำ
+        try {
+          const waterRes = await fetch(
+            `/api/meter-photos?year=${year}&month=${month}&utility_type=water`
+          );
+          if (waterRes.ok) {
+            const waterPhotos = await waterRes.json();
+            waterPhotos.forEach((photo: any) => {
+              const key = `${photo.room_id}-water`;
+              statusMap.set(key, {
+                photo_id: photo.photo_id,
+                bill_id: photo.bill_id,
+                meter_value: photo.meter_value,
+              });
+            });
+          }
+        } catch (error) {
+          console.error('Error fetching water photos:', error);
+        }
+
+        setPhotoStatus(statusMap);
+      } catch (error) {
+        console.error('Error fetching photo status:', error);
+        setPhotoStatus(new Map());
+        setHasBills(false);
+      }
+    };
+
+    fetchPhotoStatusAndBills();
+  }, [cycleId, year, month]);
+
   // โฟกัสและเลื่อนจอไปยังห้องที่ส่งมาจาก query string (room_id)
   useEffect(() => {
     if (hasAutoFocused.current) return;
@@ -299,6 +407,23 @@ export default function UtilityReadingsClient() {
       forms.set(roomId, form);
       setRoomForms(forms);
     }
+  };
+
+  // เติมค่าเริ่มต้นจากเลขเดิมทั้งหมด
+  const fillAllFromPrevious = () => {
+    const forms = new Map(roomForms);
+    forms.forEach((form, roomId) => {
+      // เติมค่าไฟฟ้า (เฉพาะที่ยังว่างอยู่)
+      if (form.electric.previous_end !== null && form.electric.meter_start === '') {
+        form.electric.meter_start = form.electric.previous_end;
+      }
+      // เติมค่าน้ำ (เฉพาะที่ยังว่างอยู่)
+      if (form.water.previous_end !== null && form.water.meter_start === '') {
+        form.water.meter_start = form.water.previous_end;
+      }
+      forms.set(roomId, form);
+    });
+    setRoomForms(forms);
   };
 
   // บันทึก readings สำหรับห้องเดียว
@@ -466,6 +591,335 @@ export default function UtilityReadingsClient() {
     return savedReadings.some(r => r.room_id === roomId);
   };
 
+  // ฟังก์ชันรีเฟรชข้อมูลทั้งหมด
+  const refreshData = async () => {
+    if (!year || !month) {
+      return; // ไม่แสดง alert เมื่อเรียกอัตโนมัติ
+    }
+
+    try {
+      // Clear ข้อมูลเก่า
+      setCycleId(null);
+      setRooms([]);
+      setRoomForms(new Map());
+      setSavedReadings([]);
+      setPhotoStatus(new Map());
+      setHasBills(false);
+      setIsLoadingCycle(true);
+      setIsLoadingRooms(true);
+
+      // ดึง cycle ใหม่
+      const cycleRes = await fetch(`/api/billing/cycle?year=${year}&month=${month}`);
+      if (cycleRes.ok) {
+        const cycleData = await cycleRes.json();
+        if (cycleData.cycle_id) {
+          setCycleId(cycleData.cycle_id);
+          
+          // ดึง rooms ใหม่
+          const roomsRes = await fetch('/api/rooms');
+          if (roomsRes.ok) {
+            const roomsData = await roomsRes.json();
+            
+            // จำกัดจำนวน concurrent requests เพื่อป้องกัน "Too many connections"
+            // ใช้ sequential requests แทน Promise.all สำหรับ contracts
+            const roomsWithContracts: (Room | null)[] = [];
+            for (const room of roomsData) {
+              try {
+                const contractsRes = await fetch(`/api/contracts?room_id=${room.room_id}&status=active`);
+                if (contractsRes.ok) {
+                  const contracts = await contractsRes.json();
+                  roomsWithContracts.push(contracts.length > 0 ? room : null);
+                } else {
+                  roomsWithContracts.push(null);
+                }
+              } catch (error) {
+                // Silent fallback
+                roomsWithContracts.push(null);
+              }
+            }
+            
+            const filteredRooms = roomsWithContracts.filter((r: Room | null) => r !== null);
+            setRooms(filteredRooms);
+
+            // สร้าง form สำหรับแต่ละห้อง
+            const forms = new Map<number, RoomReadingForm>();
+            const roomIds = filteredRooms.map(r => r.room_id);
+            const allPreviousReadings = await fetchPreviousReadingsBatch(roomIds, cycleData.cycle_id);
+            
+            for (const room of filteredRooms) {
+              const previousReadings = allPreviousReadings[room.room_id] || { electric: null, water: null };
+              forms.set(room.room_id, {
+                room_id: room.room_id,
+                electric: {
+                  meter_start: '',
+                  meter_end: '',
+                  previous_end: previousReadings.electric,
+                },
+                water: {
+                  meter_start: '',
+                  meter_end: '',
+                  previous_end: previousReadings.water,
+                },
+              });
+            }
+            setRoomForms(forms);
+
+            // ดึง readings ที่บันทึกแล้ว
+            const readingsRes = await fetch(`/api/utility-readings?cycle_id=${cycleData.cycle_id}`);
+            if (readingsRes.ok) {
+              const readingsData = await readingsRes.json();
+              setSavedReadings(readingsData);
+
+              // อัปเดต form ด้วยข้อมูลที่บันทึกแล้ว
+              readingsData.forEach((reading: UtilityReading) => {
+                const form = forms.get(reading.room_id);
+                if (form) {
+                  if (reading.utility_code === 'electric') {
+                    form.electric.meter_start = reading.meter_start;
+                    form.electric.meter_end = reading.meter_end;
+                  } else if (reading.utility_code === 'water') {
+                    form.water.meter_start = reading.meter_start;
+                    form.water.meter_end = reading.meter_end;
+                  }
+                  forms.set(reading.room_id, form);
+                }
+              });
+              setRoomForms(forms);
+            }
+
+            // ดึงสถานะรูปภาพและตรวจสอบบิล
+            const billsRes = await fetch(`/api/bills/detailed?year=${year}&month=${month}`);
+            if (billsRes.ok) {
+              const bills = await billsRes.json();
+              setHasBills(bills && bills.length > 0);
+            }
+
+            // ดึงรูปภาพทั้งหมด
+            const statusMap = new Map<string, {
+              photo_id: number;
+              bill_id: number | null;
+              meter_value: number;
+            }>();
+
+            try {
+              const electricRes = await fetch(
+                `/api/meter-photos?year=${year}&month=${month}&utility_type=electric`
+              );
+              if (electricRes.ok) {
+                const electricPhotos = await electricRes.json();
+                electricPhotos.forEach((photo: any) => {
+                  const key = `${photo.room_id}-electric`;
+                  statusMap.set(key, {
+                    photo_id: photo.photo_id,
+                    bill_id: photo.bill_id,
+                    meter_value: photo.meter_value,
+                  });
+                });
+              }
+            } catch (error) {
+              console.error('Error fetching electric photos:', error);
+            }
+
+            try {
+              const waterRes = await fetch(
+                `/api/meter-photos?year=${year}&month=${month}&utility_type=water`
+              );
+              if (waterRes.ok) {
+                const waterPhotos = await waterRes.json();
+                waterPhotos.forEach((photo: any) => {
+                  const key = `${photo.room_id}-water`;
+                  statusMap.set(key, {
+                    photo_id: photo.photo_id,
+                    bill_id: photo.bill_id,
+                    meter_value: photo.meter_value,
+                  });
+                });
+              }
+            } catch (error) {
+              console.error('Error fetching water photos:', error);
+            }
+
+            setPhotoStatus(statusMap);
+          }
+        }
+      }
+
+      // ไม่แสดง alert เมื่อรีเฟรชสำเร็จ
+    } catch (error: any) {
+      console.error('Error refreshing data:', error);
+      // ไม่แสดง alert error เพื่อไม่รบกวนผู้ใช้
+    } finally {
+      setIsLoadingCycle(false);
+      setIsLoadingRooms(false);
+    }
+  };
+
+  // เปิด modal สำหรับอัปโหลดรูปมิเตอร์
+  const openUploadModal = (roomId: number, utilityType: 'electric' | 'water', photoId?: number) => {
+    setUploadingRoomId(roomId);
+    setUploadingUtilityType(utilityType);
+    setSelectedPhoto(null);
+    setPhotoPreviewUrl(null);
+    setEditingPhotoId(photoId || null);
+    
+    // ถ้ากำลังแก้ไข ให้ดึงข้อมูลรูปเก่า
+    if (photoId) {
+      const photoKey = `${roomId}-${utilityType}`;
+      const photoInfo = photoStatus.get(photoKey);
+      if (photoInfo) {
+        setPhotoMeterValue(String(photoInfo.meter_value));
+        // สร้าง URL สำหรับแสดงรูปเก่า
+        setExistingPhotoUrl(`/api/meter-photos/${photoInfo.photo_id}/download`);
+      } else {
+        setPhotoMeterValue('');
+        setExistingPhotoUrl(null);
+      }
+    } else {
+      setPhotoMeterValue('');
+      setExistingPhotoUrl(null);
+    }
+    
+    setUploadModalOpen(true);
+  };
+
+  // ปิด modal
+  const closeUploadModal = () => {
+    setUploadModalOpen(false);
+    setUploadingRoomId(null);
+    setUploadingUtilityType(null);
+    setSelectedPhoto(null);
+    setPhotoMeterValue('');
+    setEditingPhotoId(null);
+    // ลบ URL preview เพื่อป้องกัน memory leak
+    if (photoPreviewUrl) {
+      URL.revokeObjectURL(photoPreviewUrl);
+      setPhotoPreviewUrl(null);
+    }
+    setExistingPhotoUrl(null);
+  };
+
+  // อัปโหลดหรือแก้ไขรูปมิเตอร์
+  const uploadMeterPhoto = async () => {
+    if (!uploadingRoomId || !uploadingUtilityType || !photoMeterValue || !cycleId) {
+      alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+      return;
+    }
+
+    const meterValue = Number(photoMeterValue);
+    if (isNaN(meterValue)) {
+      alert('กรุณากรอกค่ามิเตอร์เป็นตัวเลข');
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      // ถ้ากำลังแก้ไขและไม่เลือกรูปใหม่ ให้อัปเดตแค่ค่า meter_value
+      if (editingPhotoId && !selectedPhoto) {
+        const res = await fetch(`/api/meter-photos/${editingPhotoId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ meter_value: meterValue }),
+        });
+
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.error || 'ไม่สามารถอัปเดตค่ามิเตอร์ได้');
+        }
+
+        alert('อัปเดตค่ามิเตอร์สำเร็จ');
+        closeUploadModal();
+        
+        // Refresh photo status
+        const statusMap = new Map(photoStatus);
+        const key = `${uploadingRoomId}-${uploadingUtilityType}`;
+        const photoInfo = photoStatus.get(key);
+        if (photoInfo) {
+          statusMap.set(key, {
+            ...photoInfo,
+            meter_value: meterValue,
+          });
+          setPhotoStatus(statusMap);
+        }
+        
+        // Refresh saved readings
+        const readingsRes = await fetch(`/api/utility-readings?cycle_id=${cycleId}`);
+        if (readingsRes.ok) {
+          const data = await readingsRes.json();
+          setSavedReadings(data);
+        }
+        
+        return;
+      }
+
+      // ถ้าเลือกรูปใหม่ ให้อัปโหลดรูป
+      if (!selectedPhoto) {
+        alert('กรุณาเลือกรูปภาพ');
+        return;
+      }
+
+      // ถ้ากำลังแก้ไขและเลือกรูปใหม่ ให้ลบรูปเก่าก่อน
+      if (editingPhotoId) {
+        const deleteRes = await fetch(`/api/meter-photos/${editingPhotoId}`, {
+          method: 'DELETE',
+        });
+        if (!deleteRes.ok) {
+          const errorData = await deleteRes.json().catch(() => ({}));
+          throw new Error(errorData.error || 'ไม่สามารถลบรูปเก่าได้');
+        }
+      }
+
+      // อัปโหลดรูปใหม่
+      const formData = new FormData();
+      formData.append('photo', selectedPhoto);
+      formData.append('room_id', String(uploadingRoomId));
+      formData.append('utility_type', uploadingUtilityType);
+      formData.append('meter_value', String(meterValue));
+      formData.append('billing_year', String(year));
+      formData.append('billing_month', String(month));
+      
+      // ใช้วันที่ปัจจุบันเป็น reading_date
+      const today = new Date();
+      const readingDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      formData.append('reading_date', readingDate);
+
+      const res = await fetch('/api/meter-photos', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'ไม่สามารถอัปโหลดรูปได้');
+      }
+
+      alert(editingPhotoId ? 'แก้ไขรูปมิเตอร์สำเร็จ' : 'อัปโหลดรูปมิเตอร์สำเร็จ');
+      closeUploadModal();
+      
+      // Refresh photo status
+      const statusMap = new Map(photoStatus);
+      const key = `${uploadingRoomId}-${uploadingUtilityType}`;
+      const result = await res.json();
+      statusMap.set(key, {
+        photo_id: result.photo_id,
+        bill_id: null,
+        meter_value: meterValue,
+      });
+      setPhotoStatus(statusMap);
+      
+      // Refresh saved readings
+      const readingsRes = await fetch(`/api/utility-readings?cycle_id=${cycleId}`);
+      if (readingsRes.ok) {
+        const data = await readingsRes.json();
+        setSavedReadings(data);
+      }
+    } catch (error: any) {
+      console.error('Error uploading meter photo:', error);
+      alert(`ไม่สามารถอัปโหลดรูปได้: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   return (
     <div className="p-6">
       <div className="mb-6">
@@ -521,14 +975,40 @@ export default function UtilityReadingsClient() {
           </div>
         </div>
 
-        {/* ปุ่มบันทึกทั้งหมด */}
-        <div className="mb-4">
+        {/* Checkbox และปุ่มบันทึกทั้งหมด */}
+        <div className="mb-4 flex items-center gap-4">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={autoFillFromPrevious}
+              onChange={(e) => {
+                setAutoFillFromPrevious(e.target.checked);
+                if (e.target.checked) {
+                  fillAllFromPrevious();
+                }
+              }}
+              className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <span className="text-sm font-medium text-gray-700">
+              เติมค่าเริ่มต้นจากเลขเดิมทั้งหมด
+            </span>
+          </label>
           <button
             onClick={saveAll}
             disabled={isSaving || !cycleId}
-            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-400"
+            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2"
           >
-            {isSaving ? 'กำลังบันทึก...' : 'บันทึกทั้งหมด'}
+            {isSaving ? (
+              <>
+                <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                กำลังบันทึก...
+              </>
+            ) : (
+              'บันทึกทั้งหมด'
+            )}
           </button>
         </div>
       </div>
@@ -569,11 +1049,11 @@ export default function UtilityReadingsClient() {
                   <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">เลขเก่า</th>
                   <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">เริ่มต้น</th>
                   <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">สิ้นสุด</th>
-                  <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">เลขปัจจุบัน</th>
+                  <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">หน่วยที่ใช้</th>
                   <th className="px-4 py-2 text-base font-medium text-gray-600 border-l-2 border-r border-t border-b border-gray-300">เลขเก่า</th>
                   <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">เริ่มต้น</th>
                   <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">สิ้นสุด</th>
-                  <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">เลขปัจจุบัน</th>
+                  <th className="px-4 py-2 text-base font-medium text-gray-600 border border-gray-300">หน่วยที่ใช้</th>
                   <th className="border border-gray-300"></th>
                 </tr>
               </thead>
@@ -600,13 +1080,13 @@ export default function UtilityReadingsClient() {
                     r => r.room_id === room.room_id && r.utility_code === 'water'
                   );
                   
-                  // แสดงเป็นรูปแบบ "เริ่มต้น-สิ้นสุด"
-                  const currentElectricMeter = currentElectricReading 
-                    ? `${currentElectricReading.meter_start}-${currentElectricReading.meter_end}`
-                    : null;
-                  const currentWaterMeter = currentWaterReading
-                    ? `${currentWaterReading.meter_start}-${currentWaterReading.meter_end}`
-                    : null;
+                  // คำนวณหน่วยที่ใช้จากข้อมูลที่บันทึกแล้ว หรือจาก form ที่กรอก
+                  const currentElectricUsage = currentElectricReading
+                    ? currentElectricReading.meter_end - currentElectricReading.meter_start
+                    : (electricUsage !== null ? electricUsage : null);
+                  const currentWaterUsage = currentWaterReading
+                    ? currentWaterReading.meter_end - currentWaterReading.meter_start
+                    : (waterUsage !== null ? waterUsage : null);
 
                   return (
                     <tr
@@ -636,19 +1116,56 @@ export default function UtilityReadingsClient() {
                         />
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap border border-gray-300">
-                        <input
-                          type="number"
-                          className="w-24 border rounded px-2 py-1 text-sm"
-                          value={form.electric.meter_end}
-                          onChange={(e) => updateForm(room.room_id, 'electric', 'meter_end', e.target.value ? Number(e.target.value) : '')}
-                        />
-                        {electricUsage !== null && (
-                          <span className="ml-2 text-xs text-gray-500">({electricUsage} หน่วย)</span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            className="w-24 border rounded px-2 py-1 text-sm"
+                            value={form.electric.meter_end}
+                            onChange={(e) => updateForm(room.room_id, 'electric', 'meter_end', e.target.value ? Number(e.target.value) : '')}
+                          />
+                          {(() => {
+                            const photoKey = `${room.room_id}-electric`;
+                            const photoInfo = photoStatus.get(photoKey);
+                            const hasPhoto = !!photoInfo;
+                            const canEdit = hasPhoto && !hasBills && !photoInfo?.bill_id;
+                            
+                            return (
+                              <div className="flex items-center gap-1">
+                                {hasPhoto ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => openUploadModal(room.room_id, 'electric', photoInfo.photo_id)}
+                                      className={`text-xs px-2 py-1 border rounded transition-colors ${
+                                        canEdit
+                                          ? 'text-green-600 border-green-300 hover:bg-green-50'
+                                          : 'text-gray-400 border-gray-300 cursor-not-allowed'
+                                      }`}
+                                      title={canEdit ? 'แก้ไขรูปมิเตอร์ไฟฟ้า' : 'มีรูปแล้ว (ออกบิลแล้ว ไม่สามารถแก้ไขได้)'}
+                                      disabled={!canEdit}
+                                    >
+                                      {canEdit ? '✏️' : '📷'}
+                                    </button>
+                                    <span className="text-green-600 text-xs" title="มีรูปแนบแล้ว">✅</span>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => openUploadModal(room.room_id, 'electric')}
+                                    className="text-blue-600 hover:text-blue-800 text-xs px-2 py-1 border border-blue-300 rounded hover:bg-blue-50"
+                                    title="ถ่ายรูปมิเตอร์ไฟฟ้า"
+                                  >
+                                    📷
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </div>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-center border border-gray-300">
-                        <span className={`font-medium ${currentElectricMeter !== null ? 'text-green-600' : 'text-gray-400'}`}>
-                          {currentElectricMeter !== null ? currentElectricMeter : '-'}
+                        <span className={`font-medium ${currentElectricUsage !== null ? 'text-green-600' : 'text-gray-400'}`}>
+                          {currentElectricUsage !== null ? `${currentElectricUsage} หน่วย` : '-'}
                         </span>
                       </td>
                       {/* น้ำ */}
@@ -668,19 +1185,56 @@ export default function UtilityReadingsClient() {
                         />
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap border-l-2 border-r border-t border-b border-gray-300">
-                        <input
-                          type="number"
-                          className="w-24 border rounded px-2 py-1 text-sm"
-                          value={form.water.meter_end}
-                          onChange={(e) => updateForm(room.room_id, 'water', 'meter_end', e.target.value ? Number(e.target.value) : '')}
-                        />
-                        {waterUsage !== null && (
-                          <span className="ml-2 text-xs text-gray-500">({waterUsage} หน่วย)</span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            className="w-24 border rounded px-2 py-1 text-sm"
+                            value={form.water.meter_end}
+                            onChange={(e) => updateForm(room.room_id, 'water', 'meter_end', e.target.value ? Number(e.target.value) : '')}
+                          />
+                          {(() => {
+                            const photoKey = `${room.room_id}-water`;
+                            const photoInfo = photoStatus.get(photoKey);
+                            const hasPhoto = !!photoInfo;
+                            const canEdit = hasPhoto && !hasBills && !photoInfo?.bill_id;
+                            
+                            return (
+                              <div className="flex items-center gap-1">
+                                {hasPhoto ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => openUploadModal(room.room_id, 'water', photoInfo.photo_id)}
+                                      className={`text-xs px-2 py-1 border rounded transition-colors ${
+                                        canEdit
+                                          ? 'text-green-600 border-green-300 hover:bg-green-50'
+                                          : 'text-gray-400 border-gray-300 cursor-not-allowed'
+                                      }`}
+                                      title={canEdit ? 'แก้ไขรูปมิเตอร์น้ำ' : 'มีรูปแล้ว (ออกบิลแล้ว ไม่สามารถแก้ไขได้)'}
+                                      disabled={!canEdit}
+                                    >
+                                      {canEdit ? '✏️' : '📷'}
+                                    </button>
+                                    <span className="text-green-600 text-xs" title="มีรูปแนบแล้ว">✅</span>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => openUploadModal(room.room_id, 'water')}
+                                    className="text-blue-600 hover:text-blue-800 text-xs px-2 py-1 border border-blue-300 rounded hover:bg-blue-50"
+                                    title="ถ่ายรูปมิเตอร์น้ำ"
+                                  >
+                                    📷
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </div>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-center border-l-2 border-r border-t border-b border-gray-300">
-                        <span className={`font-medium ${currentWaterMeter !== null ? 'text-green-600' : 'text-gray-400'}`}>
-                          {currentWaterMeter !== null ? currentWaterMeter : '-'}
+                        <span className={`font-medium ${currentWaterUsage !== null ? 'text-green-600' : 'text-gray-400'}`}>
+                          {currentWaterUsage !== null ? `${currentWaterUsage} หน่วย` : '-'}
                         </span>
                       </td>
                       {/* ปุ่มบันทึก */}
@@ -708,6 +1262,132 @@ export default function UtilityReadingsClient() {
             >
               {isSaving ? 'กำลังบันทึก...' : 'บันทึกทั้งหมด'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal สำหรับอัปโหลดรูปมิเตอร์ */}
+      {uploadModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+            <h2 className="text-xl font-bold mb-4">
+              {editingPhotoId ? 'แก้ไข' : 'อัปโหลด'}รูปมิเตอร์{uploadingUtilityType === 'electric' ? 'ไฟฟ้า' : 'น้ำ'}
+            </h2>
+            {editingPhotoId && (
+              <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p className="text-sm text-yellow-800">
+                  ⚠️ คุณกำลังแก้ไขรูปภาพ รูปเก่าจะถูกลบและแทนที่ด้วยรูปใหม่
+                </p>
+              </div>
+            )}
+            
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">
+                เลือกรูปภาพ {editingPhotoId && <span className="text-gray-500 font-normal">(ไม่บังคับ - ถ้าไม่เลือกรูปจะแก้ไขแค่ค่ามิเตอร์)</span>}
+              </label>
+              <input
+                type="file"
+                accept="image/jpeg,image/jpg,image/png,image/webp"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setSelectedPhoto(file);
+                    // สร้าง URL สำหรับแสดง preview
+                    const previewUrl = URL.createObjectURL(file);
+                    // ลบ URL เก่าก่อน (ถ้ามี)
+                    if (photoPreviewUrl) {
+                      URL.revokeObjectURL(photoPreviewUrl);
+                    }
+                    setPhotoPreviewUrl(previewUrl);
+                  } else {
+                    setSelectedPhoto(null);
+                    if (photoPreviewUrl) {
+                      URL.revokeObjectURL(photoPreviewUrl);
+                      setPhotoPreviewUrl(null);
+                    }
+                  }
+                }}
+                className="w-full border rounded px-3 py-2"
+              />
+              {selectedPhoto && (
+                <p className="mt-2 text-sm text-gray-600">
+                  ไฟล์: {selectedPhoto.name} ({(selectedPhoto.size / 1024).toFixed(2)} KB)
+                </p>
+              )}
+            </div>
+
+            {/* แสดงรูปภาพ preview */}
+            {(photoPreviewUrl || existingPhotoUrl) && (
+              <div className="mb-4">
+                <label className="block text-sm font-medium mb-2">
+                  {editingPhotoId && !photoPreviewUrl ? 'รูปเก่า' : editingPhotoId && photoPreviewUrl ? 'รูปเก่า' : 'รูปที่เลือก'}
+                </label>
+                {editingPhotoId && existingPhotoUrl && !photoPreviewUrl && (
+                  <div className="border rounded-lg p-2 bg-gray-50">
+                    <img
+                      src={existingPhotoUrl}
+                      alt="รูปเก่า"
+                      className="w-full h-auto max-h-64 object-contain rounded"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  </div>
+                )}
+                {photoPreviewUrl && (
+                  <div className={`border rounded-lg p-2 ${editingPhotoId ? 'bg-green-50' : 'bg-gray-50'}`}>
+                    <img
+                      src={photoPreviewUrl}
+                      alt={editingPhotoId ? 'รูปใหม่ที่จะแทนที่' : 'รูปที่เลือก'}
+                      className="w-full h-auto max-h-64 object-contain rounded"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                    {editingPhotoId && (
+                      <p className="mt-2 text-xs text-green-600 text-center">รูปใหม่ที่จะแทนที่รูปเก่า</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">
+                ค่าที่อ่านได้จากรูป
+              </label>
+              <input
+                type="number"
+                value={photoMeterValue}
+                onChange={(e) => setPhotoMeterValue(e.target.value)}
+                placeholder="กรอกค่ามิเตอร์"
+                className="w-full border rounded px-3 py-2"
+              />
+            </div>
+
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={closeUploadModal}
+                disabled={isUploading}
+                className="px-4 py-2 border rounded hover:bg-gray-50 disabled:opacity-50"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={uploadMeterPhoto}
+                disabled={isUploading || !photoMeterValue || (!selectedPhoto && !editingPhotoId)}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUploading 
+                  ? 'กำลังอัปโหลด...' 
+                  : editingPhotoId && !selectedPhoto
+                    ? 'อัปเดตค่ามิเตอร์'
+                    : editingPhotoId
+                      ? 'อัปเดตรูปและค่า'
+                      : 'อัปโหลด'
+                }
+              </button>
+            </div>
           </div>
         </div>
       )}

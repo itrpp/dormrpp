@@ -213,6 +213,22 @@ export async function POST(req: Request) {
 
     const affectedRows = (result as any).affectedRows || 0;
 
+    // อัปเดต meter_photos.bill_id สำหรับบิลที่สร้างทั้งหมด
+    // ดึงบิลที่สร้างใหม่และผูกกับรูปมิเตอร์
+    const [newBills] = await connection.query(
+      `SELECT bill_id, room_id, cycle_id 
+       FROM bills 
+       WHERE cycle_id = ? 
+       ORDER BY bill_id DESC 
+       LIMIT ?`,
+      [cycleId, affectedRows]
+    );
+    
+    const { linkMeterPhotosToBill } = await import('@/lib/repositories/bills');
+    for (const bill of newBills as any[]) {
+      await linkMeterPhotosToBill(bill.bill_id, bill.room_id, bill.cycle_id, connection);
+    }
+
     await connection.commit();
     connection.release();
 

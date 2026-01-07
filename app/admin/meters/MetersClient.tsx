@@ -76,6 +76,22 @@ export default function MetersClient({
   const [showRoomsWithZeroUsageWater, setShowRoomsWithZeroUsageWater] = useState<boolean>(false); // แสดงห้องที่มีหน่วยใช้งานน้ำ = 0
   const [showRoomsWithZeroUsageElectric, setShowRoomsWithZeroUsageElectric] = useState<boolean>(false); // แสดงห้องที่มีหน่วยใช้งานไฟฟ้า = 0
   
+  // State สำหรับดูรูปมิเตอร์
+  const [photoModalOpen, setPhotoModalOpen] = useState(false);
+  const [selectedPhoto, setSelectedPhoto] = useState<{
+    photo_id: number;
+    photo_path: string;
+    utility_type: string;
+    meter_value: number;
+    reading_date: string;
+    room_number: string;
+    building_name: string;
+  } | null>(null);
+  const [loadingPhoto, setLoadingPhoto] = useState(false);
+  
+  // State สำหรับเก็บสถานะว่ามีรูปหรือไม่ (key: `${room_id}-${billing_year}-${billing_month}-${utility_type}`)
+  const [photoStatus, setPhotoStatus] = useState<Map<string, boolean>>(new Map());
+  
   // แปลง month value เป็น cycle_id
   useEffect(() => {
     if (monthValue) {
@@ -98,6 +114,67 @@ export default function MetersClient({
       setSelectedCycleId('');
     }
   }, [monthValue, initialCycles]);
+
+  // ดึงสถานะรูปภาพเมื่อเลือกรอบบิล
+  useEffect(() => {
+    const fetchPhotoStatus = async () => {
+      if (!selectedCycleId) {
+        setPhotoStatus(new Map());
+        return;
+      }
+
+      try {
+        // หา billing_year และ billing_month จาก cycle_id
+        const cycle = initialCycles.find(c => c.cycle_id === selectedCycleId);
+        if (!cycle) {
+          setPhotoStatus(new Map());
+          return;
+        }
+
+        // ดึงข้อมูลรูปภาพทั้งหมดในรอบบิลนี้ในครั้งเดียว
+        const statusMap = new Map<string, boolean>();
+        
+        try {
+          // ดึงรูปภาพไฟฟ้าทั้งหมดในรอบบิลนี้
+          const electricRes = await fetch(
+            `/api/meter-photos?year=${cycle.billing_year}&month=${cycle.billing_month}&utility_type=electric`
+          );
+          if (electricRes.ok) {
+            const electricPhotos = await electricRes.json();
+            electricPhotos.forEach((photo: any) => {
+              const key = `${photo.room_id}-${cycle.billing_year}-${cycle.billing_month}-electric`;
+              statusMap.set(key, true);
+            });
+          }
+        } catch (error) {
+          console.error('Error fetching electric photos:', error);
+        }
+
+        try {
+          // ดึงรูปภาพน้ำทั้งหมดในรอบบิลนี้
+          const waterRes = await fetch(
+            `/api/meter-photos?year=${cycle.billing_year}&month=${cycle.billing_month}&utility_type=water`
+          );
+          if (waterRes.ok) {
+            const waterPhotos = await waterRes.json();
+            waterPhotos.forEach((photo: any) => {
+              const key = `${photo.room_id}-${cycle.billing_year}-${cycle.billing_month}-water`;
+              statusMap.set(key, true);
+            });
+          }
+        } catch (error) {
+          console.error('Error fetching water photos:', error);
+        }
+
+        setPhotoStatus(statusMap);
+      } catch (error) {
+        console.error('Error fetching photo status:', error);
+        setPhotoStatus(new Map());
+      }
+    };
+
+    fetchPhotoStatus();
+  }, [selectedCycleId, initialCycles]);
 
   // สร้างรายการชั้นจาก rooms
   const floorOptions = useMemo(() => {
@@ -218,6 +295,53 @@ export default function MetersClient({
     return result;
   }, [filteredReadings, showRoomsWithZeroUsageWater, showRoomsWithZeroUsageElectric, selectedCycleId, selectedFloor, initialRooms, initialCycles]);
 
+  // ฟังก์ชันดึงและแสดงรูปมิเตอร์
+  const viewMeterPhoto = async (roomId: number, utilityType: 'electric' | 'water', billingYear: number, billingMonth: number, roomNumber: string, buildingName: string) => {
+    setLoadingPhoto(true);
+    setPhotoModalOpen(true);
+    setSelectedPhoto(null);
+    
+    try {
+      const response = await fetch(
+        `/api/meter-photos?room_id=${roomId}&year=${billingYear}&month=${billingMonth}&utility_type=${utilityType}`
+      );
+      
+      if (!response.ok) {
+        throw new Error('ไม่สามารถดึงรูปมิเตอร์ได้');
+      }
+      
+      const photos = await response.json();
+      
+      if (photos && photos.length > 0) {
+        // เลือกรูปแรก (หรือรูปล่าสุด)
+        const photo = photos[0];
+        setSelectedPhoto({
+          photo_id: photo.photo_id,
+          photo_path: photo.photo_path,
+          utility_type: photo.utility_type,
+          meter_value: photo.meter_value,
+          reading_date: photo.reading_date,
+          room_number: roomNumber,
+          building_name: buildingName,
+        });
+      } else {
+        // ไม่พบรูป
+        setSelectedPhoto(null);
+      }
+    } catch (error: any) {
+      console.error('Error fetching meter photo:', error);
+      setSelectedPhoto(null);
+    } finally {
+      setLoadingPhoto(false);
+    }
+  };
+
+  // ปิด modal
+  const closePhotoModal = () => {
+    setPhotoModalOpen(false);
+    setSelectedPhoto(null);
+  };
+
   return (
     <div>
         {/* Filters */}
@@ -324,10 +448,10 @@ export default function MetersClient({
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     ห้อง
                   </th>
-                  <th colSpan={3} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-l border-gray-200">
+                  <th colSpan={4} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-l border-gray-200">
                     ⚡ มิเตอร์ไฟฟ้า
                   </th>
-                  <th colSpan={3} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-l border-gray-200">
+                  <th colSpan={4} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-l border-gray-200">
                     💧 มิเตอร์น้ำ
                   </th>
                 </tr>
@@ -343,6 +467,9 @@ export default function MetersClient({
                   <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">
                     ใช้ไป (หน่วย)
                   </th>
+                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">
+                    รูปภาพ
+                  </th>
                   <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 border-l border-gray-200">
                     เริ่มต้น
                   </th>
@@ -352,12 +479,15 @@ export default function MetersClient({
                   <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">
                     ใช้ไป (หน่วย)
                   </th>
+                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">
+                    รูปภาพ
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {groupedReadings.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
+                    <td colSpan={10} className="px-4 py-8 text-center text-gray-500">
                       <div className="flex flex-col items-center gap-2">
                         <p>ไม่พบข้อมูล</p>
                         {initialReadings.length === 0 && (
@@ -392,6 +522,50 @@ export default function MetersClient({
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-yellow-600">
                         {group.electric ? formatNumber(group.electric.usage ?? (group.electric.meter_end - group.electric.meter_start)) : '-'}
                       </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-center">
+                        {group.electric ? (() => {
+                          const photoKey = `${group.room.room_id}-${group.cycle.billing_year}-${group.cycle.billing_month}-electric`;
+                          const hasPhoto = photoStatus.get(photoKey) || false;
+                          
+                          return (
+                            <div className="flex flex-col items-center justify-center gap-1">
+                              <button
+                                onClick={() => {
+                                  if (!hasPhoto) return;
+                                  viewMeterPhoto(
+                                    group.room.room_id,
+                                    'electric',
+                                    group.cycle.billing_year,
+                                    group.cycle.billing_month,
+                                    group.room.room_number,
+                                    group.room.building_name
+                                  );
+                                }}
+                                disabled={!hasPhoto}
+                                className={`text-sm px-2 py-1 rounded transition-colors flex items-center justify-center ${
+                                  hasPhoto
+                                    ? 'text-green-600 hover:text-green-800 bg-green-50 hover:bg-green-100 cursor-pointer'
+                                    : 'text-gray-400 bg-gray-50 cursor-not-allowed'
+                                }`}
+                                title={hasPhoto ? 'ดูรูปมิเตอร์ไฟฟ้า' : 'ยังไม่มีรูปมิเตอร์ไฟฟ้า'}
+                              >
+                                📷
+                              </button>
+                              {hasPhoto ? (
+                                <span className="text-[11px] text-green-600 font-medium">
+                                  เปิดดูรูป
+                                </span>
+                              ) : (
+                                <span className="text-[11px] text-gray-400">
+                                  ยังไม่มีรูป
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })() : (
+                          <span className="text-gray-400">-</span>
+                        )}
+                      </td>
                       {/* มิเตอร์น้ำ */}
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-600 border-l border-gray-200">
                         {group.water ? formatNumber(group.water.meter_start) : '-'}
@@ -401,6 +575,50 @@ export default function MetersClient({
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-blue-600">
                         {group.water ? formatNumber(group.water.usage ?? (group.water.meter_end - group.water.meter_start)) : '-'}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-center">
+                        {group.water ? (() => {
+                          const photoKey = `${group.room.room_id}-${group.cycle.billing_year}-${group.cycle.billing_month}-water`;
+                          const hasPhoto = photoStatus.get(photoKey) || false;
+                          
+                          return (
+                            <div className="flex flex-col items-center justify-center gap-1">
+                              <button
+                                onClick={() => {
+                                  if (!hasPhoto) return;
+                                  viewMeterPhoto(
+                                    group.room.room_id,
+                                    'water',
+                                    group.cycle.billing_year,
+                                    group.cycle.billing_month,
+                                    group.room.room_number,
+                                    group.room.building_name
+                                  );
+                                }}
+                                disabled={!hasPhoto}
+                                className={`text-sm px-2 py-1 rounded transition-colors flex items-center justify-center ${
+                                  hasPhoto
+                                    ? 'text-green-600 hover:text-green-800 bg-green-50 hover:bg-green-100 cursor-pointer'
+                                    : 'text-gray-400 bg-gray-50 cursor-not-allowed'
+                                }`}
+                                title={hasPhoto ? 'ดูรูปมิเตอร์น้ำ' : 'ยังไม่มีรูปมิเตอร์น้ำ'}
+                              >
+                                📷
+                              </button>
+                              {hasPhoto ? (
+                                <span className="text-[11px] text-green-600 font-medium">
+                                  เปิดดูรูป
+                                </span>
+                              ) : (
+                                <span className="text-[11px] text-gray-400">
+                                  ยังไม่มีรูป
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })() : (
+                          <span className="text-gray-400">-</span>
+                        )}
                       </td>
                     </tr>
                   ))
@@ -426,6 +644,86 @@ export default function MetersClient({
             </div>
           )}
         </div>
+
+      {/* Modal สำหรับแสดงรูปมิเตอร์ */}
+      {photoModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4" onClick={closePhotoModal}>
+          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+              <h2 className="text-xl font-bold text-gray-900">
+                {selectedPhoto ? (
+                  `รูปมิเตอร์${selectedPhoto.utility_type === 'electric' ? 'ไฟฟ้า' : 'น้ำ'} - ${selectedPhoto.building_name} ห้อง ${selectedPhoto.room_number}`
+                ) : (
+                  'รูปมิเตอร์'
+                )}
+              </h2>
+              <button
+                onClick={closePhotoModal}
+                className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
+              >
+                ×
+              </button>
+            </div>
+            
+            <div className="p-6">
+              {loadingPhoto ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+                  <span className="ml-4 text-gray-600">กำลังโหลดรูปภาพ...</span>
+                </div>
+              ) : selectedPhoto ? (
+                <div className="space-y-4">
+                  <div className="bg-gray-50 rounded-lg p-4">
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="font-medium text-gray-700">ค่าที่อ่านได้:</span>
+                        <span className="ml-2 text-gray-900">{formatNumber(selectedPhoto.meter_value)}</span>
+                      </div>
+                      <div>
+                        <span className="font-medium text-gray-700">วันที่อ่าน:</span>
+                        <span className="ml-2 text-gray-900">
+                          {new Date(selectedPhoto.reading_date).toLocaleDateString('th-TH', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric'
+                          })}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-center">
+                    <img
+                      src={`/api/meter-photos/${selectedPhoto.photo_id}/download`}
+                      alt={`มิเตอร์${selectedPhoto.utility_type === 'electric' ? 'ไฟฟ้า' : 'น้ำ'}`}
+                      className="max-w-full h-auto rounded-lg shadow-lg"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = '/placeholder-image.png';
+                        (e.target as HTMLImageElement).alt = 'ไม่พบรูปภาพ';
+                      }}
+                    />
+                  </div>
+                  
+                  <div className="text-center">
+                    <a
+                      href={`/api/meter-photos/${selectedPhoto.photo_id}/download`}
+                      download
+                      className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      ดาวน์โหลดรูปภาพ
+                    </a>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <p className="text-gray-500 text-lg">ไม่พบรูปภาพสำหรับมิเตอร์นี้</p>
+                  <p className="text-gray-400 text-sm mt-2">กรุณาตรวจสอบว่ามีการอัปโหลดรูปภาพแล้วหรือไม่</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
