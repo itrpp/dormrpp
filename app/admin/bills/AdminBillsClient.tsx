@@ -112,6 +112,13 @@ export default function AdminBillsClient() {
     water: { meter_start: number | null; meter_end: number | null } | null;
   }>({ electric: null, water: null });
   const [isLoadingReadings, setIsLoadingReadings] = useState(false);
+  
+  // State สำหรับ preview modal
+  const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+  const [previewBillId, setPreviewBillId] = useState<number | null>(null);
+  const [previewBillData, setPreviewBillData] = useState<any>(null);
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  
   // สำหรับ modal form
   const formBeYear = now.getFullYear() + 543;
   const formBeMonth = now.getMonth() + 1;
@@ -204,6 +211,61 @@ export default function AdminBillsClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year, month]);
 
+  // เปิด preview modal และดึงข้อมูลบิล
+  const openPreviewModal = async (billId: number) => {
+    setPreviewBillId(billId);
+    setIsPreviewModalOpen(true);
+    setIsLoadingPreview(true);
+    setPreviewBillData(null);
+    
+    try {
+      const res = await fetch(`/api/bills/${billId}/individual`);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to fetch bill');
+      }
+      const data = await res.json();
+      setPreviewBillData(data);
+    } catch (error: any) {
+      console.error('Error fetching bill preview:', error);
+      alert(`ไม่สามารถโหลดข้อมูลบิลได้: ${error.message || 'Unknown error'}`);
+      setIsPreviewModalOpen(false);
+    } finally {
+      setIsLoadingPreview(false);
+    }
+  };
+
+  // ปิด preview modal
+  const closePreviewModal = () => {
+    setIsPreviewModalOpen(false);
+    setPreviewBillId(null);
+    setPreviewBillData(null);
+  };
+
+  // Export Excel จาก modal
+  const handleExportFromModal = async () => {
+    if (!previewBillId) return;
+    
+    try {
+      const res = await fetch(`/api/bills/export/individual/${previewBillId}`);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to export');
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `บิล_${previewBillData?.bill.bill_number || previewBillId}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (error: any) {
+      alert(`ไม่สามารถส่งออกได้: ${error.message || 'Unknown error'}`);
+    }
+  };
+
   // ดึงข้อมูล contracts (active)
   useEffect(() => {
     const fetchContracts = async () => {
@@ -236,6 +298,18 @@ export default function AdminBillsClient() {
 
   // เปิด modal สร้างบิล
   const openCreateModal = () => {
+    // ให้รอบบิลใน modal ตรงกับรอบบิลที่เลือกในหน้าหลัก
+    if (year && month) {
+      const adYearFromFilter = year - 543;
+      const monthStr = String(month).padStart(2, '0');
+      const newMonthValue = `${adYearFromFilter}-${monthStr}`;
+      setFormMonthValue(newMonthValue);
+      // useEffect ของ formMonthValue จะอัปเดต billing_year / billing_month (พ.ศ.) ให้อัตโนมัติ
+    } else {
+      // กรณีไม่มีค่าในตัวกรอง ให้ใช้ค่าเริ่มต้นของ modal เดิม
+      setFormMonthValue(formInitialMonthValue);
+    }
+
     setIsCreateModalOpen(true);
   };
 
@@ -605,6 +679,7 @@ const formatInteger = (num: number | null | undefined): string => {
 
   return (
     <div>
+      <div className="admin-bills-main">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-gray-800">จัดการบิลค่าใช้จ่าย</h1>
         <div className="flex gap-2 items-end">
@@ -851,8 +926,8 @@ const formatInteger = (num: number | null | undefined): string => {
                     {/* จัดการ */}
                     <td className="px-3 py-2 text-center border">
                       <div className="flex gap-2 justify-center">
-                        <Link
-                          href={`/admin/bills/preview/${row.bill.bill_id}`}
+                        <button
+                          onClick={() => openPreviewModal(row.bill.bill_id)}
                           className="bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700 flex items-center gap-1"
                           title="ดูพรีวิว"
                         >
@@ -861,7 +936,7 @@ const formatInteger = (num: number | null | undefined): string => {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                           </svg>
                           Preview
-                        </Link>
+                        </button>
                         <button
                           onClick={async () => {
                             try {
@@ -1118,6 +1193,263 @@ const formatInteger = (num: number | null | undefined): string => {
           </div>
         </div>
       )}
+      </div>
+
+      {/* Preview Modal */}
+      {isPreviewModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={closePreviewModal}>
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto bill-print-wrapper" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center">
+              <h2 className="text-xl font-bold">พรีวิวบิล</h2>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => window.print()}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                  </svg>
+                  พิมพ์
+                </button>
+                <button
+                  onClick={handleExportFromModal}
+                  className="bg-green-700 text-white px-4 py-2 rounded-lg hover:bg-green-800 flex items-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Export Excel
+                </button>
+                <button
+                  onClick={closePreviewModal}
+                  className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-8">
+              {isLoadingPreview ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                  <p className="mt-4 text-gray-600">กำลังโหลดข้อมูล...</p>
+                </div>
+              ) : previewBillData ? (
+                <>
+                  {/* ส่วนที่ 1: Header */}
+                  <div className="text-center mb-6">
+                    <h1 className="text-2xl font-bold mb-2">ใบแจ้งค่าใช้จ่ายหอพัก</h1>
+                    <h2 className="text-xl font-bold mb-4">โรงพยาบาลราชพิพัฒน์</h2>
+                    <div className="border-t-2 border-gray-300 my-4"></div>
+                  </div>
+
+                  {/* ข้อมูลด้านขวาบน */}
+                  <div className="text-right mb-6">
+                    <p className="text-sm"><strong>เลขที่บิล</strong> : {previewBillData.bill.bill_number}</p>
+                    <p className="text-sm"><strong>วันที่ออกบิล</strong> : {previewBillData.bill.billing_date}</p>
+                    <p className="text-sm"><strong>กำหนดชำระ</strong> : {previewBillData.bill.due_date}</p>
+                  </div>
+
+                  {/* ส่วนที่ 2: ข้อมูลผู้เช่า */}
+                  <div className="mb-6">
+                    <h3 className="text-lg font-bold bg-gray-100 p-2 mb-2">ข้อมูลผู้เข้าพัก</h3>
+                    <div className="border-t border-gray-300 mb-3"></div>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <strong>ชื่อ–สกุล</strong> : {previewBillData.tenant.first_name} {previewBillData.tenant.last_name}
+                      </div>
+                      <div></div>
+                      <div>
+                        <strong>เลขที่ห้อง</strong> : {previewBillData.tenant.room_number} <span className="ml-4"><strong>ชั้น</strong> : {previewBillData.tenant.floor_no}</span>
+                      </div>
+                      <div></div>
+                      <div>
+                        <strong>อาคาร</strong> : {previewBillData.tenant.building_name}
+                      </div>
+                      <div></div>
+                      <div>
+                        <strong>รอบบิล</strong> : เดือน{previewBillData.tenant.billing_month} {previewBillData.tenant.billing_year}
+                      </div>
+                      <div></div>
+                      <div>
+                        <strong>สถานะสัญญา</strong> : {previewBillData.tenant.contract_status}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ส่วนที่ 3: ตารางค่าใช้จ่าย */}
+                  <div className="mb-6">
+                    {/* ตารางที่ 1: ค่าดูแล/ค่าคงที่ */}
+                    <h3 className="text-base font-bold bg-gray-100 p-2 mb-2">ตารางที่ 1 : ค่าดูแล / ค่าคงที่</h3>
+                    <table className="w-full border-collapse border border-gray-300 mb-4">
+                      <thead>
+                        <tr className="bg-gray-100">
+                          <th className="border border-gray-300 px-4 py-2 text-left">รายการ</th>
+                          <th className="border border-gray-300 px-4 py-2 text-right">จำนวนเงิน (บาท)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td className="border border-gray-300 px-4 py-2">ค่าดูแลและบำรุงรักษาหอพัก</td>
+                          <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.charges.maintenance_fee)}</td>
+                        </tr>
+                        <tr>
+                          <td className="border border-gray-300 px-4 py-2">ค่าใช้จ่ายคงที่อื่น</td>
+                          <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.charges.other_fixed)}</td>
+                        </tr>
+                        <tr>
+                          <td className="border border-gray-300 px-4 py-2">ส่วนลด</td>
+                          <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.charges.discount)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+
+                    {/* ตารางที่ 2: ค่าสาธารณูปโภค */}
+                    <h3 className="text-base font-bold bg-gray-100 p-2 mb-2">ตารางที่ 2 : ค่าสาธารณูปโภค (อ้างอิงมิเตอร์)</h3>
+                    
+                    {/* ค่าไฟฟ้า */}
+                    <h4 className="text-sm font-bold mb-2">🔌 ค่าไฟฟ้า</h4>
+                    <table className="w-full border-collapse border border-gray-300 mb-4">
+                      <thead>
+                        <tr className="bg-gray-100">
+                          <th className="border border-gray-300 px-4 py-2 text-center">เริ่มต้น</th>
+                          <th className="border border-gray-300 px-4 py-2 text-center">สิ้นสุด</th>
+                          <th className="border border-gray-300 px-4 py-2 text-center">หน่วยใช้</th>
+                          <th className="border border-gray-300 px-4 py-2 text-center">อัตรา</th>
+                          <th className="border border-gray-300 px-4 py-2 text-center">เป็นเงิน</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {previewBillData.utilities.electric ? (
+                          <tr>
+                            <td className="border border-gray-300 px-4 py-2 text-right">{formatInteger(previewBillData.utilities.electric.meter_start)}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-right">{formatInteger(previewBillData.utilities.electric.meter_end)}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-right">{formatInteger(previewBillData.utilities.electric.usage)}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.utilities.electric.rate_per_unit)}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.utilities.electric.amount)}</td>
+                          </tr>
+                        ) : (
+                          <tr>
+                            <td colSpan={5} className="border border-gray-300 px-4 py-2 text-center text-gray-500">ไม่มีข้อมูล</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+
+                    {/* ค่าน้ำ */}
+                    <h4 className="text-sm font-bold mb-2">🚿 ค่าน้ำประปา</h4>
+                    <table className="w-full border-collapse border border-gray-300 mb-4">
+                      <thead>
+                        <tr className="bg-gray-100">
+                          <th className="border border-gray-300 px-4 py-2 text-center">เริ่มต้น</th>
+                          <th className="border border-gray-300 px-4 py-2 text-center">สิ้นสุด</th>
+                          <th className="border border-gray-300 px-4 py-2 text-center">หน่วยใช้</th>
+                          <th className="border border-gray-300 px-4 py-2 text-center">อัตรา</th>
+                          <th className="border border-gray-300 px-4 py-2 text-center">เป็นเงิน</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {previewBillData.utilities.water ? (
+                          <tr>
+                            <td className="border border-gray-300 px-4 py-2 text-right">{formatInteger(previewBillData.utilities.water.meter_start)}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-right">{formatInteger(previewBillData.utilities.water.meter_end)}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-right">{formatInteger(previewBillData.utilities.water.usage)}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.utilities.water.rate_per_unit)}</td>
+                            <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.utilities.water.amount)}</td>
+                          </tr>
+                        ) : (
+                          <tr>
+                            <td colSpan={5} className="border border-gray-300 px-4 py-2 text-center text-gray-500">ไม่มีข้อมูล</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+
+                    {/* หมายเหตุ */}
+                    <p className="text-xs italic text-gray-600 mb-4">
+                      📝 หมายเหตุ: ค่าไฟ/น้ำเป็นการใช้งานร่วมของห้อง ระบบออกบิล "ซ้ำต่อผู้เช่า" ตามระเบียบหอพัก
+                    </p>
+                  </div>
+
+                  {/* ส่วนที่ 4: สรุปยอด */}
+                  <div className="mb-6">
+                    <div className="border-t-2 border-gray-300 my-4"></div>
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="font-bold">รวมค่าสาธารณูปโภค</span>
+                      <span className="font-bold">{formatNumber(previewBillData.summary.utility_total)} บาท</span>
+                    </div>
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="font-bold">ค่าดูแล/บำรุงรักษา</span>
+                      <span className="font-bold">{formatNumber(previewBillData.summary.maintenance_fee)} บาท</span>
+                    </div>
+                    <div className="border-t-2 border-gray-300 my-4"></div>
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-xl font-bold">ยอดชำระทั้งสิ้น</span>
+                      <span className="text-xl font-bold">{formatNumber(previewBillData.summary.total_amount)} บาท</span>
+                    </div>
+                    <div className="border-t-2 border-gray-300 my-4"></div>
+                  </div>
+
+                  {/* ส่วนที่ 5: สถานะ & ช่องลงนาม */}
+                  <div className="mb-6">
+                    <p className="mb-4">
+                      <strong>สถานะบิล</strong> : {previewBillData.bill.status_text}
+                    </p>
+                    <div className="mt-6">
+                      <p className="mb-2">ผู้จัดทำ ..................................................</p>
+                      <p>หัวหน้าฝ่าย ................................................</p>
+                    </div>
+                  </div>
+
+                  {/* ส่วนที่ 6: Footer */}
+                  <div className="mt-8 border-t border-gray-300 pt-4">
+                    <h4 className="font-bold mb-2">หมายเหตุ</h4>
+                    <ul className="text-sm space-y-1">
+                      <li>- กรุณาชำระภายในกำหนด หากเกินกำหนดอาจมีค่าปรับ</li>
+                      <li>- เอกสารนี้ออกโดยระบบหอพักโรงพยาบาลราชพิพัฒน์</li>
+                    </ul>
+                  </div>
+                </>
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-red-600">ไม่พบข้อมูลบิล</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Print styles สำหรับ Preview Modal */}
+      <style jsx global>{`
+        @media print {
+          body {
+            margin: 0;
+            padding: 0;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+
+          /* ซ่อนส่วนหน้า Admin ปกติ */
+          .admin-bills-main {
+            display: none !important;
+          }
+
+          /* แสดงเฉพาะเนื้อหาบิลใน modal ให้เต็มหน้า */
+          .bill-print-wrapper {
+            position: relative !important;
+            inset: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            max-height: none !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }
