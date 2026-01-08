@@ -191,8 +191,17 @@ export default function MetersClient({
   const filteredReadings = useMemo(() => {
     let filtered = initialReadings || [];
 
-    if (selectedCycleId) {
-      filtered = filtered.filter((r) => r.cycle_id === selectedCycleId);
+    // กรองตามรอบบิลที่เลือก (บังคับ - ถ้าเลือกรอบบิลแล้วต้องแสดงเฉพาะรอบบิลนั้น)
+    if (selectedCycleId && selectedCycleId !== '') {
+      filtered = filtered.filter((r) => {
+        // ตรวจสอบ type และค่า cycle_id ให้ตรงกัน
+        const readingCycleId = Number(r.cycle_id);
+        const selectedCycleIdNum = Number(selectedCycleId);
+        return readingCycleId === selectedCycleIdNum;
+      });
+    } else {
+      // ถ้ายังไม่ได้เลือกรอบบิล ให้แสดงเป็น array ว่าง (ไม่แสดงข้อมูล)
+      filtered = [];
     }
 
     // Filter ตามชั้น (แทนที่จะเป็นห้อง)

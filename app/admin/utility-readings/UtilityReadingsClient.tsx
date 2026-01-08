@@ -1127,7 +1127,8 @@ export default function UtilityReadingsClient() {
                             const photoKey = `${room.room_id}-electric`;
                             const photoInfo = photoStatus.get(photoKey);
                             const hasPhoto = !!photoInfo;
-                            const canEdit = hasPhoto && !hasBills && !photoInfo?.bill_id;
+                            // แก้ไขได้เฉพาะเมื่อรูปยังไม่ผูกกับบิล (ห้องนั้นยังไม่ออกบิล)
+                            const canEdit = hasPhoto && !photoInfo?.bill_id;
                             
                             return (
                               <div className="flex items-center gap-1">
@@ -1196,7 +1197,8 @@ export default function UtilityReadingsClient() {
                             const photoKey = `${room.room_id}-water`;
                             const photoInfo = photoStatus.get(photoKey);
                             const hasPhoto = !!photoInfo;
-                            const canEdit = hasPhoto && !hasBills && !photoInfo?.bill_id;
+                            // แก้ไขได้เฉพาะเมื่อรูปยังไม่ผูกกับบิล (ห้องนั้นยังไม่ออกบิล)
+                            const canEdit = hasPhoto && !photoInfo?.bill_id;
                             
                             return (
                               <div className="flex items-center gap-1">
