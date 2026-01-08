@@ -192,12 +192,11 @@ export default function MetersClient({
     let filtered = initialReadings || [];
 
     // กรองตามรอบบิลที่เลือก (บังคับ - ถ้าเลือกรอบบิลแล้วต้องแสดงเฉพาะรอบบิลนั้น)
-    if (selectedCycleId && selectedCycleId !== '') {
+    if (selectedCycleId !== '' && typeof selectedCycleId === 'number') {
       filtered = filtered.filter((r) => {
         // ตรวจสอบ type และค่า cycle_id ให้ตรงกัน
         const readingCycleId = Number(r.cycle_id);
-        const selectedCycleIdNum = Number(selectedCycleId);
-        return readingCycleId === selectedCycleIdNum;
+        return readingCycleId === selectedCycleId;
       });
     } else {
       // ถ้ายังไม่ได้เลือกรอบบิล ให้แสดงเป็น array ว่าง (ไม่แสดงข้อมูล)
