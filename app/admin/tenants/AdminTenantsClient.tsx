@@ -13,6 +13,8 @@ type TenantForm = {
   last_name: string;
   email: string;
   phone: string;
+  department: string;
+  phone_dep: string;
   room_number: string;
   status: string;
   move_in_date: string; // yyyy-mm-dd
@@ -39,6 +41,8 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
     last_name: '',
     email: '',
     phone: '',
+    department: '',
+    phone_dep: '',
     room_number: '',
     status: 'active',
     move_in_date: '',
@@ -210,6 +214,8 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
       last_name: t.last_name,
       email: t.email ?? '',
       phone: t.phone ?? '',
+      department: t.department ?? '',
+      phone_dep: t.phone_dep ?? '',
       room_number: t.room_number ?? '',
       status: t.status ?? 'inactive',
       move_in_date: moveInDateStr,
@@ -236,12 +242,14 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
         }
       }
 
-      // ส่งข้อมูลที่อนุญาตให้แก้ไข: ชื่อ, นามสกุล, อีเมล, เบอร์โทร, และสถานะ
+      // ส่งข้อมูลที่อนุญาตให้แก้ไข: ชื่อ, นามสกุล, อีเมล, เบอร์โทร, หน่วยงาน, เบอร์โทรหน่วยงาน, และสถานะ
       const payload = {
         first_name: form.first_name,
         last_name: form.last_name,
         email: form.email.trim() || null, // trim และแปลงเป็น null ถ้าว่าง
         phone: form.phone,
+        department: form.department.trim() || null,
+        phone_dep: form.phone_dep.trim() || null,
         status: form.status, // เพิ่มการแก้ไขสถานะ
       };
       
@@ -415,6 +423,12 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
                 เบอร์โทร
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                หน่วยงาน
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                เบอร์โทรหน่วยงาน
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 วันที่เข้าพัก
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -443,6 +457,12 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {tenant.phone ?? '-'}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {tenant.department ?? '-'}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  {tenant.phone_dep ?? '-'}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {tenant.move_in_date
@@ -483,7 +503,7 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
             {paginatedTenants.length === 0 && (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={10}
                   className="px-6 py-4 text-center text-sm text-gray-500"
                 >
                   ไม่พบข้อมูลผู้เช่า
@@ -609,7 +629,38 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
                   onChange={(e) =>
                     setForm((f) => ({ ...f, phone: e.target.value }))
                   }
+                   placeholder="เช่น 08x..."
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm mb-1">หน่วยงาน</label>
+                <input
+                  className="w-full border rounded-md px-3 py-2 text-sm"
+                  value={form.department}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, department: e.target.value }))
+                  }
+                  placeholder="เช่น แผนกการพยาบาล"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm mb-1">เบอร์โทรหน่วยงาน</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={4}
+                  className="w-full border rounded-md px-3 py-2 text-sm"
+                  value={form.phone_dep}
+                  onChange={(e) => {
+                    // อนุญาตเฉพาะตัวเลข 0-9 สูงสุด 4 หลัก
+                    const onlyDigits = e.target.value.replace(/[^0-9]/g, '').slice(0, 4);
+                    setForm((f) => ({ ...f, phone_dep: onlyDigits }));
+                  }}
+                  placeholder="เช่น 8809 หรือ 199"
+                />
+                <p className="text-xs text-gray-500 mt-1">กรอกได้ 3-4 หลัก (ตัวเลขเท่านั้น)</p>
               </div>
 
               <div>

@@ -14,6 +14,8 @@ export async function PUT(req: Request, { params }: Params) {
       last_name,
       email,
       phone,
+      department,
+      phone_dep,
       status,
     } = body;
 
@@ -34,10 +36,10 @@ export async function PUT(req: Request, { params }: Params) {
       await query(
         `
         UPDATE tenants
-        SET first_name_th = ?, last_name_th = ?, email = ?, phone = ?, status = ?
+        SET first_name_th = ?, last_name_th = ?, email = ?, phone = ?, department = ?, phone_dep = ?, status = ?
         WHERE tenant_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)
       `,
-        [first_name, last_name, email || null, phone || null, status, tenantId]
+        [first_name, last_name, email || null, phone || null, department || null, phone_dep || null, status, tenantId]
       );
     } catch (error: any) {
       // ถ้าไม่มี is_deleted column
@@ -45,11 +47,36 @@ export async function PUT(req: Request, { params }: Params) {
         await query(
           `
           UPDATE tenants
-          SET first_name_th = ?, last_name_th = ?, email = ?, phone = ?, status = ?
+          SET first_name_th = ?, last_name_th = ?, email = ?, phone = ?, department = ?, phone_dep = ?, status = ?
           WHERE tenant_id = ?
         `,
-          [first_name, last_name, email || null, phone || null, status, tenantId]
+          [first_name, last_name, email || null, phone || null, department || null, phone_dep || null, status, tenantId]
         );
+      } else if (error.message?.includes("Unknown column 'department'") || error.message?.includes("Unknown column 'phone_dep'")) {
+        // ถ้าไม่มี department หรือ phone_dep column ให้อัปเดตเฉพาะฟิลด์ที่มี
+        try {
+          await query(
+            `
+            UPDATE tenants
+            SET first_name_th = ?, last_name_th = ?, email = ?, phone = ?, status = ?
+            WHERE tenant_id = ? AND (is_deleted = 0 OR is_deleted IS NULL)
+          `,
+            [first_name, last_name, email || null, phone || null, status, tenantId]
+          );
+        } catch (fallbackError: any) {
+          if (fallbackError.message?.includes("Unknown column 'is_deleted'")) {
+            await query(
+              `
+              UPDATE tenants
+              SET first_name_th = ?, last_name_th = ?, email = ?, phone = ?, status = ?
+              WHERE tenant_id = ?
+            `,
+              [first_name, last_name, email || null, phone || null, status, tenantId]
+            );
+          } else {
+            throw fallbackError;
+          }
+        }
       } else {
         throw error;
       }
@@ -66,6 +93,8 @@ export async function PUT(req: Request, { params }: Params) {
           t.last_name_th AS last_name,
           t.email,
           t.phone,
+          t.department,
+          t.phone_dep,
           COALESCE(t.status, 'inactive') AS status,
           c.start_date AS move_in_date,
           r.room_number,
@@ -82,9 +111,11 @@ export async function PUT(req: Request, { params }: Params) {
         [tenantId]
       );
     } catch (error: any) {
-      // Fallback ถ้าไม่มี first_name_th/last_name_th
+      // Fallback ถ้าไม่มี first_name_th/last_name_th หรือ department/phone_dep
       if (error.message?.includes("Unknown column 'first_name_th'") || 
-          error.message?.includes("Unknown column 'last_name_th'")) {
+          error.message?.includes("Unknown column 'last_name_th'") ||
+          error.message?.includes("Unknown column 'department'") ||
+          error.message?.includes("Unknown column 'phone_dep'")) {
         rows = await query<AdminTenantRow>(
           `
           SELECT 
@@ -93,6 +124,8 @@ export async function PUT(req: Request, { params }: Params) {
             t.last_name AS last_name,
             t.email,
             t.phone,
+            t.department,
+            t.phone_dep,
             COALESCE(t.status, 'inactive') AS status,
             c.start_date AS move_in_date,
             r.room_number,

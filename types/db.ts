@@ -69,6 +69,8 @@ export interface Tenant {
   last_name_th?: string | null;
   email?: string | null;
   phone?: string | null;
+  department?: string | null;
+  phone_dep?: string | null;
   status?: string | null;
   is_deleted?: number | boolean | null;
 }

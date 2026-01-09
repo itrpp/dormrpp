@@ -18,7 +18,6 @@ export function getMenuItems(sessionRole?: string): MenuItem[] {
     { href: '/admin/utility-readings', label: 'บันทึกเลขมิเตอร์', icon: '📝', public: false, adminOnly: true },
     { href: '/admin/meters', label: '💧⚡ตรวจสอบ มิเตอร์น้ำ-ไฟ', icon: '', public: true },
     { href: '/admin/bills', label: 'บิลค่าใช้จ่าย', icon: '💰', public: false, adminOnly: true },
-    { href: 'https://services.rpphosp.go.th/auth', label: 'การซ่อมบำรุง', icon: '🔧', external: true, public: true },
     { href: '/announcements', label: 'ประกาศ', icon: '📢', public: true }, // สำหรับ user ทั่วไป
     { href: '/admin/announcements', label: 'จัดการประกาศ', icon: '📢', public: false, adminOnly: true }, // สำหรับ admin
   ];

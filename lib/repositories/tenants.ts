@@ -22,6 +22,8 @@ export type AdminTenantRow = {
   last_name: string;
   email: string | null;
   phone: string | null;
+  department: string | null;
+  phone_dep: string | null;
   status: string | null;
   move_in_date: string | null;
   room_number: string | null;
@@ -44,6 +46,8 @@ export async function getAllTenantsForAdmin(): Promise<AdminTenantRow[]> {
           t.last_name_th AS last_name,
           t.email,
           t.phone,
+          t.department,
+          t.phone_dep,
           COALESCE(t.status, 'inactive') AS status,
           c.start_date AS move_in_date,
           r.room_number,

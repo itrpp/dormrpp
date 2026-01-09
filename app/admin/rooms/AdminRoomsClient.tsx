@@ -918,56 +918,26 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                   >
                     จัดการผู้เช่า
                   </button>
-                  {(() => {
-                    const occupancy = roomOccupancies.get(room.room_id);
-                    // ตรวจสอบจาก occupancy หรือจาก roomTenants เป็น fallback
-                    const currentOccupants = occupancy?.current_occupants ?? 
-                      (roomTenants.get(room.room_id)?.length || 0);
-                    const hasOccupants = currentOccupants > 0;
-                    return (
-                      <button
-                        className={`mr-3 ${
-                          hasOccupants
-                            ? 'text-gray-400 cursor-not-allowed'
-                            : 'text-blue-600 hover:text-blue-900'
-                        }`}
-                        onClick={() => !hasOccupants && openEditModal(room)}
-                        disabled={hasOccupants}
-                        title={hasOccupants ? 'ไม่สามารถแก้ไขได้ เนื่องจากมีผู้เช่าพักอยู่' : ''}
-                      >
-                        แก้ไข
-                      </button>
-                    );
-                  })()}
+                  <button
+                    className="text-blue-600 hover:text-blue-900 mr-3"
+                    onClick={() => openEditModal(room)}
+                  >
+                    แก้ไข
+                  </button>
                   {(() => {
                     const isDeletedValue = room.is_deleted ?? 0;
                     const isDeleted = isDeletedValue === 1;
                     const isActive = !isDeleted;
                     
-                    // ตรวจสอบว่าห้องมีผู้เข้าพักหรือไม่
-                    const occupancy = roomOccupancies.get(room.room_id);
-                    const currentOccupants = occupancy?.current_occupants ?? 
-                      (roomTenants.get(room.room_id)?.length || 0);
-                    const hasOccupants = currentOccupants > 0;
-                    
                     return (
-                      <label className={`relative inline-flex items-center ${hasOccupants ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}>
+                      <label className="relative inline-flex items-center cursor-pointer">
                         <input
                           type="checkbox"
                           checked={isActive}
-                          onChange={(e) => !hasOccupants && handleToggleActive(room.room_id, !e.target.checked)}
-                          disabled={hasOccupants}
+                          onChange={(e) => handleToggleActive(room.room_id, !e.target.checked)}
                           className="sr-only peer"
                         />
-                        <div className={`w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600 ${hasOccupants ? 'opacity-50 cursor-not-allowed' : ''}`}></div>
-                        <span className={`ml-3 text-sm font-medium ${hasOccupants ? 'text-gray-400' : 'text-gray-700'}`}>
-                          {/* {isActive ? 'เปิด' : 'ปิด'} */}
-                          {hasOccupants && (
-                            <span className="ml-2 text-xs text-red-500" title="ไม่สามารถเปลี่ยนสถานะได้ เนื่องจากมีผู้เช่าพักอยู่">
-                              (มีผู้เข้าพัก)
-                            </span>
-                          )}
-                        </span>
+                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                       </label>
                     );
                   })()}
@@ -1127,39 +1097,17 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
 
               <div>
                 <label className="block text-sm mb-1">สถานะ</label>
-                {(() => {
-                  // ตรวจสอบว่าห้องนี้มีผู้เข้าพักหรือไม่ (เฉพาะกรณีแก้ไข)
-                  const hasOccupants = modalMode === 'edit' && form.room_id
-                    ? (() => {
-                        const occupancy = roomOccupancies.get(form.room_id!);
-                        return occupancy && occupancy.current_occupants > 0;
-                      })()
-                    : false;
-
-                  return (
-                    <>
                 <select
-                        className={`w-full border rounded-md px-3 py-2 text-sm ${
-                          hasOccupants ? 'bg-gray-100 cursor-not-allowed' : ''
-                        }`}
+                  className="w-full border rounded-md px-3 py-2 text-sm"
                   value={form.status}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, status: e.target.value }))
                   }
-                        disabled={hasOccupants}
                 >
                   <option value="available">ว่าง (available)</option>
                   <option value="occupied">มีผู้เช่า (occupied)</option>
                   <option value="maintenance">ซ่อมบำรุง (maintenance)</option>
                 </select>
-                      {hasOccupants && (
-                        <p className="text-xs text-orange-600 mt-1">
-                          ⚠️ ไม่สามารถแก้ไขสถานะได้ เนื่องจากมีผู้เช่าพักอยู่
-                        </p>
-                      )}
-                    </>
-                  );
-                })()}
               </div>
             </div>
 
