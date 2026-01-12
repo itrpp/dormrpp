@@ -84,7 +84,8 @@ export async function GET(req: Request, { params }: Params) {
           t.first_name_th AS first_name,
           t.last_name_th AS last_name,
           t.email,
-          t.phone
+          t.phone,
+          t.department
         FROM contracts c
         JOIN tenants t ON c.tenant_id = t.tenant_id
         WHERE c.room_id = ? AND c.status = 'active'
@@ -99,7 +100,9 @@ export async function GET(req: Request, { params }: Params) {
         last_name: c.last_name,
         email: c.email,
         phone: c.phone,
+        department: c.department,
         move_in_date: c.start_date,
+        move_out_date: c.end_date,
         status: c.status,
       }));
     } catch (error: any) {

@@ -28,18 +28,23 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
   // state สำหรับข้อมูลสถานะผู้เข้าพัก
   const [roomOccupancies, setRoomOccupancies] = useState<Map<number, RoomOccupancyInfo>>(new Map());
   
-  // state สำหรับข้อมูลผู้เข้าพักของแต่ละห้อง
-  const [roomTenants, setRoomTenants] = useState<Map<number, Array<{ first_name: string; last_name: string }>>>(new Map());
+  // state สำหรับข้อมูลผู้เข้าพักของแต่ละห้อง (พร้อม contract_id, start_date และ end_date)
+  const [roomTenants, setRoomTenants] = useState<Map<number, Array<{ first_name: string; last_name: string; contract_id?: number; start_date?: string | null; end_date?: string | null }>>>(new Map());
+  
+  // state สำหรับข้อมูล contracts (เพื่อดึง end_date)
+  const [roomContracts, setRoomContracts] = useState<Map<number, Array<{ contract_id: number; end_date: string | null; start_date?: string | null }>>>(new Map());
 
   // state สำหรับ filter
   const [selectedBuilding, setSelectedBuilding] = useState<string>('all');
   const [selectedFloor, setSelectedFloor] = useState<string>('all');
-  const [selectedStatus, setSelectedStatus] = useState<string>('all');
-  const [selectedOccupancy, setSelectedOccupancy] = useState<string>('all'); // Filter จำนวนผู้เข้าพัก
+  const [selectedStatus, setSelectedStatus] = useState<string>('all'); // รวมสถานะและจำนวนผู้เข้าพัก
 
   // state สำหรับ pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(15);
+
+  // state สำหรับเลือกมุมมอง
+  const [viewMode, setViewMode] = useState<'table' | 'floorplan'>('floorplan');
 
   // state สำหรับ modal
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -64,7 +69,9 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
       last_name: string;
       email: string | null;
       phone: string | null;
+      department: string | null;
       move_in_date: string | null;
+      move_out_date: string | null;
       status: string | null;
     }>;
     recentBills: Array<{
@@ -88,6 +95,14 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
   const [selectedTenantName, setSelectedTenantName] = useState<string>('');
   const [moveOutDate, setMoveOutDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [isMovingOut, setIsMovingOut] = useState(false);
+
+  // state สำหรับแก้ไขวันที่เข้าพัก
+  const [editingMoveInDate, setEditingMoveInDate] = useState<{ contractId: number; date: string } | null>(null);
+  const [isUpdatingMoveInDate, setIsUpdatingMoveInDate] = useState(false);
+
+  // state สำหรับแก้ไขวันที่ย้ายออก
+  const [editingMoveOutDate, setEditingMoveOutDate] = useState<{ contractId: number; date: string } | null>(null);
+  const [isUpdatingMoveOutDate, setIsUpdatingMoveOutDate] = useState(false);
 
   // ดึงข้อมูล buildings, room types, occupancy และ tenants จาก API
   useEffect(() => {
@@ -124,25 +139,46 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
           console.error('Failed to fetch occupancy:', occupancyRes.status, errorText);
         }
 
-        // จัดกลุ่มผู้เข้าพักตาม room_id
+        // จัดกลุ่มผู้เข้าพักตาม room_id และเก็บข้อมูล contracts
         if (contractsRes.ok) {
           const contractsData = await contractsRes.json();
-          const tenantsMap = new Map<number, Array<{ first_name: string; last_name: string }>>();
+          const tenantsMap = new Map<number, Array<{ first_name: string; last_name: string; contract_id?: number; start_date?: string | null; end_date?: string | null }>>();
+          const contractsMap = new Map<number, Array<{ contract_id: number; end_date: string | null; start_date?: string | null }>>();
           
           contractsData.forEach((contract: any) => {
-            if (contract.room_id && contract.first_name_th && contract.last_name_th) {
+            if (contract.room_id) {
               const roomId = contract.room_id;
-              if (!tenantsMap.has(roomId)) {
-                tenantsMap.set(roomId, []);
+              
+              // เก็บข้อมูล tenants พร้อม contract_id, start_date และ end_date
+              if (contract.first_name_th && contract.last_name_th) {
+                if (!tenantsMap.has(roomId)) {
+                  tenantsMap.set(roomId, []);
+                }
+                tenantsMap.get(roomId)!.push({
+                  first_name: contract.first_name_th,
+                  last_name: contract.last_name_th,
+                  contract_id: contract.contract_id,
+                  start_date: contract.start_date || null,
+                  end_date: contract.end_date || null,
+                });
               }
-              tenantsMap.get(roomId)!.push({
-                first_name: contract.first_name_th,
-                last_name: contract.last_name_th,
-              });
+              
+              // เก็บข้อมูล contracts (start_date และ end_date)
+              if (contract.contract_id) {
+                if (!contractsMap.has(roomId)) {
+                  contractsMap.set(roomId, []);
+                }
+                contractsMap.get(roomId)!.push({
+                  contract_id: contract.contract_id,
+                  start_date: contract.start_date || null,
+                  end_date: contract.end_date || null,
+                });
+              }
             }
           });
           
           setRoomTenants(tenantsMap);
+          setRoomContracts(contractsMap);
         }
       } catch (error) {
         console.error('Error fetching buildings/room types/occupancy/tenants:', error);
@@ -202,48 +238,35 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
         }
       }
 
-      // 3) filter สถานะ (ตรวจสอบตามจำนวนผู้เข้าพัก)
+      // 3) filter สถานะและจำนวนผู้เข้าพัก (รวมกัน)
       if (selectedStatus !== 'all') {
         const occupancy = roomOccupancies.get(r.room_id);
         const currentOccupants = occupancy?.current_occupants ?? 
           (roomTenants.get(r.room_id)?.length || 0);
-        
-        // กำหนดสถานะตามจำนวนผู้เข้าพัก
-        let displayStatus = r.status || 'available';
-        if (r.status === 'maintenance') {
-          displayStatus = 'maintenance';
-        } else if (currentOccupants > 0) {
-          displayStatus = 'occupied';
-        } else {
-          displayStatus = 'available';
-        }
-        
-        const selectedStatusLower = selectedStatus.toLowerCase().trim();
-        if (displayStatus.toLowerCase().trim() !== selectedStatusLower) {
-          return false;
-        }
-      }
-
-      // 4) filter จำนวนผู้เข้าพัก
-      if (selectedOccupancy !== 'all') {
-        const occupancy = roomOccupancies.get(r.room_id);
-        const currentOccupants = occupancy?.current_occupants ?? 
-          (roomTenants.get(r.room_id)?.length || 0);
         const maxOccupants = occupancy?.max_occupants ?? 2;
+        const isMaintenance = r.status === 'maintenance';
+        const isFull = currentOccupants >= maxOccupants;
+        const isEmpty = currentOccupants === 0;
+        const isOccupiedNotFull = currentOccupants > 0 && !isFull;
         
-        if (selectedOccupancy === 'empty') {
-          // ว่าง (0 คน)
-          if (currentOccupants !== 0) {
+        if (selectedStatus === 'maintenance') {
+          // ซ่อมบำรุง
+          if (!isMaintenance) {
             return false;
           }
-        } else if (selectedOccupancy === 'available') {
-          // มีที่ว่าง (1 ถึง max-1 คน)
-          if (currentOccupants === 0 || currentOccupants >= maxOccupants) {
+        } else if (selectedStatus === 'empty') {
+          // ว่าง (0 คน, ไม่ซ่อมบำรุง)
+          if (!isEmpty || isMaintenance) {
             return false;
           }
-        } else if (selectedOccupancy === 'full') {
-          // เต็ม (เท่ากับ max)
-          if (currentOccupants < maxOccupants) {
+        } else if (selectedStatus === 'occupied-not-full') {
+          // มีคนพักไม่เต็ม
+          if (!isOccupiedNotFull || isMaintenance) {
+            return false;
+          }
+        } else if (selectedStatus === 'full') {
+          // เต็ม
+          if (!isFull || isMaintenance) {
             return false;
           }
         }
@@ -251,12 +274,12 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
 
       return true;
     });
-  }, [rooms, selectedBuilding, selectedFloor, selectedStatus, selectedOccupancy, roomOccupancies, roomTenants]);
+  }, [rooms, selectedBuilding, selectedFloor, selectedStatus, roomOccupancies, roomTenants]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedBuilding, selectedFloor, selectedStatus, selectedOccupancy]);
+  }, [selectedBuilding, selectedFloor, selectedStatus]);
 
   // คำนวณ pagination
   const totalPages = Math.ceil(filteredRooms.length / itemsPerPage);
@@ -368,6 +391,28 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
     const floor = Math.floor(numeric / 100);
     return floor > 0 ? String(floor) : '';
   };
+
+  // จัดกลุ่มห้องตามชั้นสำหรับ floor plan view
+  const roomsByFloor = useMemo(() => {
+    const grouped = new Map<number, RoomWithDetails[]>();
+    filteredRooms.forEach((room) => {
+      if (room.floor_no != null) {
+        if (!grouped.has(room.floor_no)) {
+          grouped.set(room.floor_no, []);
+        }
+        grouped.get(room.floor_no)!.push(room);
+      }
+    });
+    // เรียงลำดับห้องในแต่ละชั้นตามหมายเลขห้อง
+    grouped.forEach((rooms, floor) => {
+      rooms.sort((a, b) => {
+        const numA = parseInt(a.room_number, 10) || 0;
+        const numB = parseInt(b.room_number, 10) || 0;
+        return numB - numA; // เรียงจากมากไปน้อย (712, 711, 710...)
+      });
+    });
+    return grouped;
+  }, [filteredRooms]);
 
   // submit ฟอร์ม (create / edit)
   const handleSubmit = async () => {
@@ -522,6 +567,117 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
     }
   };
 
+  // ฟังก์ชันตรวจสอบว่ามีผู้เช่าที่ยังไม่ถึงวันที่เข้าพักหรือไม่
+  const hasReservedTenants = (roomId: number): boolean => {
+    const tenants = roomTenants.get(roomId) || [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    return tenants.some(tenant => {
+      if (!tenant.start_date) return false;
+      try {
+        const startDate = new Date(tenant.start_date);
+        startDate.setHours(0, 0, 0, 0);
+        return startDate > today;
+      } catch {
+        return false;
+      }
+    });
+  };
+
+  // ฟังก์ชันนับจำนวนผู้เข้าพักจริง (ไม่นับผู้จองที่ยังไม่ถึงวันที่เข้าพัก)
+  const getActualOccupants = (roomId: number): number => {
+    const tenants = roomTenants.get(roomId) || [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    return tenants.filter(tenant => {
+      // ถ้าไม่มี start_date ให้นับเป็นผู้เข้าพักจริง
+      if (!tenant.start_date) return true;
+      try {
+        const startDate = new Date(tenant.start_date);
+        startDate.setHours(0, 0, 0, 0);
+        // นับเฉพาะผู้ที่ถึงวันที่เข้าพักแล้ว (start_date <= today)
+        return startDate <= today;
+      } catch {
+        return true;
+      }
+    }).length;
+  };
+
+  // ฟังก์ชันตรวจสอบว่าห้องมีทั้งผู้เข้าพักจริงและผู้จองหรือไม่
+  const hasBothActualAndReserved = (roomId: number): boolean => {
+    const actualOccupants = getActualOccupants(roomId);
+    const isReserved = hasReservedTenants(roomId);
+    return actualOccupants > 0 && isReserved;
+  };
+
+  // ฟังก์ชันกำหนดสีตามสถานะห้อง (ใช้ร่วมกันทั้ง 2 มุมมอง)
+  const getRoomStatusColor = (
+    room: RoomWithDetails,
+    currentOccupants: number,
+    maxOccupants: number,
+    roomId?: number
+  ): { bg: string; text: string; border: string } => {
+    const isMaintenance = room.status === 'maintenance';
+    const isFull = currentOccupants >= maxOccupants;
+    const isEmpty = currentOccupants === 0;
+    const isOccupiedNotFull = currentOccupants > 0 && !isFull;
+    const isReserved = roomId ? hasReservedTenants(roomId) : false;
+    const hasBoth = roomId ? hasBothActualAndReserved(roomId) : false;
+
+    if (isMaintenance) {
+      // ซ่อมบำรุง - สีส้ม
+      return {
+        bg: 'bg-orange-100',
+        text: 'text-orange-800',
+        border: 'border-orange-400',
+      };
+    } else if (hasBoth) {
+      // มีทั้งผู้เข้าพักจริงและผู้จอง - สีฟ้าอ่อน (indigo)
+      return {
+        bg: 'bg-indigo-100',
+        text: 'text-indigo-800',
+        border: 'border-indigo-400',
+      };
+    } else if (isReserved && isEmpty) {
+      // จอง (มีผู้เช่าที่ยังไม่ถึงวันที่เข้าพัก และห้องว่าง) - สีม่วง
+      return {
+        bg: 'bg-purple-100',
+        text: 'text-purple-800',
+        border: 'border-purple-400',
+      };
+    } else if (isFull) {
+      // เต็ม - สีเทา
+      return {
+        bg: 'bg-gray-200',
+        text: 'text-gray-800',
+        border: 'border-gray-400',
+      };
+    } else if (isEmpty) {
+      // ว่างไม่มีคนพัก - สีเขียว
+      return {
+        bg: 'bg-green-100',
+        text: 'text-green-800',
+        border: 'border-green-400',
+      };
+    } else if (isOccupiedNotFull) {
+      // มีคนพักไม่เต็ม - สีฟ้า
+      return {
+        bg: 'bg-blue-100',
+        text: 'text-blue-800',
+        border: 'border-blue-400',
+      };
+    } else {
+      // Default
+      return {
+        bg: 'bg-gray-50',
+        text: 'text-gray-800',
+        border: 'border-gray-300',
+      };
+    }
+  };
+
   // เปิด modal รายละเอียด
   const openDetailsModal = async (roomId: number) => {
     setSelectedRoomId(roomId);
@@ -646,16 +802,280 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
     }
   };
 
+  // เริ่มแก้ไขวันที่เข้าพัก
+  const startEditingMoveInDate = (contractId: number, currentDate: string | null) => {
+    setEditingMoveInDate({
+      contractId,
+      date: currentDate ? new Date(currentDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+    });
+  };
+
+  // ยกเลิกการแก้ไขวันที่เข้าพัก
+  const cancelEditingMoveInDate = () => {
+    setEditingMoveInDate(null);
+  };
+
+  // บันทึกวันที่เข้าพักใหม่
+  const saveMoveInDate = async (contractId: number, newDate: string) => {
+    if (!newDate) {
+      alert('กรุณาเลือกวันที่เข้าพัก');
+      return;
+    }
+
+    setIsUpdatingMoveInDate(true);
+    try {
+      const res = await fetch(`/api/contracts/${contractId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ start_date: newDate }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'ไม่สามารถอัปเดตวันที่เข้าพักได้');
+      }
+
+      // Refresh ข้อมูลห้อง
+      if (selectedRoomId) {
+        const detailsRes = await fetch(`/api/rooms/${selectedRoomId}/details`);
+        if (detailsRes.ok) {
+          const data = await detailsRes.json();
+          setRoomDetails(data);
+        }
+      }
+
+      // Refresh ข้อมูล occupancy, tenants และ contracts
+      const [occupancyRes, contractsRes] = await Promise.all([
+        fetch('/api/rooms/occupancy'),
+        fetch('/api/contracts?status=active'),
+      ]);
+      
+      if (occupancyRes.ok) {
+        const occupancyData = await occupancyRes.json();
+        const occupancyMap = new Map<number, RoomOccupancyInfo>();
+        occupancyData.forEach((occ: RoomOccupancyInfo) => {
+          occupancyMap.set(occ.room_id, occ);
+        });
+        setRoomOccupancies(occupancyMap);
+      }
+      
+      if (contractsRes.ok) {
+        const contractsData = await contractsRes.json();
+        const tenantsMap = new Map<number, Array<{ first_name: string; last_name: string; contract_id?: number; start_date?: string | null; end_date?: string | null }>>();
+        const contractsMap = new Map<number, Array<{ contract_id: number; end_date: string | null; start_date?: string | null }>>();
+        
+        contractsData.forEach((contract: any) => {
+          if (contract.room_id) {
+            const roomId = contract.room_id;
+            
+            if (contract.first_name_th && contract.last_name_th) {
+              if (!tenantsMap.has(roomId)) {
+                tenantsMap.set(roomId, []);
+              }
+              tenantsMap.get(roomId)!.push({
+                first_name: contract.first_name_th,
+                last_name: contract.last_name_th,
+                contract_id: contract.contract_id,
+                start_date: contract.start_date || null,
+                end_date: contract.end_date || null,
+              });
+            }
+            
+            if (contract.contract_id) {
+              if (!contractsMap.has(roomId)) {
+                contractsMap.set(roomId, []);
+              }
+              contractsMap.get(roomId)!.push({
+                contract_id: contract.contract_id,
+                start_date: contract.start_date || null,
+                end_date: contract.end_date || null,
+              });
+            }
+          }
+        });
+        
+        setRoomTenants(tenantsMap);
+        setRoomContracts(contractsMap);
+      }
+
+      setEditingMoveInDate(null);
+      alert('อัปเดตวันที่เข้าพักสำเร็จ');
+    } catch (error: any) {
+      console.error('Error updating move-in date:', error);
+      alert(`ไม่สามารถอัปเดตวันที่เข้าพักได้: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsUpdatingMoveInDate(false);
+    }
+  };
+
+  // เริ่มแก้ไขวันที่ย้ายออก
+  const startEditingMoveOutDate = (contractId: number, currentDate: string | null) => {
+    setEditingMoveOutDate({
+      contractId,
+      date: currentDate ? new Date(currentDate).toISOString().slice(0, 10) : '',
+    });
+  };
+
+  // ยกเลิกการแก้ไขวันที่ย้ายออก
+  const cancelEditingMoveOutDate = () => {
+    setEditingMoveOutDate(null);
+  };
+
+  // บันทึกวันที่ย้ายออกใหม่
+  const saveMoveOutDate = async (contractId: number, newDate: string | null) => {
+    setIsUpdatingMoveOutDate(true);
+    try {
+      const res = await fetch(`/api/contracts/${contractId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ end_date: newDate || null }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'ไม่สามารถอัปเดตวันที่ย้ายออกได้');
+      }
+
+      // Refresh ข้อมูลห้อง
+      if (selectedRoomId) {
+        const detailsRes = await fetch(`/api/rooms/${selectedRoomId}/details`);
+        if (detailsRes.ok) {
+          const data = await detailsRes.json();
+          setRoomDetails(data);
+        }
+      }
+
+      // Refresh ข้อมูล occupancy, tenants และ contracts
+      const [occupancyRes, contractsRes] = await Promise.all([
+        fetch('/api/rooms/occupancy'),
+        fetch('/api/contracts?status=active'),
+      ]);
+      
+      if (occupancyRes.ok) {
+        const occupancyData = await occupancyRes.json();
+        const occupancyMap = new Map<number, RoomOccupancyInfo>();
+        occupancyData.forEach((occ: RoomOccupancyInfo) => {
+          occupancyMap.set(occ.room_id, occ);
+        });
+        setRoomOccupancies(occupancyMap);
+      }
+      
+      if (contractsRes.ok) {
+        const contractsData = await contractsRes.json();
+        const tenantsMap = new Map<number, Array<{ first_name: string; last_name: string; contract_id?: number; start_date?: string | null; end_date?: string | null }>>();
+        const contractsMap = new Map<number, Array<{ contract_id: number; end_date: string | null; start_date?: string | null }>>();
+        
+        contractsData.forEach((contract: any) => {
+          if (contract.room_id) {
+            const roomId = contract.room_id;
+            
+            if (contract.first_name_th && contract.last_name_th) {
+              if (!tenantsMap.has(roomId)) {
+                tenantsMap.set(roomId, []);
+              }
+              tenantsMap.get(roomId)!.push({
+                first_name: contract.first_name_th,
+                last_name: contract.last_name_th,
+                contract_id: contract.contract_id,
+                start_date: contract.start_date || null,
+                end_date: contract.end_date || null,
+              });
+            }
+            
+            if (contract.contract_id) {
+              if (!contractsMap.has(roomId)) {
+                contractsMap.set(roomId, []);
+              }
+              contractsMap.get(roomId)!.push({
+                contract_id: contract.contract_id,
+                start_date: contract.start_date || null,
+                end_date: contract.end_date || null,
+              });
+            }
+          }
+        });
+        
+        setRoomTenants(tenantsMap);
+        setRoomContracts(contractsMap);
+      }
+
+      setEditingMoveOutDate(null);
+      alert('อัปเดตวันที่ย้ายออกสำเร็จ');
+    } catch (error: any) {
+      console.error('Error updating move-out date:', error);
+      alert(`ไม่สามารถอัปเดตวันที่ย้ายออกได้: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsUpdatingMoveOutDate(false);
+    }
+  };
+
+  // ฟังก์ชันคำนวณสีตามวันที่ย้ายออก (ล่วงหน้า 1 สัปดาห์)
+  const getMoveOutDateColor = (endDate: string | null): { bg: string; text: string; border: string } | null => {
+    if (!endDate) return null;
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const moveOutDate = new Date(endDate);
+    moveOutDate.setHours(0, 0, 0, 0);
+    
+    const diffTime = moveOutDate.getTime() - today.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    // ถ้าเลยกำหนดแล้ว
+    if (diffDays < 0) {
+      return {
+        bg: 'bg-red-200',
+        text: 'text-red-800',
+        border: 'border-red-400',
+      };
+    }
+    
+    // ถ้าเหลือไม่เกิน 7 วัน (1 สัปดาห์)
+    if (diffDays <= 7) {
+      return {
+        bg: 'bg-yellow-200',
+        text: 'text-yellow-800',
+        border: 'border-yellow-400',
+      };
+    }
+    
+    return null;
+  };
+
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-gray-800">จัดการห้องพัก</h1>
-        <button
-          onClick={openCreateModal}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-        >
-          เพิ่มห้องพัก
-        </button>
+        <div className="flex gap-2">
+          <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-300 p-1">
+            <button
+              onClick={() => setViewMode('table')}
+              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                viewMode === 'table'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              📋 ตาราง
+            </button>
+            <button
+              onClick={() => setViewMode('floorplan')}
+              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                viewMode === 'floorplan'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              🏢 แผนผัง
+            </button>
+          </div>
+          <button
+            onClick={openCreateModal}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+          >
+            เพิ่มห้องพัก
+          </button>
+        </div>
       </div>
 
       {/* แถว filter */}
@@ -696,70 +1116,60 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
           </select>
         </div>
 
-
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            สถานะ
+            สถานะห้อง
           </label>
           <select
             className="border rounded-md px-3 py-2 text-sm"
             value={selectedStatus}
             onChange={(e) => setSelectedStatus(e.target.value)}
-          >
-            <option value="all">ทั้งหมด</option>
-            <option value="available">ว่าง (available)</option>
-            <option value="occupied">มีผู้เช่า (occupied)</option>
-            <option value="maintenance">ซ่อมบำรุง (maintenance)</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            จำนวนผู้เข้าพัก
-          </label>
-          <select
-            className="border rounded-md px-3 py-2 text-sm"
-            value={selectedOccupancy}
-            onChange={(e) => setSelectedOccupancy(e.target.value)}
             style={{
-              color: selectedOccupancy === 'empty' ? '#6b7280' : 
-                     selectedOccupancy === 'available' ? '#16a34a' : 
-                     selectedOccupancy === 'full' ? '#dc2626' : 
+              color: selectedStatus === 'empty' ? '#16a34a' : 
+                     selectedStatus === 'occupied-not-full' ? '#2563eb' : 
+                     selectedStatus === 'full' ? '#6b7280' : 
+                     selectedStatus === 'maintenance' ? '#ea580c' : 
                      '#374151'
             }}
           >
             <option value="all">ทั้งหมด</option>
-            <option value="empty">⚪ ว่าง (0 คน)</option>
-            <option value="available">🟢 มีที่ว่าง</option>
-            <option value="full">🔴 เต็ม</option>
+            <option value="empty">🟢 ว่าง (ไม่มีคนพัก)</option>
+            <option value="occupied-not-full">🔵 มีคนพักไม่เต็ม</option>
+            <option value="full">⚫ เต็ม</option>
+            <option value="maintenance">🟠 ซ่อมบำรุง</option>
           </select>
         </div>
       </div>
 
-      {/* ตัวเลือกแสดงผลและข้อมูลสรุป */}
-      <div className="bg-white shadow rounded-lg p-4 mb-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="text-sm text-gray-700">
-          แสดง {startIndex + 1} - {Math.min(endIndex, filteredRooms.length)} จาก {filteredRooms.length} รายการ
+      {/* ตัวเลือกแสดงผลและข้อมูลสรุป - แสดงเฉพาะในมุมมองตาราง */}
+      {viewMode === 'table' && (
+        <div className="bg-white shadow rounded-lg p-4 mb-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="text-sm text-gray-700">
+            แสดง {startIndex + 1} - {Math.min(endIndex, filteredRooms.length)} จาก {filteredRooms.length} รายการ
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-gray-700">แสดงต่อหน้า:</label>
+            <select
+              className="border rounded-md px-3 py-1 text-sm"
+              value={itemsPerPage}
+              onChange={(e) => {
+                setItemsPerPage(Number(e.target.value));
+                setCurrentPage(1); // Reset to first page when changing items per page
+              }}
+            >
+              <option value={15}>15</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-700">แสดงต่อหน้า:</label>
-          <select
-            className="border rounded-md px-3 py-1 text-sm"
-            value={itemsPerPage}
-            onChange={(e) => {
-              setItemsPerPage(Number(e.target.value));
-              setCurrentPage(1); // Reset to first page when changing items per page
-            }}
-          >
-            <option value={15}>15</option>
-            <option value={50}>50</option>
-            <option value={100}>100</option>
-          </select>
-        </div>
-      </div>
+      )}
 
-      {/* ตารางห้องพัก */}
-      <div className="bg-white shadow rounded-lg overflow-hidden">
+      {/* แสดงตามมุมมองที่เลือก */}
+      {viewMode === 'table' ? (
+        <>
+          {/* ตารางห้องพัก */}
+          <div className="bg-white shadow rounded-lg overflow-hidden">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
@@ -815,35 +1225,40 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   {(() => {
-                    // ตรวจสอบจำนวนผู้เข้าพัก
+                    // ตรวจสอบจำนวนผู้เข้าพักจริง (ไม่นับผู้จอง)
                     const occupancy = roomOccupancies.get(room.room_id);
-                    const currentOccupants = occupancy?.current_occupants ?? 
-                      (roomTenants.get(room.room_id)?.length || 0);
+                    const actualOccupants = getActualOccupants(room.room_id);
+                    const maxOccupants = occupancy?.max_occupants ?? 2;
                     
-                    // กำหนดสถานะตามจำนวนผู้เข้าพัก
-                    let displayStatus = room.status;
+                    // ตรวจสอบว่ามีผู้เช่าที่ยังไม่ถึงวันที่เข้าพักหรือไม่
+                    const isReserved = hasReservedTenants(room.room_id);
+                    
+                    // กำหนดสถานะตามจำนวนผู้เข้าพักจริง
+                    let displayStatus: 'available' | 'occupied' | 'maintenance' | 'full' | 'reserved' = room.status || 'available';
                     if (room.status === 'maintenance') {
                       // ถ้าเป็น maintenance ให้คงสถานะ maintenance
                       displayStatus = 'maintenance';
-                    } else if (currentOccupants > 0) {
-                      // ถ้ามีผู้เข้าพัก → แสดงเป็น occupied
+                    } else if (actualOccupants >= maxOccupants) {
+                      // เต็ม
+                      displayStatus = 'full';
+                    } else if (actualOccupants > 0) {
+                      // ถ้ามีผู้เข้าพักจริงแต่ไม่เต็ม → แสดงเป็น occupied
                       displayStatus = 'occupied';
+                    } else if (isReserved) {
+                      // ถ้าไม่มีผู้เข้าพักจริงแต่มีผู้จอง → แสดงเป็น reserved
+                      displayStatus = 'reserved';
                     } else {
                       // ถ้าไม่มีผู้เข้าพัก → แสดงเป็น available
                       displayStatus = 'available';
                     }
                     
+                    const colors = getRoomStatusColor(room, actualOccupants, maxOccupants, room.room_id);
+                    
                     return (
                   <span
-                    className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                          displayStatus === 'available'
-                        ? 'bg-green-100 text-green-800'
-                            : displayStatus === 'occupied'
-                        ? 'bg-blue-100 text-blue-800'
-                        : 'bg-gray-100 text-gray-800'
-                    }`}
+                    className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${colors.bg} ${colors.text}`}
                   >
-                        {getStatusThai(displayStatus)}
+                        {displayStatus === 'full' ? 'เต็ม' : displayStatus === 'reserved' ? 'จอง' : getStatusThai(displayStatus)}
                   </span>
                     );
                   })()}
@@ -851,45 +1266,30 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
                   {(() => {
                     const occupancy = roomOccupancies.get(room.room_id);
+                    const actualOccupants = getActualOccupants(room.room_id);
                     // ถ้าไม่มี occupancy data แต่มี tenant names ให้คำนวณจาก tenant names
                     if (!occupancy) {
                       const tenants = roomTenants.get(room.room_id);
                       if (tenants && tenants.length > 0) {
                         // ใช้ default max_occupants = 2 ถ้าไม่มีข้อมูล occupancy
-                        const currentCount = tenants.length;
                         const maxOccupants = 2; // default
-                        const isFull = currentCount >= maxOccupants;
+                        const colors = getRoomStatusColor(room, actualOccupants, maxOccupants, room.room_id);
                         return (
                           <span
-                            className={`font-medium ${
-                              isFull
-                                ? 'text-red-600'
-                                : 'text-green-600'
-                            }`}
+                            className={`font-medium ${colors.text}`}
                           >
-                            {currentCount} / {maxOccupants}
-                            {isFull && <span className="ml-1">🔴</span>}
-                            {!isFull && <span className="ml-1">🟢</span>}
+                            {actualOccupants} / {maxOccupants}
                           </span>
                         );
                       }
                       return <span className="text-gray-400">-</span>;
                     }
-                    const isFull = occupancy.current_occupants >= occupancy.max_occupants;
-                    const isEmpty = occupancy.current_occupants === 0;
+                    const colors = getRoomStatusColor(room, actualOccupants, occupancy.max_occupants, room.room_id);
                     return (
                       <span
-                        className={`font-medium ${
-                          isFull
-                            ? 'text-red-600'
-                            : isEmpty
-                            ? 'text-gray-500'
-                            : 'text-green-600'
-                        }`}
+                        className={`font-medium ${colors.text}`}
                       >
-                        {occupancy.current_occupants} / {occupancy.max_occupants}
-                        {isFull && <span className="ml-1">🔴</span>}
-                        {!isFull && !isEmpty && <span className="ml-1">🟢</span>}
+                        {actualOccupants} / {occupancy.max_occupants}
                       </span>
                     );
                   })()}
@@ -900,11 +1300,19 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                     if (!tenants || tenants.length === 0) {
                       return <span className="text-gray-400">-</span>;
                     }
+                    const occupancy = roomOccupancies.get(room.room_id);
+                    const currentOccupants = occupancy?.current_occupants ?? tenants.length;
+                    const maxOccupants = occupancy?.max_occupants ?? 2;
+                    const colors = getRoomStatusColor(room, currentOccupants, maxOccupants, room.room_id);
+                    // ใช้สีเดียวกับ text color ของ badge สถานะ โดยแปลงเป็น bg color สำหรับวงกลม
+                    // เพื่อให้สีตรงกับ badge สถานะ (text-orange-800 -> bg-orange-800)
+                    const circleColor = colors.text.replace('text-', 'bg-');
                     return (
                       <div className="space-y-1">
                         {tenants.map((tenant, index) => (
-                          <div key={index} className="truncate">
-                            {tenant.first_name} {tenant.last_name}
+                          <div key={index} className="flex items-center gap-2 truncate">
+                            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${circleColor}`}></span>
+                            <span className="truncate">{tenant.first_name} {tenant.last_name}</span>
                           </div>
                         ))}
                       </div>
@@ -958,60 +1366,361 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
         </table>
       </div>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="bg-white shadow rounded-lg p-4 mt-4">
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={goToPrevious}
-                disabled={currentPage === 1}
-                className={`px-3 py-2 rounded-md text-sm font-medium ${
-                  currentPage === 1
-                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                ก่อนหน้า
-              </button>
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="bg-white shadow rounded-lg p-4 mt-4">
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={goToPrevious}
+                    disabled={currentPage === 1}
+                    className={`px-3 py-2 rounded-md text-sm font-medium ${
+                      currentPage === 1
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    ก่อนหน้า
+                  </button>
 
-              <div className="flex items-center gap-1">
-                {getPageNumbers().map((page, index) => {
-                  if (page === '...') {
-                    return (
-                      <span key={`ellipsis-${index}`} className="px-2 text-gray-500">
-                        ...
-                      </span>
-                    );
-                  }
-                  const pageNum = page as number;
-                  return (
-                    <button
-                      key={pageNum}
-                      onClick={() => goToPage(pageNum)}
-                      className={`px-3 py-2 rounded-md text-sm font-medium ${
-                        currentPage === pageNum
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                      }`}
-                    >
-                      {pageNum}
-                    </button>
-                  );
-                })}
+                  <div className="flex items-center gap-1">
+                    {getPageNumbers().map((page, index) => {
+                      if (page === '...') {
+                        return (
+                          <span key={`ellipsis-${index}`} className="px-2 text-gray-500">
+                            ...
+                          </span>
+                        );
+                      }
+                      const pageNum = page as number;
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => goToPage(pageNum)}
+                          className={`px-3 py-2 rounded-md text-sm font-medium ${
+                            currentPage === pageNum
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    onClick={goToNext}
+                    disabled={currentPage === totalPages}
+                    className={`px-3 py-2 rounded-md text-sm font-medium ${
+                      currentPage === totalPages
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    ถัดไป
+                  </button>
+                </div>
               </div>
+            </div>
+          )}
+        </>
+      ) : (
+        /* Floor Plan View */
+        <div className="space-y-3">
+          {Array.from(roomsByFloor.entries())
+            .sort(([a], [b]) => b - a) // เรียงชั้นจากมากไปน้อย (7, 6, 5, 4, 3...)
+            .map(([floor, floorRooms]) => {
+              // จัดกลุ่มห้องตามหลักร้อย (700s, 600s, 500s...)
+              const roomGroups = new Map<number, RoomWithDetails[]>();
+              floorRooms.forEach((room) => {
+                const roomNum = parseInt(room.room_number, 10);
+                if (!isNaN(roomNum)) {
+                  const hundred = Math.floor(roomNum / 100) * 100;
+                  if (!roomGroups.has(hundred)) {
+                    roomGroups.set(hundred, []);
+                  }
+                  roomGroups.get(hundred)!.push(room);
+                }
+              });
 
-              <button
-                onClick={goToNext}
-                disabled={currentPage === totalPages}
-                className={`px-3 py-2 rounded-md text-sm font-medium ${
-                  currentPage === totalPages
-                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                ถัดไป
-              </button>
+              return (
+                <div key={floor} className="bg-white shadow rounded-lg p-4">
+                  <h2 className="text-xl font-bold text-gray-800 mb-2">
+                    ชั้น {floor}
+                  </h2>
+                  {Array.from(roomGroups.entries())
+                    .sort(([a], [b]) => b - a) // เรียงกลุ่มจากมากไปน้อย
+                    .map(([hundred, groupRooms]) => (
+                      <div key={hundred} className="mb-3">
+                        <div className="grid grid-cols-12 gap-2">
+                          {groupRooms.map((room) => {
+                            const tenants = roomTenants.get(room.room_id) || [];
+                            const contracts = roomContracts.get(room.room_id) || [];
+                            const occupancy = roomOccupancies.get(room.room_id);
+                            const actualOccupants = getActualOccupants(room.room_id);
+                            const maxOccupants = occupancy?.max_occupants ?? 2;
+                            
+                            // ใช้ฟังก์ชันเดียวกันกับ table view
+                            let colors = getRoomStatusColor(room, actualOccupants, maxOccupants, room.room_id);
+                            
+                            // ตรวจสอบ end_date ของผู้เช่า - ถ้ามี end_date ที่ใกล้ครบกำหนด (ภายใน 1 สัปดาห์) ให้เปลี่ยนสี
+                            const hasNearEndDate = contracts.some(c => {
+                              if (!c.end_date) return false;
+                              const colorInfo = getMoveOutDateColor(c.end_date);
+                              return colorInfo !== null;
+                            });
+                            
+                            if (hasNearEndDate) {
+                              // หา end_date ที่ใกล้ที่สุด
+                              const nearestEndDate = contracts
+                                .filter(c => c.end_date)
+                                .map(c => new Date(c.end_date!))
+                                .sort((a, b) => a.getTime() - b.getTime())[0];
+                              
+                              if (nearestEndDate) {
+                                const colorInfo = getMoveOutDateColor(nearestEndDate.toISOString().slice(0, 10));
+                                if (colorInfo) {
+                                  colors = colorInfo;
+                                }
+                              }
+                            }
+
+                            return (
+                              <div
+                                key={room.room_id}
+                                className={`${colors.bg} ${colors.border} border-2 rounded-lg p-2 cursor-pointer hover:shadow-lg transition-all min-h-[80px]`}
+                                onClick={() => openDetailsModal(room.room_id)}
+                                title={`ห้อง ${room.room_number} - ${tenants.length > 0 ? tenants.map(t => `${t.first_name} ${t.last_name}`).join(', ') : (room.status === 'maintenance' ? 'ซ่อมบำรุง' : 'ว่าง')}${contracts.some(c => c.end_date) ? ` - ครบกำหนดย้ายออก: ${contracts.filter(c => c.end_date).map(c => formatDate(c.end_date!)).join(', ')}` : ''}`}
+                              >
+                                <div className="text-xs font-bold text-gray-800 mb-1.5 text-center border-b border-gray-300 pb-1">
+                                  {room.room_number}
+                                </div>
+                                <div className="space-y-1">
+                                  {(() => {
+                                    const today = new Date();
+                                    today.setHours(0, 0, 0, 0);
+                                    
+                                    // แยกผู้เข้าพักจริงกับผู้จอง
+                                    const actualTenants = tenants.filter(tenant => {
+                                      if (!tenant.start_date) return true;
+                                      try {
+                                        const startDate = new Date(tenant.start_date);
+                                        startDate.setHours(0, 0, 0, 0);
+                                        return startDate <= today;
+                                      } catch {
+                                        return true;
+                                      }
+                                    });
+                                    
+                                    const reservedTenants = tenants.filter(tenant => {
+                                      if (!tenant.start_date) return false;
+                                      try {
+                                        const startDate = new Date(tenant.start_date);
+                                        startDate.setHours(0, 0, 0, 0);
+                                        return startDate > today;
+                                      } catch {
+                                        return false;
+                                      }
+                                    });
+                                    
+                                    if (actualTenants.length > 0) {
+                                      // แสดงผู้เข้าพักจริง
+                                      return (
+                                        <>
+                                          {actualTenants.slice(0, 2).map((tenant, idx) => {
+                                            // ตรวจสอบว่า tenant นี้มี end_date ที่ใกล้ครบกำหนดหรือไม่
+                                            const hasNearEndDate = tenant.end_date ? (() => {
+                                              const colorInfo = getMoveOutDateColor(tenant.end_date);
+                                              return colorInfo !== null;
+                                            })() : false;
+                                            
+                                            return (
+                                              <div
+                                                key={idx}
+                                                className={`text-[10px] truncate leading-tight ${
+                                                  hasNearEndDate 
+                                                    ? 'text-red-800 font-semibold' 
+                                                    : 'text-gray-700'
+                                                }`}
+                                              >
+                                                {tenant.first_name} {tenant.last_name}
+                                              </div>
+                                            );
+                                          })}
+                                          {actualTenants.length > 2 && (
+                                            <div className="text-[9px] text-gray-500 text-center">
+                                              +{actualTenants.length - 2} คน
+                                            </div>
+                                          )}
+                                          {/* แสดงผู้จองถ้ามี */}
+                                          {reservedTenants.length > 0 && (
+                                            <>
+                                              <div className="text-[9px] text-purple-600 text-center font-medium mt-1 pt-1 border-t border-purple-200">
+                                                (จอง)
+                                              </div>
+                                              {reservedTenants.slice(0, 2).map((tenant, idx) => (
+                                                <div
+                                                  key={`reserved-${idx}`}
+                                                  className="text-[10px] truncate leading-tight text-purple-700 font-semibold"
+                                                >
+                                                  {tenant.first_name} {tenant.last_name}
+                                                </div>
+                                              ))}
+                                              {reservedTenants.length > 2 && (
+                                                <div className="text-[9px] text-purple-500 text-center">
+                                                  +{reservedTenants.length - 2} คน
+                                                </div>
+                                              )}
+                                            </>
+                                          )}
+                                        </>
+                                      );
+                                    } else if (reservedTenants.length > 0) {
+                                      // แสดงผู้จอง
+                                      return (
+                                        <>
+                                          {reservedTenants.slice(0, 2).map((tenant, idx) => (
+                                            <div
+                                              key={idx}
+                                              className="text-[10px] truncate leading-tight text-purple-700 font-semibold"
+                                            >
+                                              {tenant.first_name} {tenant.last_name}
+                                            </div>
+                                          ))}
+                                          {reservedTenants.length > 2 && (
+                                            <div className="text-[9px] text-purple-500 text-center">
+                                              +{reservedTenants.length - 2} คน
+                                            </div>
+                                          )}
+                                          <div className="text-[9px] text-purple-600 text-center font-medium">
+                                            (จอง)
+                                          </div>
+                                        </>
+                                      );
+                                    } else {
+                                      // ไม่มีผู้เข้าพักและผู้จอง
+                                      return (
+                                        <div className="text-[10px] text-center italic">
+                                          {room.status === 'maintenance' ? (
+                                            <span className="text-orange-700 font-medium">ซ่อมบำรุง</span>
+                                          ) : (
+                                            <span className="text-gray-400">ว่าง</span>
+                                          )}
+                                        </div>
+                                      );
+                                    }
+                                  })()}
+                                </div>
+                                {actualOccupants > 0 && (
+                                  <div className="text-[9px] text-gray-600 text-center mt-1 pt-1 border-t border-gray-200">
+                                    {actualOccupants}/{maxOccupants}
+                                  </div>
+                                )}
+                                {(() => {
+                                  const nearEndContracts = contracts.filter(c => {
+                                    if (!c.end_date) return false;
+                                    const colorInfo = getMoveOutDateColor(c.end_date);
+                                    return colorInfo !== null;
+                                  });
+                                  
+                                  if (nearEndContracts.length > 0) {
+                                    const nearestEndDate = nearEndContracts
+                                      .map(c => new Date(c.end_date!))
+                                      .sort((a, b) => a.getTime() - b.getTime())[0];
+                                    
+                                    const today = new Date();
+                                    today.setHours(0, 0, 0, 0);
+                                    const diffTime = nearestEndDate.getTime() - today.getTime();
+                                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                    
+                                    return (
+                                      <div className="text-[9px] text-center mt-1 pt-1 border-t border-gray-200">
+                                        {diffDays < 0 ? (
+                                          <span className="text-red-700 font-semibold">⚠️ เกินกำหนด</span>
+                                        ) : diffDays <= 7 ? (
+                                          <span className="text-yellow-700 font-semibold">⚠️ เหลือ {diffDays} วัน</span>
+                                        ) : null}
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                })()}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              );
+            })}
+          {roomsByFloor.size === 0 && (
+            <div className="bg-white shadow rounded-lg p-8 text-center text-gray-500">
+              ไม่พบข้อมูลห้องพัก
+            </div>
+          )}
+          
+          {/* แถบอธิบายสีและความหมายของสถานะห้อง */}
+          <div className="bg-white shadow rounded-lg p-4 mt-4">
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">คำอธิบายสีและสถานะห้อง</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded border-2 border-green-400 bg-green-100 flex-shrink-0"></div>
+                <div>
+                  <p className="text-xs font-medium text-gray-800">ว่าง</p>
+                  <p className="text-[10px] text-gray-500">ไม่มีผู้เข้าพัก</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded border-2 border-purple-400 bg-purple-100 flex-shrink-0"></div>
+                <div>
+                  <p className="text-xs font-medium text-gray-800">จอง</p>
+                  <p className="text-[10px] text-gray-500">มีผู้จอง</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded border-2 border-blue-400 bg-blue-100 flex-shrink-0"></div>
+                <div>
+                  <p className="text-xs font-medium text-gray-800">มีคนพัก</p>
+                  <p className="text-[10px] text-gray-500">ไม่เต็ม</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded border-2 border-indigo-400 bg-indigo-100 flex-shrink-0"></div>
+                <div>
+                  <p className="text-xs font-medium text-gray-800">มีคนพัก+จอง</p>
+                  <p className="text-[10px] text-gray-500">มีทั้งผู้เข้าพักและผู้จอง</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded border-2 border-gray-400 bg-gray-200 flex-shrink-0"></div>
+                <div>
+                  <p className="text-xs font-medium text-gray-800">เต็ม</p>
+                  <p className="text-[10px] text-gray-500">เต็มความจุ</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded border-2 border-orange-400 bg-orange-100 flex-shrink-0"></div>
+                <div>
+                  <p className="text-xs font-medium text-gray-800">ซ่อมบำรุง</p>
+                  <p className="text-[10px] text-gray-500">อยู่ระหว่างซ่อม</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded border-2 border-yellow-400 bg-yellow-200 flex-shrink-0"></div>
+                <div>
+                  <p className="text-xs font-medium text-gray-800">ใกล้ย้ายออก</p>
+                  <p className="text-[10px] text-gray-500">เหลือ ≤ 7 วัน</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded border-2 border-red-400 bg-red-200 flex-shrink-0"></div>
+                <div>
+                  <p className="text-xs font-medium text-gray-800">เกินกำหนด</p>
+                  <p className="text-[10px] text-gray-500">เลยกำหนดย้ายออก</p>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1184,27 +1893,56 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                     <div>
                       <p className="text-sm text-gray-600">สถานะ</p>
                       {(() => {
-                        // กำหนดสถานะตามจำนวนผู้เข้าพัก
-                        let displayStatus = roomDetails.room?.status || 'available';
-                        if (roomDetails.room?.status === 'maintenance') {
+                        if (!roomDetails.room) return '-';
+                        
+                        // ตรวจสอบว่ามีผู้เช่าที่ยังไม่ถึงวันที่เข้าพักหรือไม่
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
+                        const hasReserved = roomDetails.tenants?.some(tenant => {
+                          if (!tenant.move_in_date) return false;
+                          try {
+                            const startDate = new Date(tenant.move_in_date);
+                            startDate.setHours(0, 0, 0, 0);
+                            return startDate > today;
+                          } catch {
+                            return false;
+                          }
+                        }) || false;
+                        
+                        // นับจำนวนผู้เข้าพักจริง (ไม่นับผู้จอง)
+                        const actualOccupants = roomDetails.tenants?.filter(tenant => {
+                          if (!tenant.move_in_date) return true;
+                          try {
+                            const startDate = new Date(tenant.move_in_date);
+                            startDate.setHours(0, 0, 0, 0);
+                            return startDate <= today;
+                          } catch {
+                            return true;
+                          }
+                        }).length || 0;
+                        
+                        const maxOccupants = roomDetails.occupancy?.max_occupants ?? 2;
+                        
+                        let displayStatus: 'available' | 'occupied' | 'maintenance' | 'full' | 'reserved' = roomDetails.room.status || 'available';
+                        if (roomDetails.room.status === 'maintenance') {
                           displayStatus = 'maintenance';
-                        } else if (roomDetails.occupancy && roomDetails.occupancy.current_occupants > 0) {
+                        } else if (actualOccupants >= maxOccupants) {
+                          displayStatus = 'full';
+                        } else if (actualOccupants > 0) {
                           displayStatus = 'occupied';
+                        } else if (hasReserved) {
+                          displayStatus = 'reserved';
                         } else {
                           displayStatus = 'available';
                         }
                         
+                        const colors = getRoomStatusColor(roomDetails.room, actualOccupants, maxOccupants, roomDetails.room?.room_id);
+                        
                         return (
                           <span
-                            className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                              displayStatus === 'available'
-                                ? 'bg-green-100 text-green-800'
-                                : displayStatus === 'occupied'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-gray-100 text-gray-800'
-                            }`}
+                            className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${colors.bg} ${colors.text}`}
                           >
-                            {getStatusThai(displayStatus)}
+                            {displayStatus === 'full' ? 'เต็ม' : displayStatus === 'reserved' ? 'จอง' : getStatusThai(displayStatus)}
                           </span>
                         );
                       })()}
@@ -1213,27 +1951,35 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                       <div>
                         <p className="text-sm text-gray-600">จำนวนผู้เข้าพัก</p>
                         <p className="font-medium">
-                          <span
-                            className={
-                              roomDetails.occupancy.current_occupants >=
-                              roomDetails.occupancy.max_occupants
-                                ? 'text-red-600'
-                                : roomDetails.occupancy.current_occupants === 0
-                                ? 'text-gray-500'
-                                : 'text-green-600'
-                            }
-                          >
-                            {roomDetails.occupancy.current_occupants} / {roomDetails.occupancy.max_occupants}
-                          </span>
-                          {roomDetails.occupancy.current_occupants >=
-                            roomDetails.occupancy.max_occupants && (
-                            <span className="ml-1">🔴</span>
-                          )}
-                          {roomDetails.occupancy.current_occupants > 0 &&
-                            roomDetails.occupancy.current_occupants <
-                              roomDetails.occupancy.max_occupants && (
-                              <span className="ml-1">🟢</span>
-                            )}
+                          {(() => {
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+                            const actualOccupants = roomDetails.tenants?.filter(tenant => {
+                              if (!tenant.move_in_date) return true;
+                              try {
+                                const startDate = new Date(tenant.move_in_date);
+                                startDate.setHours(0, 0, 0, 0);
+                                return startDate <= today;
+                              } catch {
+                                return true;
+                              }
+                            }).length || 0;
+                            const maxOccupants = roomDetails.occupancy.max_occupants;
+                            const colors = getRoomStatusColor(roomDetails.room!, actualOccupants, maxOccupants, roomDetails.room?.room_id);
+                            return (
+                              <>
+                                <span className={colors.text}>
+                                  {actualOccupants} / {maxOccupants}
+                                </span>
+                                {actualOccupants >= maxOccupants && (
+                                  <span className="ml-1">🔴</span>
+                                )}
+                                {actualOccupants > 0 && actualOccupants < maxOccupants && (
+                                  <span className="ml-1">🟢</span>
+                                )}
+                              </>
+                            );
+                          })()}
                         </p>
                       </div>
                     )}
@@ -1277,8 +2023,8 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                               </p>
                             </div>
                             <div>
-                              <p className="text-sm text-gray-600">อีเมล</p>
-                              <p className="font-medium">{tenant.email || '-'}</p>
+                              <p className="text-sm text-gray-600">หน่วยงาน</p>
+                              <p className="font-medium">{tenant.department || '-'}</p>
                             </div>
                             <div>
                               <p className="text-sm text-gray-600">เบอร์โทร</p>
@@ -1286,9 +2032,46 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                             </div>
                             <div>
                               <p className="text-sm text-gray-600">วันที่เข้าพัก</p>
-                              <p className="font-medium">
-                                  ตั้งแต่ {formatDate(tenant.move_in_date)}
-                              </p>
+                              {editingMoveInDate?.contractId === tenant.contract_id ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="date"
+                                    className="border rounded-md px-2 py-1 text-sm"
+                                    value={editingMoveInDate?.date || ''}
+                                    onChange={(e) => editingMoveInDate && setEditingMoveInDate({ ...editingMoveInDate, date: e.target.value })}
+                                    disabled={isUpdatingMoveInDate}
+                                  />
+                                  <button
+                                    onClick={() => editingMoveInDate && saveMoveInDate(tenant.contract_id!, editingMoveInDate.date)}
+                                    disabled={isUpdatingMoveInDate}
+                                    className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 disabled:bg-gray-400"
+                                  >
+                                    บันทึก
+                                  </button>
+                                  <button
+                                    onClick={cancelEditingMoveInDate}
+                                    disabled={isUpdatingMoveInDate}
+                                    className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded hover:bg-gray-300 disabled:bg-gray-100"
+                                  >
+                                    ยกเลิก
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <p className="font-medium">
+                                    ตั้งแต่ {formatDate(tenant.move_in_date)}
+                                  </p>
+                                  {tenant.status === 'active' && tenant.contract_id && (
+                                    <button
+                                      onClick={() => startEditingMoveInDate(tenant.contract_id!, tenant.move_in_date)}
+                                      className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 border border-blue-300 rounded hover:bg-blue-50"
+                                      title="แก้ไขวันที่เข้าพัก"
+                                    >
+                                      แก้ไข
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                             </div>
                             <div>
                               <p className="text-sm text-gray-600">สถานะสัญญา</p>
@@ -1301,6 +2084,71 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                               >
                                 {tenant.status === 'active' ? 'ใช้งาน' : tenant.status || '-'}
                               </span>
+                            </div>
+                            <div>
+                              <p className="text-sm text-gray-600">วันที่ย้ายออก</p>
+                              {editingMoveOutDate?.contractId === tenant.contract_id ? (
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="date"
+                                    className="border rounded-md px-2 py-1 text-sm"
+                                    value={editingMoveOutDate?.date || ''}
+                                    onChange={(e) => editingMoveOutDate && setEditingMoveOutDate({ ...editingMoveOutDate, date: e.target.value })}
+                                    disabled={isUpdatingMoveOutDate}
+                                  />
+                                  <button
+                                    onClick={() => editingMoveOutDate && saveMoveOutDate(tenant.contract_id!, editingMoveOutDate.date || null)}
+                                    disabled={isUpdatingMoveOutDate}
+                                    className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 disabled:bg-gray-400"
+                                  >
+                                    บันทึก
+                                  </button>
+                                  <button
+                                    onClick={cancelEditingMoveOutDate}
+                                    disabled={isUpdatingMoveOutDate}
+                                    className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded hover:bg-gray-300 disabled:bg-gray-100"
+                                  >
+                                    ยกเลิก
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <p className={`font-medium ${
+                                    tenant.move_out_date ? (() => {
+                                      const colorInfo = getMoveOutDateColor(tenant.move_out_date);
+                                      return colorInfo ? colorInfo.text : '';
+                                    })() : ''
+                                  }`}>
+                                    {tenant.move_out_date ? formatDate(tenant.move_out_date) : '-'}
+                                    {tenant.move_out_date && (() => {
+                                      const colorInfo = getMoveOutDateColor(tenant.move_out_date);
+                                      if (colorInfo) {
+                                        const today = new Date();
+                                        today.setHours(0, 0, 0, 0);
+                                        const moveOutDate = new Date(tenant.move_out_date);
+                                        moveOutDate.setHours(0, 0, 0, 0);
+                                        const diffTime = moveOutDate.getTime() - today.getTime();
+                                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                                        if (diffDays <= 7 && diffDays >= 0) {
+                                          return <span className="ml-1 text-xs">⚠️ เหลือ {diffDays} วัน</span>;
+                                        } else if (diffDays < 0) {
+                                          return <span className="ml-1 text-xs">⚠️ เกินกำหนด</span>;
+                                        }
+                                      }
+                                      return null;
+                                    })()}
+                                  </p>
+                                  {tenant.status === 'active' && tenant.contract_id && (
+                                    <button
+                                      onClick={() => startEditingMoveOutDate(tenant.contract_id!, tenant.move_out_date)}
+                                      className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 border border-blue-300 rounded hover:bg-blue-50"
+                                      title="แก้ไขวันที่ย้ายออก"
+                                    >
+                                      แก้ไข
+                                    </button>
+                                  )}
+                                </div>
+                              )}
                             </div>
                             </div>
                             {tenant.status === 'active' && tenant.contract_id && (

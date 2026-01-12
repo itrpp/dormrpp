@@ -73,7 +73,7 @@ export default function UtilityReadingsClient() {
   const [roomForms, setRoomForms] = useState<Map<number, RoomReadingForm>>(new Map());
   const [isSaving, setIsSaving] = useState(false);
   const [savedReadings, setSavedReadings] = useState<UtilityReading[]>([]);
-  
+
   // State สำหรับ checkbox เติมค่าเริ่มต้นจากเลขเดิม
   const [autoFillFromPrevious, setAutoFillFromPrevious] = useState(false);
   
@@ -1117,12 +1117,12 @@ export default function UtilityReadingsClient() {
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap border border-gray-300">
                         <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            className="w-24 border rounded px-2 py-1 text-sm"
-                            value={form.electric.meter_end}
-                            onChange={(e) => updateForm(room.room_id, 'electric', 'meter_end', e.target.value ? Number(e.target.value) : '')}
-                          />
+                        <input
+                          type="number"
+                          className="w-24 border rounded px-2 py-1 text-sm"
+                          value={form.electric.meter_end}
+                          onChange={(e) => updateForm(room.room_id, 'electric', 'meter_end', e.target.value ? Number(e.target.value) : '')}
+                        />
                           {(() => {
                             const photoKey = `${room.room_id}-electric`;
                             const photoInfo = photoStatus.get(photoKey);
@@ -1158,7 +1158,7 @@ export default function UtilityReadingsClient() {
                                   >
                                     📷
                                   </button>
-                                )}
+                        )}
                               </div>
                             );
                           })()}
@@ -1187,12 +1187,12 @@ export default function UtilityReadingsClient() {
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap border-l-2 border-r border-t border-b border-gray-300">
                         <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            className="w-24 border rounded px-2 py-1 text-sm"
-                            value={form.water.meter_end}
-                            onChange={(e) => updateForm(room.room_id, 'water', 'meter_end', e.target.value ? Number(e.target.value) : '')}
-                          />
+                        <input
+                          type="number"
+                          className="w-24 border rounded px-2 py-1 text-sm"
+                          value={form.water.meter_end}
+                          onChange={(e) => updateForm(room.room_id, 'water', 'meter_end', e.target.value ? Number(e.target.value) : '')}
+                        />
                           {(() => {
                             const photoKey = `${room.room_id}-water`;
                             const photoInfo = photoStatus.get(photoKey);
@@ -1228,7 +1228,7 @@ export default function UtilityReadingsClient() {
                                   >
                                     📷
                                   </button>
-                                )}
+                        )}
                               </div>
                             );
                           })()}

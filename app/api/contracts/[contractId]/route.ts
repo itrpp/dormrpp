@@ -9,13 +9,13 @@ type Params = {
   };
 };
 
-// PUT /api/contracts/[contractId] - อัปเดต contract (เช่น end contract)
-// body: { end_date, status }
+// PUT /api/contracts/[contractId] - อัปเดต contract (เช่น end contract, start_date)
+// body: { end_date, status, start_date }
 export async function PUT(req: Request, { params }: Params) {
   try {
     const contractId = Number(params.contractId);
     const body = await req.json();
-    const { end_date, status } = body;
+    const { end_date, status, start_date } = body;
 
     if (isNaN(contractId)) {
       return NextResponse.json(
@@ -46,6 +46,11 @@ export async function PUT(req: Request, { params }: Params) {
     // อัปเดต contract
     const updates: string[] = [];
     const values: any[] = [];
+
+    if (start_date !== undefined) {
+      updates.push('start_date = ?');
+      values.push(start_date || null);
+    }
 
     if (end_date !== undefined) {
       updates.push('end_date = ?');

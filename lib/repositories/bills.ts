@@ -85,7 +85,7 @@ export async function getOrCreateBillingCycle(
     );
     return (result as any).insertId || 0;
   } finally {
-    conn.release();
+      conn.release();
   }
 }
 
