@@ -163,7 +163,7 @@ export async function createTenant(data: {
   last_name: string;
   email?: string | null;
   phone?: string | null;
-  move_in_date?: Date | null;
+  move_in_date?: Date | string | null;
 }): Promise<number> {
   const connection = await pool.getConnection();
   try {
@@ -183,6 +183,17 @@ export async function createTenant(data: {
     
     const tenantId = (result as any).insertId;
 
+    // กำหนด start_date
+    const moveInDate = data.move_in_date ?? new Date();
+    let moveInDateStr: string;
+    if (moveInDate instanceof Date) {
+      moveInDateStr = moveInDate.toISOString().slice(0, 10);
+    } else if (typeof moveInDate === 'string') {
+      moveInDateStr = moveInDate.substring(0, 10);
+    } else {
+      moveInDateStr = new Date().toISOString().slice(0, 10);
+    }
+
     // สร้าง contract เพื่อเชื่อม tenant กับ room
     await connection.query(
       `INSERT INTO contracts (tenant_id, room_id, start_date, status)
@@ -190,8 +201,20 @@ export async function createTenant(data: {
       [
         tenantId,
         data.room_id,
-        data.move_in_date ?? new Date(),
+        moveInDateStr,
       ]
+    );
+
+    // อัปเดต tenant status ตาม start_date
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const startDateOnly = new Date(moveInDateStr);
+    startDateOnly.setHours(0, 0, 0, 0);
+    
+    const tenantStatus = startDateOnly > today ? 'pending' : 'active';
+    await connection.query(
+      `UPDATE tenants SET status = ? WHERE tenant_id = ?`,
+      [tenantStatus, tenantId]
     );
 
     await connection.commit();

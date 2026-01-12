@@ -2,6 +2,7 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { checkRoomAvailability } from '@/lib/repositories/room-occupancy';
+import { updateTenantStatusByStartDate } from '@/lib/db-helpers';
 
 // GET /api/contracts?room_id=1&status=active
 export async function GET(req: Request) {
@@ -94,23 +95,21 @@ export async function POST(req: Request) {
       }
     }
 
-    // 3) เปิดสถานะ tenant ให้เป็น active เสมอ เมื่อมีสัญญาใหม่ (รองรับกรณีกลับเข้าพัก)
-    await query(
-      `
-      UPDATE tenants
-      SET status = 'active'
-      WHERE tenant_id = ?
-      `,
-      [tenant_id]
-    );
+    // 3) กำหนด start_date (ถ้าไม่มีให้ใช้วันนี้)
+    const finalStartDate = start_date || new Date().toISOString().slice(0, 10);
 
-    // 4) สร้าง contract
+    // 4) อัปเดต tenant status ตาม start_date
+    // - ถ้า start_date > วันนี้ → set status = 'pending'
+    // - ถ้า start_date <= วันนี้ → set status = 'active'
+    await updateTenantStatusByStartDate(tenant_id, finalStartDate);
+
+    // 5) สร้าง contract
     const result = await query<{ insertId: number }>(
       `
       INSERT INTO contracts (tenant_id, room_id, start_date, status)
       VALUES (?, ?, ?, ?)
       `,
-      [tenant_id, room_id, start_date || new Date().toISOString().slice(0, 10), status]
+      [tenant_id, room_id, finalStartDate, status]
     );
 
     const contract_id = (result as any).insertId;

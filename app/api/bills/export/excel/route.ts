@@ -174,37 +174,57 @@ export async function GET(req: Request) {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet(`บิล ${getMonthNameThai(Number(month))} ${year}`);
 
-    // ตั้งค่าความกว้างคอลัมน์
+    // ตั้งค่าความกว้างคอลัมน์ (ปรับให้พอดีกับ A4 หน้าเดียว)
     worksheet.columns = [
-      { width: 8 },   // ลำดับ
-      { width: 15 },  // เลขที่ห้อง
-      { width: 25 }, // ชื่อ-สกุล
-      { width: 12 }, // ค่าบำรุงรักษา
-      { width: 12 }, // มิเตอร์ไฟฟ้าเริ่มต้น
-      { width: 12 }, // มิเตอร์ไฟฟ้าสิ้นสุด
-      { width: 12 }, // หน่วยใช้ไฟฟ้า
-      { width: 12 }, // อัตราไฟฟ้า
-      { width: 15 }, // ค่าไฟฟ้า
-      { width: 12 }, // มิเตอร์น้ำเริ่มต้น
-      { width: 12 }, // มิเตอร์น้ำสิ้นสุด
-      { width: 12 }, // หน่วยใช้น้ำ
-      { width: 12 }, // อัตราน้ำ
-      { width: 15 }, // ค่าน้ำ
-      { width: 15 }, // รวมทั้งสิ้น
-      { width: 12 }, // สถานะ
+      { width: 6 },   // ลำดับ
+      { width: 10 },  // เลขที่ห้อง
+      { width: 18 }, // ชื่อ-สกุล
+      { width: 9 }, // ค่าบำรุงรักษา
+      { width: 8 }, // มิเตอร์ไฟฟ้าเริ่มต้น
+      { width: 8 }, // มิเตอร์ไฟฟ้าสิ้นสุด
+      { width: 8 }, // หน่วยใช้ไฟฟ้า
+      { width: 8 }, // อัตราไฟฟ้า
+      { width: 10 }, // ค่าไฟฟ้า
+      { width: 8 }, // มิเตอร์น้ำเริ่มต้น
+      { width: 8 }, // มิเตอร์น้ำสิ้นสุด
+      { width: 8 }, // หน่วยใช้น้ำ
+      { width: 8 }, // อัตราน้ำ
+      { width: 10 }, // ค่าน้ำ
+      { width: 10 }, // รวมทั้งสิ้น
+      { width: 8 }, // สถานะ
     ];
 
-    // หัวตาราง
+    // ตั้งค่า Page Setup สำหรับ A4 แนวตั้ง - ให้พอดีหน้าเดียว
+    // ใช้ fitToPage แทน scale เพื่อให้ Excel ปรับขนาดอัตโนมัติ
+    worksheet.pageSetup = {
+      paperSize: 9, // A4
+      orientation: 'portrait', // แนวตั้ง
+      fitToPage: true,
+      fitToWidth: 1, // fit to 1 page wide
+      fitToHeight: 0, // 0 = fit all rows (auto) - ให้ Excel คำนวณเอง
+      margins: {
+        left: 0.2,
+        right: 0.2,
+        top: 0.25,
+        bottom: 0.25,
+        header: 0.1,
+        footer: 0.1,
+      },
+      horizontalCentered: true, // จัดกึ่งกลางแนวนอน
+      verticalCentered: false, // ไม่จัดกึ่งกลางแนวตั้ง
+    };
+
+    // หัวตาราง (ลดขนาดฟอนต์เพื่อให้พอดีหน้าเดียว)
     worksheet.mergeCells('A1:P1');
     const titleCell = worksheet.getCell('A1');
     titleCell.value = 'โรงพยาบาลราชพิพัฒน์ - หอพักรวงผึ้ง';
-    titleCell.font = { size: 16, bold: true };
+    titleCell.font = { size: 14, bold: true };
     titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
     worksheet.mergeCells('A2:P2');
     const subtitleCell = worksheet.getCell('A2');
     subtitleCell.value = `รายงานบิลค่าใช้จ่าย รอบบิล ${getMonthNameThai(Number(month))} ${year}`;
-    subtitleCell.font = { size: 14, bold: true };
+    subtitleCell.font = { size: 12, bold: true };
     subtitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
 
     // หัวตาราง
@@ -227,9 +247,10 @@ export async function GET(req: Request) {
       'สถานะ',
     ]);
 
-    // จัดรูปแบบหัวตาราง
-    headerRow.font = { bold: true, size: 10 };
+    // จัดรูปแบบหัวตาราง (ลดขนาดฟอนต์ให้พอดีกับ A4 หน้าเดียว)
+    headerRow.font = { bold: true, size: 8 };
     headerRow.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    headerRow.height = 30; // ตั้งค่าความสูงแถวให้พอดีกับ wrapText
     headerRow.fill = {
       type: 'pattern',
       pattern: 'solid',
@@ -281,11 +302,13 @@ export async function GET(req: Request) {
       row.getCell(14).numFmt = '#,##0.00'; // ค่าน้ำ
       row.getCell(15).numFmt = '#,##0.00'; // รวมทั้งสิ้น
 
-      // จัดรูปแบบข้อความ
+      // จัดรูปแบบข้อความ (ลดขนาดฟอนต์ให้พอดีกับ A4 หน้าเดียว)
+      row.font = { size: 8 };
       row.getCell(1).alignment = { horizontal: 'center' }; // ลำดับ
       row.getCell(2).alignment = { horizontal: 'left' }; // เลขที่ห้อง
       row.getCell(3).alignment = { horizontal: 'left' }; // ชื่อ-สกุล
       row.getCell(16).alignment = { horizontal: 'center' }; // สถานะ
+      row.height = 15; // ตั้งค่าความสูงแถวให้เล็กลง
 
       // เส้นขอบ
       row.eachCell((cell) => {
@@ -318,7 +341,8 @@ export async function GET(req: Request) {
       '',
     ]);
 
-    totalRow.font = { bold: true };
+    totalRow.font = { bold: true, size: 8 };
+    totalRow.height = 15; // ตั้งค่าความสูงแถวรวม
     totalRow.fill = {
       type: 'pattern',
       pattern: 'solid',
@@ -340,6 +364,13 @@ export async function GET(req: Request) {
         cell.alignment = { horizontal: 'right' };
       }
     });
+
+    // ตั้งค่า Print Area ให้ครอบคลุมข้อมูลทั้งหมด
+    const lastRow = worksheet.rowCount;
+    worksheet.pageSetup.printArea = `A1:P${lastRow}`;
+
+    // ตั้งค่าให้แสดง gridlines เมื่อพิมพ์
+    worksheet.pageSetup.showGridLines = true;
 
     // สร้าง buffer
     const buffer = await workbook.xlsx.writeBuffer();

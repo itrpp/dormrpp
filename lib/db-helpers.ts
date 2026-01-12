@@ -54,3 +54,50 @@ export async function buildSelectWithOptionalStatus(
   return baseSelect;
 }
 
+/**
+ * อัปเดต tenant status ตาม start_date ของ contract
+ * - ถ้า start_date > วันนี้ → set status = 'pending'
+ * - ถ้า start_date <= วันนี้ → set status = 'active'
+ */
+export async function updateTenantStatusByStartDate(
+  tenantId: number,
+  startDate: string | Date | null
+): Promise<void> {
+  try {
+    if (!startDate) {
+      // ถ้าไม่มี start_date ให้ set เป็น 'active' (กรณีเข้าพักทันที)
+      await query(
+        `UPDATE tenants SET status = 'active' WHERE tenant_id = ?`,
+        [tenantId]
+      );
+      return;
+    }
+
+    // แปลง startDate เป็น Date object
+    const start = typeof startDate === 'string' ? new Date(startDate) : startDate;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // ตั้งเวลาเป็น 00:00:00 เพื่อเปรียบเทียบเฉพาะวันที่
+    
+    const startDateOnly = new Date(start);
+    startDateOnly.setHours(0, 0, 0, 0);
+
+    // เปรียบเทียบวันที่
+    if (startDateOnly > today) {
+      // ยังไม่ถึงวันเข้าพัก → pending
+      await query(
+        `UPDATE tenants SET status = 'pending' WHERE tenant_id = ?`,
+        [tenantId]
+      );
+    } else {
+      // ถึงวันเข้าพักแล้ว → active
+      await query(
+        `UPDATE tenants SET status = 'active' WHERE tenant_id = ?`,
+        [tenantId]
+      );
+    }
+  } catch (error: any) {
+    // ถ้าไม่มี status column หรือ error อื่นๆ ให้ข้าม
+    console.warn('Cannot update tenant status by start_date:', error.message);
+  }
+}
+

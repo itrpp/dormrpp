@@ -212,13 +212,19 @@ export async function POST(req: Request) {
           );
         }
 
+        const finalMoveInDate = move_in_date || new Date().toISOString().slice(0, 10);
+        
         await query(
           `
           INSERT INTO contracts (tenant_id, room_id, start_date, status)
           VALUES (?, ?, ?, 'active')
         `,
-          [tenant_id, room_id, move_in_date || new Date().toISOString().slice(0, 10)]
+          [tenant_id, room_id, finalMoveInDate]
         );
+
+        // อัปเดต tenant status ตาม start_date
+        const { updateTenantStatusByStartDate } = await import('@/lib/db-helpers');
+        await updateTenantStatusByStartDate(tenant_id, finalMoveInDate);
       } catch (error: any) {
         // ถ้าไม่มี contracts table ให้ข้าม
         if (error.message?.includes("doesn't exist") || error.message?.includes("Unknown table")) {

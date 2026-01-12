@@ -2,6 +2,7 @@
 // API สำหรับจัดการ contract เดียว (end contract, update)
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { updateTenantStatusByStartDate } from '@/lib/db-helpers';
 
 type Params = {
   params: {
@@ -24,13 +25,14 @@ export async function PUT(req: Request, { params }: Params) {
       );
     }
 
-    // ตรวจสอบว่า contract มีอยู่จริงและดึง tenant_id
+    // ตรวจสอบว่า contract มีอยู่จริงและดึง tenant_id, start_date
     const existingContract = await query<{
       contract_id: number;
       status: string;
       tenant_id: number;
+      start_date: string | Date | null;
     }>(
-      'SELECT contract_id, status, tenant_id FROM contracts WHERE contract_id = ?',
+      'SELECT contract_id, status, tenant_id, start_date FROM contracts WHERE contract_id = ?',
       [contractId]
     );
 
@@ -42,6 +44,7 @@ export async function PUT(req: Request, { params }: Params) {
     }
 
     const tenantId = existingContract[0].tenant_id;
+    const currentStartDate = existingContract[0].start_date;
 
     // อัปเดต contract
     const updates: string[] = [];
@@ -75,6 +78,14 @@ export async function PUT(req: Request, { params }: Params) {
       `UPDATE contracts SET ${updates.join(', ')} WHERE contract_id = ?`,
       values
     );
+
+    // อัปเดต tenant status ตาม start_date (ถ้ามีการอัปเดต start_date)
+    if (start_date !== undefined && tenantId) {
+      await updateTenantStatusByStartDate(tenantId, start_date);
+    } else if (start_date === undefined && currentStartDate && tenantId) {
+      // ถ้าไม่ได้อัปเดต start_date แต่มี start_date อยู่แล้ว ให้ตรวจสอบอีกครั้ง
+      await updateTenantStatusByStartDate(tenantId, currentStartDate);
+    }
 
     // ถ้า contract ถูก end (status = 'ended') ให้อัปเดต tenant status เป็น 'inactive'
     if (status === 'ended' && tenantId) {

@@ -215,7 +215,7 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
       email: t.email ?? '',
       phone: t.phone ?? '',
       department: t.department ?? '',
-      phone_dep: t.phone_dep ?? '',
+      phone_dep: t.phone_dep != null ? String(t.phone_dep) : '',
       room_number: t.room_number ?? '',
       status: t.status ?? 'inactive',
       move_in_date: moveInDateStr,
@@ -246,10 +246,16 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
       const payload = {
         first_name: form.first_name,
         last_name: form.last_name,
-        email: form.email.trim() || null, // trim และแปลงเป็น null ถ้าว่าง
+        email: (typeof form.email === 'string' ? form.email.trim() : form.email) || null, // trim และแปลงเป็น null ถ้าว่าง
         phone: form.phone,
-        department: form.department.trim() || null,
-        phone_dep: form.phone_dep.trim() || null,
+        department: (typeof form.department === 'string' ? form.department.trim() : form.department) || null,
+        phone_dep: (() => {
+          const phoneDep = form.phone_dep;
+          if (!phoneDep || phoneDep === '' || phoneDep === '0') {
+            return null;
+          }
+          return typeof phoneDep === 'string' ? phoneDep.trim() : String(phoneDep);
+        })(),
         status: form.status, // เพิ่มการแก้ไขสถานะ
       };
       
@@ -462,7 +468,14 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
                   {tenant.department ?? '-'}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                  {tenant.phone_dep ?? '-'}
+                  {(() => {
+                    const phoneDep = tenant.phone_dep;
+                    const phoneDepStr = phoneDep != null ? String(phoneDep) : '';
+                    if (!phoneDepStr || phoneDepStr === '' || phoneDepStr === '0') {
+                      return <span className="text-gray-400 italic">ยังไม่ระบุ</span>;
+                    }
+                    return phoneDepStr;
+                  })()}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {tenant.move_in_date
@@ -652,15 +665,17 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
                   inputMode="numeric"
                   maxLength={4}
                   className="w-full border rounded-md px-3 py-2 text-sm"
-                  value={form.phone_dep}
+                  value={form.phone_dep === '0' ? '' : form.phone_dep}
                   onChange={(e) => {
                     // อนุญาตเฉพาะตัวเลข 0-9 สูงสุด 4 หลัก
                     const onlyDigits = e.target.value.replace(/[^0-9]/g, '').slice(0, 4);
-                    setForm((f) => ({ ...f, phone_dep: onlyDigits }));
+                    // ถ้าเป็น 0 ให้เก็บเป็น string ว่าง
+                    const value = onlyDigits === '0' ? '' : onlyDigits;
+                    setForm((f) => ({ ...f, phone_dep: value }));
                   }}
                   placeholder="เช่น 8809 หรือ 199"
                 />
-                <p className="text-xs text-gray-500 mt-1">กรอกได้ 3-4 หลัก (ตัวเลขเท่านั้น)</p>
+                <p className="text-xs text-gray-500 mt-1">ตัวเลขเท่านั้น</p>
               </div>
 
               <div>
