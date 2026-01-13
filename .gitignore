@@ -35,3 +35,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# uploads - meter photos (ไม่ต้องการ commit ไปยัง GitHub)
+uploads/meters/
+
+# uploads - meter photos (ไม่ต้องการ commit ไปยัง GitHub)
+uploads/meters/
+

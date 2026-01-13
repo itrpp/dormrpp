@@ -88,6 +88,7 @@ export default function MetersClient({
     building_name: string;
   } | null>(null);
   const [loadingPhoto, setLoadingPhoto] = useState(false);
+  const [photoLoadError, setPhotoLoadError] = useState(false);
   
   // State สำหรับเก็บสถานะว่ามีรูปหรือไม่ (key: `${room_id}-${billing_year}-${billing_month}-${utility_type}`)
   const [photoStatus, setPhotoStatus] = useState<Map<string, boolean>>(new Map());
@@ -308,6 +309,7 @@ export default function MetersClient({
     setLoadingPhoto(true);
     setPhotoModalOpen(true);
     setSelectedPhoto(null);
+    setPhotoLoadError(false);
     
     try {
       const response = await fetch(
@@ -348,6 +350,7 @@ export default function MetersClient({
   const closePhotoModal = () => {
     setPhotoModalOpen(false);
     setSelectedPhoto(null);
+    setPhotoLoadError(false);
   };
 
   return (
@@ -700,27 +703,35 @@ export default function MetersClient({
                     </div>
                   </div>
                   
-                  <div className="flex justify-center">
-                    <img
-                      src={`/api/meter-photos/${selectedPhoto.photo_id}/download`}
-                      alt={`มิเตอร์${selectedPhoto.utility_type === 'electric' ? 'ไฟฟ้า' : 'น้ำ'}`}
-                      className="max-w-full h-auto rounded-lg shadow-lg"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).src = '/placeholder-image.png';
-                        (e.target as HTMLImageElement).alt = 'ไม่พบรูปภาพ';
-                      }}
-                    />
-                  </div>
-                  
-                  <div className="text-center">
-                    <a
-                      href={`/api/meter-photos/${selectedPhoto.photo_id}/download`}
-                      download
-                      className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                    >
-                      ดาวน์โหลดรูปภาพ
-                    </a>
-                  </div>
+                  {photoLoadError ? (
+                    <div className="text-center py-12">
+                      <p className="text-red-500 text-lg font-medium">ไม่พบรูปภาพ</p>
+                      <p className="text-gray-400 text-sm mt-2">ไม่สามารถโหลดรูปภาพได้ กรุณาตรวจสอบอีกครั้ง</p>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex justify-center">
+                        <img
+                          src={`/api/meter-photos/${selectedPhoto.photo_id}/download`}
+                          alt={`มิเตอร์${selectedPhoto.utility_type === 'electric' ? 'ไฟฟ้า' : 'น้ำ'}`}
+                          className="max-w-full h-auto rounded-lg shadow-lg"
+                          onError={() => {
+                            setPhotoLoadError(true);
+                          }}
+                        />
+                      </div>
+                      
+                      <div className="text-center">
+                        <a
+                          href={`/api/meter-photos/${selectedPhoto.photo_id}/download`}
+                          download
+                          className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                        >
+                          ดาวน์โหลดรูปภาพ
+                        </a>
+                      </div>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-12">

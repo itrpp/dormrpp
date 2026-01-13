@@ -4,6 +4,9 @@ import { NextResponse } from 'next/server';
 import ExcelJS from 'exceljs';
 import { query } from '@/lib/db';
 import { getMonthNameThai } from '@/lib/date-utils';
+import { readFile } from 'fs/promises';
+import { join } from 'path';
+import { existsSync } from 'fs';
 
 export const dynamic = 'force-dynamic';
 
@@ -106,6 +109,58 @@ export async function GET(
     const electricReading = utilityReadings.find((ur: any) => ur.utility_code === 'electric');
     const waterReading = utilityReadings.find((ur: any) => ur.utility_code === 'water');
 
+    // ดึงรูปภาพมิเตอร์
+    let meterPhotos: any[] = [];
+    try {
+      meterPhotos = await query(
+        `SELECT 
+          photo_id,
+          utility_type,
+          photo_path,
+          meter_value,
+          reading_date
+        FROM meter_photos
+        WHERE room_id = ? 
+          AND billing_year = ? 
+          AND billing_month = ?
+        ORDER BY utility_type, reading_date DESC`,
+        [bill.room_id, bill.billing_year, bill.billing_month]
+      );
+    } catch (error: any) {
+      console.warn('Error fetching meter photos:', error.message);
+    }
+
+    const electricPhoto = meterPhotos.find((p: any) => p.utility_type === 'electric');
+    const waterPhoto = meterPhotos.find((p: any) => p.utility_type === 'water');
+
+    // อ่านไฟล์รูปภาพ (ถ้ามี)
+    let electricImageBuffer: any = null;
+    let waterImageBuffer: any = null;
+
+    if (electricPhoto && electricPhoto.photo_path) {
+      try {
+        const electricImagePath = join(process.cwd(), 'uploads', electricPhoto.photo_path);
+        if (existsSync(electricImagePath)) {
+          const buffer = await readFile(electricImagePath);
+          electricImageBuffer = Buffer.from(buffer);
+        }
+      } catch (error: any) {
+        console.warn('Error reading electric photo:', error.message);
+      }
+    }
+
+    if (waterPhoto && waterPhoto.photo_path) {
+      try {
+        const waterImagePath = join(process.cwd(), 'uploads', waterPhoto.photo_path);
+        if (existsSync(waterImagePath)) {
+          const buffer = await readFile(waterImagePath);
+          waterImageBuffer = Buffer.from(buffer);
+        }
+      } catch (error: any) {
+        console.warn('Error reading water photo:', error.message);
+      }
+    }
+
     // สร้างเลขที่บิล: B-YYYY-MM-XXXXX (ใช้ bill_id)
     const adYear = bill.billing_year - 543;
     const billNumber = `B-${adYear}-${String(bill.billing_month).padStart(2, '0')}-${String(bill.bill_id).padStart(5, '0')}`;
@@ -125,16 +180,34 @@ export async function GET(
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('ใบแจ้งค่าใช้จ่าย');
 
-    // ตั้งค่าความกว้างคอลัมน์
+    // ตั้งค่าความกว้างคอลัมน์ (ปรับให้พอดีกับ A4)
     worksheet.columns = [
-      { width: 15 }, // A
-      { width: 40 }, // B
-      { width: 15 }, // C
-      { width: 15 }, // D
-      { width: 15 }, // E
-      { width: 15 }, // F
-      { width: 15 }, // G
+      { width: 20 }, // A
+      { width: 35 }, // B
+      { width: 12 }, // C
+      { width: 12 }, // D
+      { width: 12 }, // E
+      { width: 12 }, // F
+      { width: 12 }, // G
     ];
+
+    // ตั้งค่า Page Setup สำหรับ A4 แนวตั้ง
+    worksheet.pageSetup = {
+      paperSize: 9, // A4
+      orientation: 'portrait', // แนวตั้ง
+      fitToPage: true,
+      fitToWidth: 1, // fit to 1 page wide
+      fitToHeight: 0, // 0 = fit all rows (auto)
+      margins: {
+        left: 0.3,
+        right: 0.3,
+        top: 0.4,
+        bottom: 0.4,
+        header: 0.2,
+        footer: 0.2,
+      },
+      horizontalCentered: true,
+    };
 
     // ส่วนที่ 1: Header
     worksheet.mergeCells('A1:G1');
@@ -178,27 +251,27 @@ export async function GET(
     const tenantLineCell = worksheet.getCell('A9');
     tenantLineCell.value = '-----------------------------------------------';
 
-    worksheet.getCell('A10').value = 'ชื่อ–สกุล';
+    worksheet.getCell('A10').value = 'ชื่อ-สกุล';
     worksheet.getCell('A10').font = { bold: true };
-    worksheet.getCell('B10').value = `: ${bill.first_name || ''} ${bill.last_name || ''}`;
+    worksheet.getCell('B10').value = `${bill.first_name || ''} ${bill.last_name || ''}`;
 
     worksheet.getCell('A11').value = 'เลขที่ห้อง';
     worksheet.getCell('A11').font = { bold: true };
-    worksheet.getCell('B11').value = `: ${bill.room_number || '-'}`;
+    worksheet.getCell('B11').value = bill.room_number || '-';
     worksheet.getCell('C11').value = `ชั้น : ${bill.floor_no || '-'}`;
 
     worksheet.getCell('A12').value = 'อาคาร';
     worksheet.getCell('A12').font = { bold: true };
-    worksheet.getCell('B12').value = `: ${bill.building_name || '-'}`;
+    worksheet.getCell('B12').value = bill.building_name || '-';
 
     worksheet.getCell('A13').value = 'รอบบิล';
     worksheet.getCell('A13').font = { bold: true };
-    worksheet.getCell('B13').value = `: เดือน${getMonthNameThai(bill.billing_month)} ${bill.billing_year}`;
+    worksheet.getCell('B13').value = `เดือน${getMonthNameThai(bill.billing_month)} ${bill.billing_year}`;
 
     worksheet.getCell('A14').value = 'สถานะสัญญา';
     worksheet.getCell('A14').font = { bold: true };
     const contractStatus = bill.contract_status === 'active' ? 'Active' : bill.contract_status || '-';
-    worksheet.getCell('B14').value = `: ${contractStatus}`;
+    worksheet.getCell('B14').value = contractStatus;
 
     // ส่วนที่ 3: ตารางค่าใช้จ่าย
     // ตารางที่ 1: ค่าดูแล/ค่าคงที่
@@ -222,15 +295,18 @@ export async function GET(
     table1HeaderRow.getCell(1).alignment = { horizontal: 'left' };
     table1HeaderRow.getCell(2).alignment = { horizontal: 'right' };
 
-    const maintenanceRow = worksheet.addRow(['ค่าดูแลและบำรุงรักษาหอพัก', bill.maintenance_fee || 0]);
+    const maintenanceRow = worksheet.addRow(['ค่าดูแลและบำรุงรักษา', Number(bill.maintenance_fee) || 0]);
+    maintenanceRow.getCell(1).alignment = { horizontal: 'left' };
     maintenanceRow.getCell(2).numFmt = '#,##0.00';
     maintenanceRow.getCell(2).alignment = { horizontal: 'right' };
 
     const otherFixedRow = worksheet.addRow(['ค่าใช้จ่ายคงที่อื่น', 0]);
+    otherFixedRow.getCell(1).alignment = { horizontal: 'left' };
     otherFixedRow.getCell(2).numFmt = '#,##0.00';
     otherFixedRow.getCell(2).alignment = { horizontal: 'right' };
 
     const discountRow = worksheet.addRow(['ส่วนลด', 0]);
+    discountRow.getCell(1).alignment = { horizontal: 'left' };
     discountRow.getCell(2).numFmt = '#,##0.00';
     discountRow.getCell(2).alignment = { horizontal: 'right' };
 
@@ -248,7 +324,7 @@ export async function GET(
     // ค่าไฟฟ้า
     worksheet.mergeCells('A23:G23');
     const electricHeader = worksheet.getCell('A23');
-    electricHeader.value = '🔌 ค่าไฟฟ้า';
+    electricHeader.value = 'ค่าไฟฟ้า';
     electricHeader.font = { size: 11, bold: true };
 
     const electricTableHeader = worksheet.addRow(['เริ่มต้น', 'สิ้นสุด', 'หน่วยใช้', 'อัตรา', 'เป็นเงิน']);
@@ -263,13 +339,14 @@ export async function GET(
     });
 
     if (electricReading) {
-      const usage = electricReading.meter_end - electricReading.meter_start;
+      const usage = Number(electricReading.meter_end || 0) - Number(electricReading.meter_start || 0);
+      const electricAmount = Number(bill.electric_amount) || 0;
       const electricRow = worksheet.addRow([
-        electricReading.meter_start || 0,
-        electricReading.meter_end || 0,
+        Number(electricReading.meter_start) || 0,
+        Number(electricReading.meter_end) || 0,
         usage,
-        electricReading.rate_per_unit || 0,
-        bill.electric_amount || 0,
+        Number(electricReading.rate_per_unit) || 0,
+        electricAmount,
       ]);
       electricRow.getCell(1).numFmt = '#,##0';
       electricRow.getCell(2).numFmt = '#,##0';
@@ -280,7 +357,8 @@ export async function GET(
         cell.alignment = { horizontal: 'right' };
       });
     } else {
-      const electricRow = worksheet.addRow([0, 0, 0, 0, bill.electric_amount || 0]);
+      const electricAmount = Number(bill.electric_amount) || 0;
+      const electricRow = worksheet.addRow([0, 0, 0, 0, electricAmount]);
       electricRow.getCell(5).numFmt = '#,##0.00';
       electricRow.getCell(5).alignment = { horizontal: 'right' };
     }
@@ -288,7 +366,7 @@ export async function GET(
     // ค่าน้ำ
     worksheet.mergeCells('A26:G26');
     const waterHeader = worksheet.getCell('A26');
-    waterHeader.value = '🚿 ค่าน้ำประปา';
+    waterHeader.value = 'ค่าน้ำประปา';
     waterHeader.font = { size: 11, bold: true };
 
     const waterTableHeader = worksheet.addRow(['เริ่มต้น', 'สิ้นสุด', 'หน่วยใช้', 'อัตรา', 'เป็นเงิน']);
@@ -303,13 +381,14 @@ export async function GET(
     });
 
     if (waterReading) {
-      const usage = waterReading.meter_end - waterReading.meter_start;
+      const usage = Number(waterReading.meter_end || 0) - Number(waterReading.meter_start || 0);
+      const waterAmount = Number(bill.water_amount) || 0;
       const waterRow = worksheet.addRow([
-        waterReading.meter_start || 0,
-        waterReading.meter_end || 0,
+        Number(waterReading.meter_start) || 0,
+        Number(waterReading.meter_end) || 0,
         usage,
-        waterReading.rate_per_unit || 0,
-        bill.water_amount || 0,
+        Number(waterReading.rate_per_unit) || 0,
+        waterAmount,
       ]);
       waterRow.getCell(1).numFmt = '#,##0';
       waterRow.getCell(2).numFmt = '#,##0';
@@ -320,7 +399,8 @@ export async function GET(
         cell.alignment = { horizontal: 'right' };
       });
     } else {
-      const waterRow = worksheet.addRow([0, 0, 0, 0, bill.water_amount || 0]);
+      const waterAmount = Number(bill.water_amount) || 0;
+      const waterRow = worksheet.addRow([0, 0, 0, 0, waterAmount]);
       waterRow.getCell(5).numFmt = '#,##0.00';
       waterRow.getCell(5).alignment = { horizontal: 'right' };
     }
@@ -328,7 +408,7 @@ export async function GET(
     // หมายเหตุ
     worksheet.mergeCells('A30:G30');
     const noteCell = worksheet.getCell('A30');
-    noteCell.value = '📝 หมายเหตุ: ค่าไฟ/น้ำเป็นการใช้งานร่วมของห้อง ระบบออกบิล "ซ้ำต่อผู้เช่า" ตามระเบียบหอพัก';
+    noteCell.value = 'หมายเหตุ: ค่าไฟ/น้ำเป็นการใช้งานร่วมของห้อง ระบบออกบิล "ซ้ำต่อผู้เช่า" ตามระเบียบหอพัก';
     noteCell.font = { size: 10, italic: true };
     noteCell.alignment = { horizontal: 'left', wrapText: true };
 
@@ -340,7 +420,11 @@ export async function GET(
     worksheet.mergeCells('A33:C33');
     worksheet.getCell('A33').value = 'รวมค่าสาธารณูปโภค';
     worksheet.getCell('A33').font = { bold: true };
-    worksheet.getCell('D33').value = (bill.electric_amount || 0) + (bill.water_amount || 0);
+    // แปลงค่าเป็น number ก่อนบวกเพื่อป้องกันการต่อ string
+    const electricAmount = Number(bill.electric_amount) || 0;
+    const waterAmount = Number(bill.water_amount) || 0;
+    const totalUtilities = electricAmount + waterAmount;
+    worksheet.getCell('D33').value = totalUtilities;
     worksheet.getCell('D33').numFmt = '#,##0.00';
     worksheet.getCell('D33').font = { bold: true };
     worksheet.getCell('E33').value = 'บาท';
@@ -349,7 +433,8 @@ export async function GET(
     worksheet.mergeCells('A34:C34');
     worksheet.getCell('A34').value = 'ค่าดูแล/บำรุงรักษา';
     worksheet.getCell('A34').font = { bold: true };
-    worksheet.getCell('D34').value = bill.maintenance_fee || 0;
+    const maintenanceFee = Number(bill.maintenance_fee) || 0;
+    worksheet.getCell('D34').value = maintenanceFee;
     worksheet.getCell('D34').numFmt = '#,##0.00';
     worksheet.getCell('D34').font = { bold: true };
     worksheet.getCell('E34').value = 'บาท';
@@ -362,7 +447,8 @@ export async function GET(
     worksheet.mergeCells('A36:C36');
     worksheet.getCell('A36').value = 'ยอดชำระทั้งสิ้น';
     worksheet.getCell('A36').font = { size: 14, bold: true };
-    worksheet.getCell('D36').value = bill.total_amount || 0;
+    const totalAmount = Number(bill.total_amount) || 0;
+    worksheet.getCell('D36').value = totalAmount;
     worksheet.getCell('D36').numFmt = '#,##0.00';
     worksheet.getCell('D36').font = { size: 14, bold: true };
     worksheet.getCell('E36').value = 'บาท';
@@ -401,10 +487,160 @@ export async function GET(
     footerNote2.value = '- เอกสารนี้ออกโดยระบบหอพักโรงพยาบาลราชพิพัฒน์';
     footerNote2.font = { size: 10 };
 
-    // เพิ่มเส้นขอบให้ตาราง
-    worksheet.eachRow((row) => {
-      row.eachCell((cell) => {
-        if (cell.value !== null && cell.value !== undefined && cell.value !== '') {
+    // ส่วนที่ 7: รูปภาพมิเตอร์
+    const imageStartRow = 48;
+    const imageHeight = 250; // ความสูงของรูปภาพ (pixels)
+    const imageWidth = 250; // ความกว้างของรูปภาพ (pixels)
+    
+    // หัวข้อรูปภาพมิเตอร์ไฟฟ้า
+    worksheet.mergeCells(`A${imageStartRow}:C${imageStartRow}`);
+    const electricPhotoLabel = worksheet.getCell(`A${imageStartRow}`);
+    electricPhotoLabel.value = 'picture มิเตอร์ไฟ';
+    electricPhotoLabel.font = { size: 11, bold: true, color: { argb: 'FFFF0000' } };
+    electricPhotoLabel.alignment = { horizontal: 'center', vertical: 'middle' };
+    electricPhotoLabel.border = {
+      top: { style: 'medium', color: { argb: 'FFFF0000' } },
+      left: { style: 'medium', color: { argb: 'FFFF0000' } },
+      right: { style: 'medium', color: { argb: 'FFFF0000' } },
+      bottom: { style: 'medium', color: { argb: 'FFFF0000' } },
+    };
+    worksheet.getRow(imageStartRow).height = 20;
+
+    // หัวข้อรูปภาพมิเตอร์น้ำ
+    worksheet.mergeCells(`E${imageStartRow}:G${imageStartRow}`);
+    const waterPhotoLabel = worksheet.getCell(`E${imageStartRow}`);
+    waterPhotoLabel.value = 'picture มิเตอร์น้ำ';
+    waterPhotoLabel.font = { size: 11, bold: true, color: { argb: 'FFFF0000' } };
+    waterPhotoLabel.alignment = { horizontal: 'center', vertical: 'middle' };
+    waterPhotoLabel.border = {
+      top: { style: 'medium', color: { argb: 'FFFF0000' } },
+      left: { style: 'medium', color: { argb: 'FFFF0000' } },
+      right: { style: 'medium', color: { argb: 'FFFF0000' } },
+      bottom: { style: 'medium', color: { argb: 'FFFF0000' } },
+    };
+    worksheet.getRow(imageStartRow).height = 20;
+
+    // เพิ่มรูปภาพมิเตอร์ไฟฟ้า
+    if (electricImageBuffer) {
+      try {
+        // @ts-ignore - ExcelJS buffer type compatibility
+        const imageId = workbook.addImage({
+          buffer: electricImageBuffer,
+          extension: electricPhoto.photo_path.split('.').pop()?.toLowerCase() || 'jpg',
+        });
+        worksheet.addImage(imageId, {
+          tl: { col: 0, row: imageStartRow + 1 },
+          ext: { width: imageWidth, height: imageHeight },
+        });
+        // ปรับความสูงแถวให้พอดีกับรูปภาพ
+        for (let i = imageStartRow + 1; i <= imageStartRow + 18; i++) {
+          worksheet.getRow(i).height = 15;
+        }
+      } catch (error: any) {
+        console.warn('Error adding electric image to Excel:', error.message);
+        // แสดงข้อความว่าไม่มีรูปภาพ
+        worksheet.mergeCells(`A${imageStartRow + 1}:C${imageStartRow + 18}`);
+        const noElectricImage = worksheet.getCell(`A${imageStartRow + 1}`);
+        noElectricImage.value = 'ไม่มีรูปภาพ';
+        noElectricImage.alignment = { horizontal: 'center', vertical: 'middle' };
+        noElectricImage.font = { size: 10, color: { argb: 'FF999999' } };
+        noElectricImage.border = {
+          top: { style: 'medium', color: { argb: 'FFFF0000' } },
+          left: { style: 'medium', color: { argb: 'FFFF0000' } },
+          right: { style: 'medium', color: { argb: 'FFFF0000' } },
+          bottom: { style: 'medium', color: { argb: 'FFFF0000' } },
+        };
+        // ปรับความสูงแถว
+        for (let i = imageStartRow + 1; i <= imageStartRow + 18; i++) {
+          worksheet.getRow(i).height = 15;
+        }
+      }
+    } else {
+      // แสดงข้อความว่าไม่มีรูปภาพ
+      worksheet.mergeCells(`A${imageStartRow + 1}:C${imageStartRow + 18}`);
+      const noElectricImage = worksheet.getCell(`A${imageStartRow + 1}`);
+      noElectricImage.value = 'ไม่มีรูปภาพ';
+      noElectricImage.alignment = { horizontal: 'center', vertical: 'middle' };
+      noElectricImage.font = { size: 10, color: { argb: 'FF999999' } };
+      noElectricImage.border = {
+        top: { style: 'medium', color: { argb: 'FFFF0000' } },
+        left: { style: 'medium', color: { argb: 'FFFF0000' } },
+        right: { style: 'medium', color: { argb: 'FFFF0000' } },
+        bottom: { style: 'medium', color: { argb: 'FFFF0000' } },
+      };
+      // ปรับความสูงแถว
+      for (let i = imageStartRow + 1; i <= imageStartRow + 18; i++) {
+        worksheet.getRow(i).height = 15;
+      }
+    }
+
+    // เพิ่มรูปภาพมิเตอร์น้ำ
+    if (waterImageBuffer) {
+      try {
+        // @ts-ignore - ExcelJS buffer type compatibility
+        const imageId = workbook.addImage({
+          buffer: waterImageBuffer,
+          extension: waterPhoto.photo_path.split('.').pop()?.toLowerCase() || 'jpg',
+        });
+        worksheet.addImage(imageId, {
+          tl: { col: 4, row: imageStartRow + 1 },
+          ext: { width: imageWidth, height: imageHeight },
+        });
+      } catch (error: any) {
+        console.warn('Error adding water image to Excel:', error.message);
+        // แสดงข้อความว่าไม่มีรูปภาพ
+        worksheet.mergeCells(`E${imageStartRow + 1}:G${imageStartRow + 18}`);
+        const noWaterImage = worksheet.getCell(`E${imageStartRow + 1}`);
+        noWaterImage.value = 'ไม่มีรูปภาพ';
+        noWaterImage.alignment = { horizontal: 'center', vertical: 'middle' };
+        noWaterImage.font = { size: 10, color: { argb: 'FF999999' } };
+        noWaterImage.border = {
+          top: { style: 'medium', color: { argb: 'FFFF0000' } },
+          left: { style: 'medium', color: { argb: 'FFFF0000' } },
+          right: { style: 'medium', color: { argb: 'FFFF0000' } },
+          bottom: { style: 'medium', color: { argb: 'FFFF0000' } },
+        };
+        // ปรับความสูงแถว
+        for (let i = imageStartRow + 1; i <= imageStartRow + 18; i++) {
+          worksheet.getRow(i).height = 15;
+        }
+      }
+    } else {
+      // แสดงข้อความว่าไม่มีรูปภาพ
+      worksheet.mergeCells(`E${imageStartRow + 1}:G${imageStartRow + 18}`);
+      const noWaterImage = worksheet.getCell(`E${imageStartRow + 1}`);
+      noWaterImage.value = 'ไม่มีรูปภาพ';
+      noWaterImage.alignment = { horizontal: 'center', vertical: 'middle' };
+      noWaterImage.font = { size: 10, color: { argb: 'FF999999' } };
+      noWaterImage.border = {
+        top: { style: 'medium', color: { argb: 'FFFF0000' } },
+        left: { style: 'medium', color: { argb: 'FFFF0000' } },
+        right: { style: 'medium', color: { argb: 'FFFF0000' } },
+        bottom: { style: 'medium', color: { argb: 'FFFF0000' } },
+      };
+      // ปรับความสูงแถว
+      for (let i = imageStartRow + 1; i <= imageStartRow + 18; i++) {
+        worksheet.getRow(i).height = 15;
+      }
+    }
+
+    // เพิ่มเส้นขอบให้ตาราง (เฉพาะตารางที่ 1 และ 2)
+    // ตารางที่ 1
+    for (let row = 17; row <= 20; row++) {
+      worksheet.getRow(row).eachCell((cell) => {
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' },
+        };
+      });
+    }
+
+    // ตารางที่ 2 - ค่าไฟฟ้า
+    for (let row = 24; row <= 25; row++) {
+      worksheet.getRow(row).eachCell((cell, colNumber) => {
+        if (colNumber <= 5) {
           cell.border = {
             top: { style: 'thin' },
             left: { style: 'thin' },
@@ -413,7 +649,25 @@ export async function GET(
           };
         }
       });
-    });
+    }
+
+    // ตารางที่ 2 - ค่าน้ำ
+    for (let row = 27; row <= 28; row++) {
+      worksheet.getRow(row).eachCell((cell, colNumber) => {
+        if (colNumber <= 5) {
+          cell.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' },
+          };
+        }
+      });
+    }
+
+    // ตั้งค่า Print Area (รวมรูปภาพ)
+    const lastRow = Math.max(worksheet.rowCount, imageStartRow + 18);
+    worksheet.pageSetup.printArea = `A1:G${lastRow}`;
 
     // สร้าง buffer
     const excelBuffer = await workbook.xlsx.writeBuffer();

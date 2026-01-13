@@ -52,6 +52,16 @@ interface BillData {
     maintenance_fee: number;
     total_amount: number;
   };
+  meter_photos: {
+    electric: {
+      photo_id: number;
+      photo_url: string;
+    } | null;
+    water: {
+      photo_id: number;
+      photo_url: string;
+    } | null;
+  };
 }
 
 export default function BillPreviewPage() {
@@ -357,6 +367,67 @@ export default function BillPreviewPage() {
               <li>- กรุณาชำระภายในกำหนด หากเกินกำหนดอาจมีค่าปรับ</li>
               <li>- เอกสารนี้ออกโดยระบบหอพักโรงพยาบาลราชพิพัฒน์</li>
             </ul>
+          </div>
+
+          {/* ส่วนที่ 7: รูปภาพมิเตอร์ */}
+          <div className="mt-8 border-t border-gray-300 pt-6">
+            <div className="grid grid-cols-2 gap-8">
+              {/* รูปภาพมิเตอร์ไฟฟ้า */}
+              <div className="border-2 border-red-500 rounded-lg p-3 text-center">
+                <p className="font-bold text-sm mb-3 text-red-600">picture มิเตอร์ไฟ</p>
+                {billData.meter_photos.electric ? (
+                  <div className="flex justify-center items-center min-h-[200px]">
+                    <img
+                      src={billData.meter_photos.electric.photo_url}
+                      alt="รูปภาพมิเตอร์ไฟฟ้า"
+                      className="max-w-full h-auto max-h-[300px] object-contain rounded"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                        const parent = (e.target as HTMLImageElement).parentElement;
+                        if (parent) {
+                          const errorMsg = document.createElement('p');
+                          errorMsg.className = 'text-red-500 text-sm';
+                          errorMsg.textContent = 'ไม่พบรูปภาพ';
+                          parent.appendChild(errorMsg);
+                        }
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="py-12 text-gray-400">
+                    <p className="text-sm">ไม่มีรูปภาพ</p>
+                  </div>
+                )}
+              </div>
+
+              {/* รูปภาพมิเตอร์น้ำ */}
+              <div className="border-2 border-red-500 rounded-lg p-3 text-center">
+                <p className="font-bold text-sm mb-3 text-red-600">picture มิเตอร์น้ำ</p>
+                {billData.meter_photos.water ? (
+                  <div className="flex justify-center items-center min-h-[200px]">
+                    <img
+                      src={billData.meter_photos.water.photo_url}
+                      alt="รูปภาพมิเตอร์น้ำ"
+                      className="max-w-full h-auto max-h-[300px] object-contain rounded"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                        const parent = (e.target as HTMLImageElement).parentElement;
+                        if (parent) {
+                          const errorMsg = document.createElement('p');
+                          errorMsg.className = 'text-red-500 text-sm';
+                          errorMsg.textContent = 'ไม่พบรูปภาพ';
+                          parent.appendChild(errorMsg);
+                        }
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="py-12 text-gray-400">
+                    <p className="text-sm">ไม่มีรูปภาพ</p>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>

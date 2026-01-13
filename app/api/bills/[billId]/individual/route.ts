@@ -105,6 +105,30 @@ export async function GET(
     const electricReading = utilityReadings.find((ur: any) => ur.utility_code === 'electric');
     const waterReading = utilityReadings.find((ur: any) => ur.utility_code === 'water');
 
+    // ดึงรูปภาพมิเตอร์
+    let meterPhotos: any[] = [];
+    try {
+      meterPhotos = await query(
+        `SELECT 
+          photo_id,
+          utility_type,
+          photo_path,
+          meter_value,
+          reading_date
+        FROM meter_photos
+        WHERE room_id = ? 
+          AND billing_year = ? 
+          AND billing_month = ?
+        ORDER BY utility_type, reading_date DESC`,
+        [bill.room_id, bill.billing_year, bill.billing_month]
+      );
+    } catch (error: any) {
+      console.warn('Error fetching meter photos:', error.message);
+    }
+
+    const electricPhoto = meterPhotos.find((p: any) => p.utility_type === 'electric');
+    const waterPhoto = meterPhotos.find((p: any) => p.utility_type === 'water');
+
     // สร้างเลขที่บิล: B-YYYY-MM-XXXXX
     const adYear = bill.billing_year - 543;
     const billNumber = `B-${adYear}-${String(bill.billing_month).padStart(2, '0')}-${String(bill.bill_id).padStart(5, '0')}`;
@@ -173,6 +197,16 @@ export async function GET(
         utility_total: utilityTotal,
         maintenance_fee: maintenanceFee,
         total_amount: totalAmount,
+      },
+      meter_photos: {
+        electric: electricPhoto ? {
+          photo_id: electricPhoto.photo_id,
+          photo_url: `/api/meter-photos/${electricPhoto.photo_id}/download`,
+        } : null,
+        water: waterPhoto ? {
+          photo_id: waterPhoto.photo_id,
+          photo_url: `/api/meter-photos/${waterPhoto.photo_id}/download`,
+        } : null,
       },
     });
   } catch (error: any) {
