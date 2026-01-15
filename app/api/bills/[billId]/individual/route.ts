@@ -105,7 +105,7 @@ export async function GET(
     const electricReading = utilityReadings.find((ur: any) => ur.utility_code === 'electric');
     const waterReading = utilityReadings.find((ur: any) => ur.utility_code === 'water');
 
-    // ดึงรูปภาพมิเตอร์
+    // ดึงรูปภาพมิเตอร์ (ถ้ามี) เพื่อใช้ในหน้า preview
     let meterPhotos: any[] = [];
     try {
       meterPhotos = await query(

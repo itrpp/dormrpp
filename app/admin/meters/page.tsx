@@ -129,6 +129,12 @@ export default async function MetersPage() {
 
       if (totalReadings > 0) {
         // ลอง query แบบง่ายๆ (ไม่ใช้ JOIN หลายตาราง)
+        // ดึง utility_type_id สำหรับ electric ก่อน
+        const [electricType] = await query<any>(
+          `SELECT utility_type_id FROM utility_types WHERE code = 'electric' LIMIT 1`
+        );
+        const electricTypeId = electricType?.utility_type_id || null;
+
         const simpleReadings = await query<any>(
           `SELECT 
             bur.reading_id,
@@ -136,11 +142,17 @@ export default async function MetersPage() {
             bur.cycle_id,
             bur.meter_start,
             bur.meter_end,
-            (bur.meter_end - bur.meter_start) as \`usage\`,
-            bur.utility_type_id
+            bur.utility_type_id,
+            CASE 
+              WHEN bur.utility_type_id = ? AND bur.meter_end < bur.meter_start THEN
+                (10000 - bur.meter_start) + bur.meter_end
+              ELSE
+                bur.meter_end - bur.meter_start
+            END as \`usage\`
           FROM bill_utility_readings bur
           ORDER BY bur.cycle_id DESC, bur.room_id, bur.utility_type_id
-          LIMIT 100`
+          LIMIT 100`,
+          [electricTypeId]
         );
 
         if (simpleReadings && simpleReadings.length > 0) {

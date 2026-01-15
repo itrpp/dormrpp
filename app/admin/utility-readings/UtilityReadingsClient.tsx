@@ -441,8 +441,14 @@ export default function UtilityReadingsClient() {
       const electricStart = Number(form.electric.meter_start);
       const electricEnd = Number(form.electric.meter_end);
       if (electricEnd < electricStart) {
-        alert(`ค่าสิ้นสุด (${electricEnd}) ต้องมากกว่าหรือเท่ากับค่าเริ่มต้น (${electricStart}) สำหรับค่าไฟฟ้า`);
-        return;
+        const confirmRollover = window.confirm(
+          `ตรวจพบว่าค่าสิ้นสุด (${electricEnd}) น้อยกว่าค่าเริ่มต้น (${electricStart}) สำหรับมิเตอร์ไฟฟ้า\n` +
+          'ระบบจะถือว่าเป็นการวนเลขมิเตอร์ 4 หลัก (เช่น 9999 → 0000) และคำนวณหน่วยแบบ rollover\n\n' +
+          'ยืนยันว่าค่านี้ถูกต้องหรือไม่?'
+        );
+        if (!confirmRollover) {
+          return;
+        }
       }
     }
 
@@ -512,13 +518,7 @@ export default function UtilityReadingsClient() {
       const room = rooms.find(r => r.room_id === roomId);
       const roomLabel = room ? `${room.building_name} - ห้อง ${room.room_number}` : `ห้อง ${roomId}`;
 
-      if (form.electric.meter_start !== '' && form.electric.meter_end !== '') {
-        const electricStart = Number(form.electric.meter_start);
-        const electricEnd = Number(form.electric.meter_end);
-        if (electricEnd < electricStart) {
-          errors.push(`${roomLabel}: ค่าสิ้นสุด (${electricEnd}) ต้องมากกว่าหรือเท่ากับค่าเริ่มต้น (${electricStart}) สำหรับค่าไฟฟ้า`);
-        }
-      }
+      // ค่าไฟฟ้า: อนุญาตให้ end < start ได้ (กรณี rollover) จึงไม่ตรวจ error ที่นี่
 
       if (form.water.meter_start !== '' && form.water.meter_end !== '') {
         const waterStart = Number(form.water.meter_start);
@@ -1064,10 +1064,15 @@ export default function UtilityReadingsClient() {
                   
                   if (!form) return null;
 
-                  // คำนวณ usage
-                  const electricUsage = form.electric.meter_start !== '' && form.electric.meter_end !== ''
-                    ? Number(form.electric.meter_end) - Number(form.electric.meter_start)
-                    : null;
+                  // คำนวณหน่วยไฟฟ้า (รองรับกรณีมิเตอร์ 4 หลัก rollover)
+                  const electricUsage = (() => {
+                    if (form.electric.meter_start === '' || form.electric.meter_end === '') return null;
+                    const es = Number(form.electric.meter_start);
+                    const ee = Number(form.electric.meter_end);
+                    const MOD = 10000;
+                    if (isNaN(es) || isNaN(ee)) return null;
+                    return ee >= es ? ee - es : (MOD - es + ee);
+                  })();
                   const waterUsage = form.water.meter_start !== '' && form.water.meter_end !== ''
                     ? Number(form.water.meter_end) - Number(form.water.meter_start)
                     : null;
@@ -1080,10 +1085,17 @@ export default function UtilityReadingsClient() {
                     r => r.room_id === room.room_id && r.utility_code === 'water'
                   );
                   
-                  // คำนวณหน่วยที่ใช้จากข้อมูลที่บันทึกแล้ว หรือจาก form ที่กรอก
-                  const currentElectricUsage = currentElectricReading
-                    ? currentElectricReading.meter_end - currentElectricReading.meter_start
-                    : (electricUsage !== null ? electricUsage : null);
+                  // คำนวณหน่วยที่ใช้จากข้อมูลที่บันทึกแล้ว หรือจาก form ที่กรอก (รองรับ rollover)
+                  const currentElectricUsage = (() => {
+                    if (currentElectricReading) {
+                      const es = Number(currentElectricReading.meter_start);
+                      const ee = Number(currentElectricReading.meter_end);
+                      const MOD = 10000;
+                      if (isNaN(es) || isNaN(ee)) return null;
+                      return ee >= es ? ee - es : (MOD - es + ee);
+                    }
+                    return electricUsage !== null ? electricUsage : null;
+                  })();
                   const currentWaterUsage = currentWaterReading
                     ? currentWaterReading.meter_end - currentWaterReading.meter_start
                     : (waterUsage !== null ? waterUsage : null);

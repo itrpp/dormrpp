@@ -1,7 +1,7 @@
 // app/api/utility-readings/route.ts
 import { NextResponse } from 'next/server';
 import { query, pool } from '@/lib/db';
-import { getUtilityTypeId } from '@/lib/repositories/bills';
+import { getUtilityTypeId, getCurrentUtilityRate } from '@/lib/repositories/bills';
 
 // POST /api/utility-readings
 // บันทึกเลขมิเตอร์สำหรับห้องและรอบบิล
@@ -34,54 +34,84 @@ export async function POST(req: Request) {
       );
     }
 
+    // ดึงอัตราค่าใช้ปัจจุบันตาม utility type (ใช้ effective_date <= วันนี้)
+    const [electricRate, waterRate] = await Promise.all([
+      getCurrentUtilityRate(electricityTypeId),
+      getCurrentUtilityRate(waterTypeId),
+    ]);
+
     const results: any[] = [];
 
     // บันทึกมิเตอร์ไฟฟ้า (ถ้ามี)
     if (electric && electric.start !== undefined && electric.end !== undefined) {
-      // ตรวจสอบว่า meter_end ต้องมากกว่าหรือเท่ากับ meter_start
-      if (electric.end < electric.start) {
-        await connection.rollback();
-        connection.release();
-        return NextResponse.json(
-          { error: `ค่าสิ้นสุด (${electric.end}) ต้องมากกว่าหรือเท่ากับค่าเริ่มต้น (${electric.start}) สำหรับค่าไฟฟ้า` },
-          { status: 400 }
-        );
+      const meterStart = Number(electric.start);
+      const meterEnd = Number(electric.end);
+
+      // 4 หลัก → MOD = 10000
+      const MOD = 10000;
+      let units = 0;
+      let isRollover = 0;
+
+      if (meterEnd >= meterStart) {
+        units = meterEnd - meterStart;
+      } else {
+        // กรณี rollover เช่น 9217 → 0005
+        isRollover = 1;
+        units = (MOD - meterStart) + meterEnd;
       }
+
+      const rate = electricRate;
+      const amount = units * rate;
 
       const [result] = await connection.query(
         `INSERT INTO bill_utility_readings 
-         (room_id, cycle_id, utility_type_id, meter_start, meter_end)
-         VALUES (?, ?, ?, ?, ?)
+         (room_id, cycle_id, utility_type_id, meter_start, meter_end, units, rate, amount, is_rollover)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE
            meter_start = VALUES(meter_start),
-           meter_end = VALUES(meter_end)`,
-        [room_id, cycle_id, electricityTypeId, electric.start, electric.end]
+           meter_end = VALUES(meter_end),
+           units = VALUES(units),
+           rate = VALUES(rate),
+           amount = VALUES(amount),
+           is_rollover = VALUES(is_rollover)`,
+        [room_id, cycle_id, electricityTypeId, meterStart, meterEnd, units, rate, amount, isRollover]
       );
-      results.push({ utility: 'electric', reading_id: (result as any).insertId || 'updated' });
+      results.push({ utility: 'electric', reading_id: (result as any).insertId || 'updated', units, rate, amount, is_rollover: isRollover });
     }
 
     // บันทึกมิเตอร์น้ำ (ถ้ามี)
     if (water && water.start !== undefined && water.end !== undefined) {
-      // ตรวจสอบว่า meter_end ต้องมากกว่าหรือเท่ากับ meter_start
-      if (water.end < water.start) {
+      const meterStart = Number(water.start);
+      const meterEnd = Number(water.end);
+
+      // ตรวจสอบว่า meter_end ต้องมากกว่าหรือเท่ากับ meter_start สำหรับค่าน้ำ (ยังไม่รองรับ rollover)
+      if (meterEnd < meterStart) {
         await connection.rollback();
         connection.release();
         return NextResponse.json(
-          { error: `ค่าสิ้นสุด (${water.end}) ต้องมากกว่าหรือเท่ากับค่าเริ่มต้น (${water.start}) สำหรับค่าน้ำ` },
+          { error: `ค่าสิ้นสุด (${meterEnd}) ต้องมากกว่าหรือเท่ากับค่าเริ่มต้น (${meterStart}) สำหรับค่าน้ำ` },
           { status: 400 }
         );
       }
 
+      const units = meterEnd - meterStart;
+      const rate = waterRate;
+      const amount = units * rate;
+
       const [result] = await connection.query(
         `INSERT INTO bill_utility_readings 
-         (room_id, cycle_id, utility_type_id, meter_start, meter_end)
-         VALUES (?, ?, ?, ?, ?)
+         (room_id, cycle_id, utility_type_id, meter_start, meter_end, units, rate, amount, is_rollover)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
          ON DUPLICATE KEY UPDATE
            meter_start = VALUES(meter_start),
-           meter_end = VALUES(meter_end)`,
-        [room_id, cycle_id, waterTypeId, water.start, water.end]
+           meter_end = VALUES(meter_end),
+           units = VALUES(units),
+           rate = VALUES(rate),
+           amount = VALUES(amount),
+           is_rollover = VALUES(is_rollover)`,
+        [room_id, cycle_id, waterTypeId, meterStart, meterEnd, units, rate, amount]
       );
-      results.push({ utility: 'water', reading_id: (result as any).insertId || 'updated' });
+      results.push({ utility: 'water', reading_id: (result as any).insertId || 'updated', units, rate, amount, is_rollover: 0 });
     }
 
     await connection.commit();

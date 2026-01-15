@@ -27,7 +27,7 @@ interface MeterReading {
   cycle_id: number;
   meter_start: number;
   meter_end: number;
-  usage: number;
+  usage?: number | null;
   billing_year: number;
   billing_month: number;
   room_number: string;
@@ -56,6 +56,24 @@ function getMonthName(month: number): string {
     'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม',
   ];
   return monthNames[month - 1] || month.toString();
+}
+
+// ฟังก์ชันคำนวณหน่วยไฟฟ้า (รองรับมิเตอร์ 4 หลัก และกรณีค่าเป็นลบจากการกลับรอบ)
+function calculateElectricUsage(meterStart: number | null | undefined, meterEnd: number | null | undefined): number | null {
+  if (meterStart === null || meterStart === undefined || meterEnd === null || meterEnd === undefined) {
+    return null;
+  }
+  const start = Number(meterStart);
+  const end = Number(meterEnd);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return null;
+  }
+  const MAX = 10000; // มิเตอร์ไฟฟ้า 4 หลัก 0000-9999
+  if (end >= start) {
+    return end - start;
+  }
+  // กรณีมิเตอร์วนรอบ เช่น 9217 -> 008 ทั้งรอบบิลถัดไปอ่านเป็น 8
+  return (MAX - start) + end;
 }
 
 export default function MetersClient({
@@ -261,20 +279,28 @@ export default function MetersClient({
     // ถ้าเลือกทั้งสอง checkbox ให้แสดงห้องที่มีหน่วยใช้งาน = 0 ทั้งน้ำและไฟ
     if (showRoomsWithZeroUsageWater && showRoomsWithZeroUsageElectric) {
       result = result.filter((group) => {
-        const waterUsage = group.water?.usage ?? (group.water ? (group.water.meter_end - group.water.meter_start) : 0);
-        const electricUsage = group.electric?.usage ?? (group.electric ? (group.electric.meter_end - group.electric.meter_start) : 0);
+        const waterUsage =
+          group.water?.usage ??
+          (group.water ? Math.max(0, (group.water.meter_end ?? 0) - (group.water.meter_start ?? 0)) : 0);
+        const electricUsage =
+          group.electric?.usage ??
+          (group.electric ? calculateElectricUsage(group.electric.meter_start, group.electric.meter_end) ?? 0 : 0);
         return waterUsage === 0 && electricUsage === 0;
       });
     } else if (showRoomsWithZeroUsageWater) {
       // Filter ห้องที่มีหน่วยใช้งานน้ำ = 0
       result = result.filter((group) => {
-        const waterUsage = group.water?.usage ?? (group.water ? (group.water.meter_end - group.water.meter_start) : 0);
+        const waterUsage =
+          group.water?.usage ??
+          (group.water ? Math.max(0, (group.water.meter_end ?? 0) - (group.water.meter_start ?? 0)) : 0);
         return waterUsage === 0;
       });
     } else if (showRoomsWithZeroUsageElectric) {
       // Filter ห้องที่มีหน่วยใช้งานไฟฟ้า = 0
       result = result.filter((group) => {
-        const electricUsage = group.electric?.usage ?? (group.electric ? (group.electric.meter_end - group.electric.meter_start) : 0);
+        const electricUsage =
+          group.electric?.usage ??
+          (group.electric ? calculateElectricUsage(group.electric.meter_start, group.electric.meter_end) ?? 0 : 0);
         return electricUsage === 0;
       });
     }
@@ -531,7 +557,13 @@ export default function MetersClient({
                         {group.electric ? formatNumber(group.electric.meter_end) : '-'}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-yellow-600">
-                        {group.electric ? formatNumber(group.electric.usage ?? (group.electric.meter_end - group.electric.meter_start)) : '-'}
+                        {group.electric
+                          ? (() => {
+                              // ใช้สูตร rollover เสมอ (ไม่ใช้ usage จาก SQL เพราะอาจเป็นค่าติดลบ)
+                              const usage = calculateElectricUsage(group.electric.meter_start, group.electric.meter_end);
+                              return usage != null ? formatNumber(usage) : '-';
+                            })()
+                          : '-'}
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap text-center">
                         {group.electric ? (() => {
