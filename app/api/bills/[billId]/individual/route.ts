@@ -29,11 +29,7 @@ export async function GET(
         b.room_id,
         b.contract_id,
         b.cycle_id,
-        b.maintenance_fee,
-        b.electric_amount,
-        b.water_amount,
-        b.subtotal_amount,
-        b.total_amount,
+        1000 AS maintenance_fee,
         b.status,
         cy.billing_year,
         cy.billing_month,
@@ -144,7 +140,7 @@ export async function GET(
       return `${day} ${monthNames[month - 1]} ${year}`;
     };
 
-    // คำนวณยอดรวม (แปลงเป็น Number เพื่อป้องกันการต่อ string)
+    // คำนวณยอดรวมเบื้องต้นจากค่าที่เก็บในตาราง bills (จะไม่ใช้ต่อใน summary ใหม่)
     const utilityTotal = Number(bill.electric_amount || 0) + Number(bill.water_amount || 0);
     const maintenanceFee = Number(bill.maintenance_fee || 0);
     const totalAmount = Number(bill.total_amount || 0);
@@ -186,7 +182,9 @@ export async function GET(
             ? end - start 
             : (MOD - start) + end; // กรณี rollover เช่น 9823 → 173
           const rate = Number(electricReading.rate_per_unit || 0);
-          const amount = usage * rate; // คำนวณจาก usage × rate_per_unit (รองรับ rollover)
+          const totalAmountForRoom = usage * rate; // ยอดรวมของห้อง
+          const tenantCount = Math.max(bill.tenant_count || 1, 1);
+          const amount = totalAmountForRoom / tenantCount; // หารด้วยจำนวนผู้เช่า (ยอดต่อคน)
           return {
             meter_start: electricReading.meter_start || 0,
             meter_end: electricReading.meter_end || 0,
@@ -198,7 +196,9 @@ export async function GET(
         water: waterReading ? (() => {
           const usage = (waterReading.meter_end || 0) - (waterReading.meter_start || 0);
           const rate = Number(waterReading.rate_per_unit || 0);
-          const amount = usage * rate; // คำนวณจาก usage × rate_per_unit
+          const totalAmountForRoom = usage * rate; // ยอดรวมของห้อง
+          const tenantCount = Math.max(bill.tenant_count || 1, 1);
+          const amount = totalAmountForRoom / tenantCount; // หารด้วยจำนวนผู้เช่า (ยอดต่อคน)
           return {
             meter_start: waterReading.meter_start || 0,
             meter_end: waterReading.meter_end || 0,
@@ -210,36 +210,57 @@ export async function GET(
       },
       summary: {
         utility_total: (() => {
-          // คำนวณ utility_total ใหม่จาก amount ที่คำนวณใหม่
-          const electricAmount = electricReading ? (() => {
-            const start = Number(electricReading.meter_start || 0);
-            const end = Number(electricReading.meter_end || 0);
-            const MOD = 10000;
-            const usage = end >= start ? end - start : (MOD - start) + end;
-            return usage * Number(electricReading.rate_per_unit || 0);
-          })() : Number(bill.electric_amount || 0);
-          const waterAmount = waterReading 
-            ? ((waterReading.meter_end || 0) - (waterReading.meter_start || 0)) * Number(waterReading.rate_per_unit || 0)
-            : Number(bill.water_amount || 0);
+          // คำนวณ utility_total ต่อคนจาก amount ที่คำนวณจากมิเตอร์และ rate ÷ จำนวนผู้เช่า
+          const tenantCount = Math.max(bill.tenant_count || 1, 1);
+          const electricAmount = electricReading
+            ? (() => {
+                const start = Number(electricReading.meter_start || 0);
+                const end = Number(electricReading.meter_end || 0);
+                const MOD = 10000;
+                const usage = end >= start ? end - start : (MOD - start) + end;
+                const totalAmountForRoom = usage * Number(electricReading.rate_per_unit || 0);
+                return totalAmountForRoom / tenantCount; // หารด้วยจำนวนผู้เช่า
+              })()
+            : 0;
+
+          const waterAmount = waterReading
+            ? (() => {
+                const totalAmountForRoom = ((waterReading.meter_end || 0) - (waterReading.meter_start || 0)) *
+                  Number(waterReading.rate_per_unit || 0);
+                return totalAmountForRoom / tenantCount; // หารด้วยจำนวนผู้เช่า
+              })()
+            : 0;
+
           return Number(electricAmount) + Number(waterAmount);
         })(),
-        maintenance_fee: Number(maintenanceFee),
+        maintenance_fee: Number(maintenanceFee), // ค่าบำรุงรักษาแต่ละคนจ่ายเต็ม (ไม่ต้องหาร)
         total_amount: (() => {
-          // คำนวณ total_amount ใหม่จาก utility_total + maintenance_fee (รองรับ rollover)
-          const utilityTotal = (() => {
-            const electricAmount = electricReading ? (() => {
-              const start = Number(electricReading.meter_start || 0);
-              const end = Number(electricReading.meter_end || 0);
-              const MOD = 10000;
-              const usage = end >= start ? end - start : (MOD - start) + end;
-              return usage * Number(electricReading.rate_per_unit || 0);
-            })() : Number(bill.electric_amount || 0);
-            const waterAmount = waterReading 
-              ? ((waterReading.meter_end || 0) - (waterReading.meter_start || 0)) * Number(waterReading.rate_per_unit || 0)
-              : Number(bill.water_amount || 0);
+          // คำนวณ total_amount ต่อคน = (ค่าไฟต่อคน) + (ค่าน้ำต่อคน) + ค่าบำรุงรักษา
+          const tenantCount = Math.max(bill.tenant_count || 1, 1);
+          const utilityTotalFromReadings = (() => {
+            const electricAmount = electricReading
+              ? (() => {
+                  const start = Number(electricReading.meter_start || 0);
+                  const end = Number(electricReading.meter_end || 0);
+                  const MOD = 10000;
+                  const usage = end >= start ? end - start : (MOD - start) + end;
+                  const totalAmountForRoom = usage * Number(electricReading.rate_per_unit || 0);
+                  return totalAmountForRoom / tenantCount; // หารด้วยจำนวนผู้เช่า
+                })()
+              : 0;
+
+            const waterAmount = waterReading
+              ? (() => {
+                  const totalAmountForRoom = ((waterReading.meter_end || 0) - (waterReading.meter_start || 0)) *
+                    Number(waterReading.rate_per_unit || 0);
+                  return totalAmountForRoom / tenantCount; // หารด้วยจำนวนผู้เช่า
+                })()
+              : 0;
+
             return Number(electricAmount) + Number(waterAmount);
           })();
-          return Number(utilityTotal) + Number(maintenanceFee);
+
+          return Number(utilityTotalFromReadings) + Number(maintenanceFee);
         })(),
       },
       meter_photos: {

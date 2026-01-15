@@ -40,20 +40,16 @@ export async function POST(req: Request) {
 
     // SQL สำหรับออกบิลทั้งเดือน
     // หลักการ: 1 tenant = 1 bill
-    // ค่าบำรุงรักษา: แต่ละคนจ่ายเต็มจำนวน (ไม่หาร)
-    // ค่าน้ำและค่าไฟ: หารด้วยจำนวนผู้เช่าในห้อง (active contracts)
-    // ใช้ JOIN กับ billing_cycles และดึงอัตราจาก utility_rates
+    // หมายเหตุ: ไม่เก็บ amount columns (electric_amount, water_amount, subtotal_amount, total_amount) ในฐานข้อมูล
+    // จำนวนเงินทั้งหมดจะคำนวณจาก meter readings ใน API อื่นๆ แทน
+    // ค่าบำรุงรักษา: แต่ละคนจ่ายเต็มจำนวน 1000 บาท (ใช้ค่าคงที่ ไม่เก็บในฐานข้อมูล)
+    // ค่าน้ำและค่าไฟ: หารด้วยจำนวนผู้เช่าในห้อง (active contracts) - คำนวณใน API อื่นๆ
     const sql = `
       INSERT INTO bills (
         tenant_id,
         room_id,
         contract_id,
         cycle_id,
-        maintenance_fee,
-        electric_amount,
-        water_amount,
-        subtotal_amount,
-        total_amount,
         status
       )
       SELECT
@@ -61,129 +57,11 @@ export async function POST(req: Request) {
         c.room_id,
         c.contract_id,
         bc.cycle_id,
-        ? AS maintenance_fee,
-        
-        -- คำนวณ electric_amount = ((meter_end - meter_start) * rate_per_unit) / จำนวนผู้เช่าในห้อง
-        IFNULL(
-          (
-            (e.meter_end - e.meter_start) * (
-              SELECT rate_per_unit 
-              FROM utility_rates 
-              WHERE utility_type_id = ?
-                AND effective_date <= CURDATE()
-              ORDER BY effective_date DESC 
-              LIMIT 1
-            )
-          ) / GREATEST(
-            (SELECT COUNT(*) FROM contracts c2 WHERE c2.room_id = c.room_id AND c2.status = 'active'),
-            1
-          ), 0
-        ) AS electric_amount,
-        
-        -- คำนวณ water_amount = ((meter_end - meter_start) * rate_per_unit) / จำนวนผู้เช่าในห้อง
-        IFNULL(
-          (
-            (w.meter_end - w.meter_start) * (
-              SELECT rate_per_unit 
-              FROM utility_rates 
-              WHERE utility_type_id = ?
-                AND effective_date <= CURDATE()
-              ORDER BY effective_date DESC 
-              LIMIT 1
-            )
-          ) / GREATEST(
-            (SELECT COUNT(*) FROM contracts c2 WHERE c2.room_id = c.room_id AND c2.status = 'active'),
-            1
-          ), 0
-        ) AS water_amount,
-        
-        -- subtotal_amount = maintenance_fee + (electric / tenant_count) + (water / tenant_count)
-        (
-          ? +
-          IFNULL(
-            (
-              (e.meter_end - e.meter_start) * (
-                SELECT rate_per_unit 
-                FROM utility_rates 
-                WHERE utility_type_id = ?
-                  AND effective_date <= CURDATE()
-                ORDER BY effective_date DESC 
-                LIMIT 1
-              )
-            ) / GREATEST(
-              (SELECT COUNT(*) FROM contracts c2 WHERE c2.room_id = c.room_id AND c2.status = 'active'),
-              1
-            ), 0
-          ) +
-          IFNULL(
-            (
-              (w.meter_end - w.meter_start) * (
-                SELECT rate_per_unit 
-                FROM utility_rates 
-                WHERE utility_type_id = ?
-                  AND effective_date <= CURDATE()
-                ORDER BY effective_date DESC 
-                LIMIT 1
-              )
-            ) / GREATEST(
-              (SELECT COUNT(*) FROM contracts c2 WHERE c2.room_id = c.room_id AND c2.status = 'active'),
-              1
-            ), 0
-          )
-        ) AS subtotal_amount,
-        
-        -- total_amount = subtotal_amount (ไม่มีส่วนลดตอนนี้)
-        (
-          ? +
-          IFNULL(
-            (
-              (e.meter_end - e.meter_start) * (
-                SELECT rate_per_unit 
-                FROM utility_rates 
-                WHERE utility_type_id = ?
-                  AND effective_date <= CURDATE()
-                ORDER BY effective_date DESC 
-                LIMIT 1
-              )
-            ) / GREATEST(
-              (SELECT COUNT(*) FROM contracts c2 WHERE c2.room_id = c.room_id AND c2.status = 'active'),
-              1
-            ), 0
-          ) +
-          IFNULL(
-            (
-              (w.meter_end - w.meter_start) * (
-                SELECT rate_per_unit 
-                FROM utility_rates 
-                WHERE utility_type_id = ?
-                  AND effective_date <= CURDATE()
-                ORDER BY effective_date DESC 
-                LIMIT 1
-              )
-            ) / GREATEST(
-              (SELECT COUNT(*) FROM contracts c2 WHERE c2.room_id = c.room_id AND c2.status = 'active'),
-              1
-            ), 0
-          )
-        ) AS total_amount,
-        
         'draft' AS status
       FROM contracts c
       JOIN billing_cycles bc
         ON bc.billing_year = ?
        AND bc.billing_month = ?
-      
-      -- LEFT JOIN กับ bill_utility_readings สำหรับไฟฟ้า
-      LEFT JOIN bill_utility_readings e
-        ON e.room_id = c.room_id
-       AND e.cycle_id = bc.cycle_id
-       AND e.utility_type_id = ?
-      
-      -- LEFT JOIN กับ bill_utility_readings สำหรับน้ำ
-      LEFT JOIN bill_utility_readings w
-        ON w.room_id = c.room_id
-       AND w.cycle_id = bc.cycle_id
-       AND w.utility_type_id = ?
       
       WHERE c.status = 'active'
       
@@ -196,19 +74,8 @@ export async function POST(req: Request) {
     `;
 
     const result = await connection.query(sql, [
-      maintenance_fee, // maintenance_fee
-      electricityTypeId, // electric subquery utility_type_id
-      waterTypeId, // water subquery utility_type_id
-      maintenance_fee, // subtotal maintenance_fee
-      electricityTypeId, // subtotal electric utility_type_id
-      waterTypeId, // subtotal water utility_type_id
-      maintenance_fee, // total maintenance_fee
-      electricityTypeId, // total electric utility_type_id
-      waterTypeId, // total water utility_type_id
       year, // JOIN billing_cycles billing_year
       month, // JOIN billing_cycles billing_month
-      electricityTypeId, // electricity reading utility_type_id
-      waterTypeId, // water reading utility_type_id
     ]);
 
     const affectedRows = (result as any).affectedRows || 0;

@@ -28,11 +28,6 @@ export async function GET(req: Request) {
         b.room_id,
         b.contract_id,
         b.cycle_id,
-        b.maintenance_fee,
-        b.electric_amount,
-        b.water_amount,
-        b.subtotal_amount,
-        b.total_amount,
         b.status,
         cy.billing_year,
         cy.billing_month,
@@ -118,6 +113,65 @@ export async function GET(req: Request) {
           (ur: any) => ur.room_id === bill.room_id && ur.cycle_id === bill.cycle_id
         );
 
+        // คำนวณ utility_readings พร้อม usage ที่รองรับ rollover
+        const calculatedReadings = roomReadings.map((ur: any) => {
+          // คำนวณหน่วยใช้ไฟฟ้า (รองรับมิเตอร์ 4 หลัก rollover)
+          let usage: number;
+          if (ur.utility_code === 'electric') {
+            const meterStart = Number(ur.meter_start);
+            const meterEnd = Number(ur.meter_end);
+            const MOD = 10000; // มิเตอร์ไฟฟ้า 4 หลัก
+            if (meterEnd >= meterStart) {
+              usage = meterEnd - meterStart;
+            } else {
+              // กรณี rollover เช่น 9823 → 173
+              usage = (MOD - meterStart) + meterEnd;
+            }
+          } else {
+            // ค่าน้ำ: คำนวณแบบปกติ
+            usage = ur.meter_end - ur.meter_start;
+          }
+          const rate = ur.rate_per_unit || 0;
+          return {
+            reading_id: ur.reading_id,
+            utility_type: ur.utility_code,
+            utility_name: ur.utility_name,
+            meter_start: ur.meter_start,
+            meter_end: ur.meter_end,
+            usage: usage,
+            rate_per_unit: rate,
+          };
+        });
+
+        // นับจำนวนผู้เช่าในห้อง (active contracts ในรอบบิลนี้)
+        const roomBills = bills.filter((b: any) => b.room_id === bill.room_id && b.cycle_id === bill.cycle_id);
+        const uniqueTenants = new Set(roomBills.map((b: any) => b.tenant_id));
+        const tenantCount = Math.max(uniqueTenants.size || 1, 1);
+
+        // คำนวณจำนวนเงินจาก usage × rate_per_unit ÷ จำนวนผู้เช่า (รองรับ rollover)
+        const electricReading = calculatedReadings.find((r: any) => r.utility_type === 'electric');
+        const waterReading = calculatedReadings.find((r: any) => r.utility_type === 'water');
+        
+        // คำนวณยอดรวมของห้องก่อน (ยังไม่หาร)
+        const totalElectricAmountForRoom =
+          electricReading && electricReading.usage != null && electricReading.rate_per_unit != null
+            ? Number(electricReading.usage) * Number(electricReading.rate_per_unit)
+            : 0;
+        
+        const totalWaterAmountForRoom =
+          waterReading && waterReading.usage != null && waterReading.rate_per_unit != null
+            ? Number(waterReading.usage) * Number(waterReading.rate_per_unit)
+            : 0;
+
+        // หารด้วยจำนวนผู้เช่าในห้อง (แต่ละคนจ่ายส่วนแบ่งของค่าไฟ/น้ำ)
+        const calculatedElectricAmount = totalElectricAmountForRoom / tenantCount;
+        const calculatedWaterAmount = totalWaterAmountForRoom / tenantCount;
+
+        // ค่าบำรุงรักษา: แต่ละคนจ่ายเต็มจำนวน (ไม่ต้องหาร)
+        const maintenanceFee = 1000;
+        // ยอดรวมทั้งสิ้นต่อคน = (ค่าไฟต่อคน) + (ค่าน้ำต่อคน) + ค่าบำรุงรักษา
+        const calculatedTotalAmount = calculatedElectricAmount + calculatedWaterAmount + maintenanceFee;
+
         groupedBills[billKey] = {
           bill_id: bill.bill_id,
           tenant_id: bill.tenant_id,
@@ -130,22 +184,14 @@ export async function GET(req: Request) {
           billing_month: bill.billing_month,
           billing_date: bill.billing_date,
           due_date: bill.due_date,
-          maintenance_fee: bill.maintenance_fee || 0,
-          electric_amount: bill.electric_amount || 0,
-          water_amount: bill.water_amount || 0,
-          subtotal_amount: bill.subtotal_amount || 0,
-          total_amount: bill.total_amount || 0,
+          maintenance_fee: maintenanceFee,
+          electric_amount: calculatedElectricAmount,
+          water_amount: calculatedWaterAmount,
+          subtotal_amount: calculatedElectricAmount + calculatedWaterAmount,
+          total_amount: calculatedTotalAmount,
           status: bill.status || 'draft',
           tenants: [],
-          utility_readings: roomReadings.map((ur: any) => ({
-            reading_id: ur.reading_id,
-            utility_type: ur.utility_code,
-            utility_name: ur.utility_name,
-            meter_start: ur.meter_start,
-            meter_end: ur.meter_end,
-            usage: ur.meter_end - ur.meter_start,
-            rate_per_unit: ur.rate_per_unit || 0,
-          })),
+          utility_readings: calculatedReadings,
         };
       }
 

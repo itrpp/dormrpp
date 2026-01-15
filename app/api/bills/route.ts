@@ -112,25 +112,29 @@ export async function POST(req: Request) {
       ? Math.max(Number(tenantCountResult[0].count) || 1, 1) // อย่างน้อย 1 คน
       : 1;
 
-    // คำนวณ electric_amount
+    // คำนวณ electric_amount จากมิเตอร์ + rate (รองรับ rollover สำหรับมิเตอร์ไฟฟ้า 4 หลัก)
     const electricReading = utilityReadings.find((r: any) => r.code === 'electric');
     if (electricReading) {
       const electricTypeId = await getUtilityTypeId('electric');
       if (electricTypeId) {
         const rate = await getCurrentUtilityRate(electricTypeId, cycleDate);
-        const usage = (electricReading.meter_end || 0) - (electricReading.meter_start || 0);
+        const start = Number(electricReading.meter_start || 0);
+        const end = Number(electricReading.meter_end || 0);
+        const MOD = 10000; // มิเตอร์ไฟฟ้า 4 หลัก
+        const usage = end >= start ? end - start : (MOD - start) + end;
         // หารด้วยจำนวนผู้เช่าในห้อง
         calculatedElectricAmount = (usage * rate) / tenantCount;
       }
     }
 
-    // คำนวณ water_amount
+    // คำนวณ water_amount จากมิเตอร์ + rate (ไม่ต้อง rollover)
     const waterReading = utilityReadings.find((r: any) => r.code === 'water');
     if (waterReading) {
       const waterTypeId = await getUtilityTypeId('water');
       if (waterTypeId) {
         const rate = await getCurrentUtilityRate(waterTypeId, cycleDate);
-        const usage = (waterReading.meter_end || 0) - (waterReading.meter_start || 0);
+        const usage =
+          Number(waterReading.meter_end || 0) - Number(waterReading.meter_start || 0);
         // หารด้วยจำนวนผู้เช่าในห้อง
         calculatedWaterAmount = (usage * rate) / tenantCount;
       }

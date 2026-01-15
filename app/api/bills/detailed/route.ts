@@ -28,11 +28,6 @@ export async function GET(req: Request) {
         b.room_id,
         b.contract_id,
         b.cycle_id,
-        b.maintenance_fee,
-        b.electric_amount,
-        b.water_amount,
-        b.subtotal_amount,
-        b.total_amount,
         b.status,
         cy.billing_year,
         cy.billing_month,
@@ -175,19 +170,30 @@ export async function GET(req: Request) {
         });
 
         // คำนวณจำนวนเงินจาก usage × rate_per_unit (รองรับ rollover)
+        // ไม่ใช้ค่าจากตาราง bills อีกต่อไป (คำนวณใหม่ 100% จากมิเตอร์และ rate)
         const electricReading = calculatedReadings.find((r: any) => r.utility_type === 'electric');
         const waterReading = calculatedReadings.find((r: any) => r.utility_type === 'water');
         
-        const calculatedElectricAmount = electricReading && electricReading.usage != null && electricReading.rate_per_unit != null
-          ? Number(electricReading.usage) * Number(electricReading.rate_per_unit)
-          : (bill.electric_amount || 0);
+        // คำนวณยอดรวมของห้องก่อน (ยังไม่หาร)
+        const totalElectricAmountForRoom =
+          electricReading && electricReading.usage != null && electricReading.rate_per_unit != null
+            ? Number(electricReading.usage) * Number(electricReading.rate_per_unit)
+            : 0;
         
-        const calculatedWaterAmount = waterReading && waterReading.usage != null && waterReading.rate_per_unit != null
-          ? Number(waterReading.usage) * Number(waterReading.rate_per_unit)
-          : (bill.water_amount || 0);
+        const totalWaterAmountForRoom =
+          waterReading && waterReading.usage != null && waterReading.rate_per_unit != null
+            ? Number(waterReading.usage) * Number(waterReading.rate_per_unit)
+            : 0;
 
-        // คำนวณยอดรวมทั้งสิ้นใหม่จาก electric_amount + water_amount + maintenance_fee
-        const maintenanceFee = Number(bill.maintenance_fee) || 0;
+        // หารด้วยจำนวนผู้เช่าในห้อง (แต่ละคนจ่ายส่วนแบ่งของค่าไฟ/น้ำ)
+        // อย่างน้อย 1 คน (ป้องกันการหารด้วย 0)
+        const actualTenantCount = Math.max(tenantCount, 1);
+        const calculatedElectricAmount = totalElectricAmountForRoom / actualTenantCount;
+        const calculatedWaterAmount = totalWaterAmountForRoom / actualTenantCount;
+
+        // ค่าบำรุงรักษา: แต่ละคนจ่ายเต็มจำนวน (ไม่ต้องหาร)
+        const maintenanceFee = 1000;
+        // ยอดรวมทั้งสิ้นต่อคน = (ค่าไฟต่อคน) + (ค่าน้ำต่อคน) + ค่าบำรุงรักษา
         const calculatedTotalAmount = calculatedElectricAmount + calculatedWaterAmount + maintenanceFee;
 
         groupedBills[billKey] = {

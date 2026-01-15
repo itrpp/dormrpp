@@ -47,6 +47,7 @@ interface DetailedBill {
   subtotal_amount: number;
   total_amount: number;
   status: string;
+  tenant_count: number; // จำนวนผู้เช่าในห้อง (ใช้สำหรับหารค่าไฟ/น้ำ)
   tenants: Tenant[];
   utility_readings: UtilityReading[];
 }
@@ -633,39 +634,53 @@ const formatInteger = (num: number | null | undefined): string => {
   }, [bills]);
 
   // คำนวณยอดรวมจากยอดที่แสดงจริงในแต่ละแถว
-  // คำนวณจาก tableRows โดยตรงเพื่อให้ตรงกับที่แสดงในตาราง
+  // ใช้สูตรเดียวกับที่ใช้คำนวณใน cell (คำนวณจากมิเตอร์ + rate 100%)
   const totals = useMemo(() => {
     let totalMaintenance = 0;
     let totalElectricity = 0;
     let totalWater = 0;
     let totalAmount = 0;
 
-    // คำนวณจาก tableRows โดยตรง
     tableRows.forEach((row) => {
       // ค่าบำรุงรักษา: แสดงเฉพาะผู้เช่าคนแรก (isFirstTenant)
       if (row.isFirstTenant) {
         totalMaintenance += MAINTENANCE_FEE;
       }
 
-      // ค่าไฟฟ้า: ใช้ค่าจากฐานข้อมูล (electric_amount) - แสดงทุกแถว
-      // แปลงเป็นตัวเลขและตรวจสอบว่าไม่ใช่ NaN
-      const electricAmount = Number(row.bill.electric_amount) || 0;
-      if (!isNaN(electricAmount)) {
-        totalElectricity += electricAmount;
+      const electricity = getUtilityReading(row.bill, 'electric');
+      const water = getUtilityReading(row.bill, 'water');
+      const tenantCount = Math.max(row.bill.tenant_count || 1, 1);
+
+      // ค่าไฟฟ้า: คำนวณจาก usage × rate_per_unit ÷ จำนวนผู้เช่า (รองรับ rollover)
+      if (row.isFirstTenant && electricity && electricity.usage != null && electricity.rate_per_unit != null) {
+        const totalElectricAmount = Number(electricity.usage) * Number(electricity.rate_per_unit);
+        const electricAmountPerPerson = totalElectricAmount / tenantCount;
+        if (!isNaN(electricAmountPerPerson)) {
+          totalElectricity += electricAmountPerPerson;
+        }
       }
 
-      // ค่าน้ำ: ใช้ค่าจากฐานข้อมูล (water_amount) - แสดงทุกแถว
-      // แปลงเป็นตัวเลขและตรวจสอบว่าไม่ใช่ NaN
-      const waterAmount = Number(row.bill.water_amount) || 0;
-      if (!isNaN(waterAmount)) {
-        totalWater += waterAmount;
+      // ค่าน้ำ: คำนวณจาก usage × rate_per_unit ÷ จำนวนผู้เช่า
+      if (row.isFirstTenant && water && water.usage != null && water.rate_per_unit != null) {
+        const totalWaterAmount = Number(water.usage) * Number(water.rate_per_unit);
+        const waterAmountPerPerson = totalWaterAmount / tenantCount;
+        if (!isNaN(waterAmountPerPerson)) {
+          totalWater += waterAmountPerPerson;
+        }
       }
 
-      // รวม: ใช้ค่าจากฐานข้อมูล (total_amount) - แสดงทุกแถว
-      // แปลงเป็นตัวเลขและตรวจสอบว่าไม่ใช่ NaN
-      const total = Number(row.bill.total_amount) || 0;
-      if (!isNaN(total)) {
-        totalAmount += total;
+      // รวม: (ค่าไฟต่อคน) + (ค่าน้ำต่อคน) + ค่าบำรุงรักษา (เฉพาะแถวแรกของห้อง)
+      if (row.isFirstTenant) {
+        const electricAmountPerPerson = electricity && electricity.usage != null && electricity.rate_per_unit != null
+          ? (Number(electricity.usage) * Number(electricity.rate_per_unit)) / tenantCount
+          : 0;
+        const waterAmountPerPerson = water && water.usage != null && water.rate_per_unit != null
+          ? (Number(water.usage) * Number(water.rate_per_unit)) / tenantCount
+          : 0;
+        const rowTotal = electricAmountPerPerson + waterAmountPerPerson + MAINTENANCE_FEE;
+        if (!isNaN(rowTotal)) {
+          totalAmount += rowTotal;
+        }
       }
     });
 
@@ -868,15 +883,16 @@ const formatInteger = (num: number | null | undefined): string => {
                         : '-'}
                     </td>
                     <td className="px-3 py-2 text-right border">
-                      {/* จำนวนเงิน: คำนวณจาก usage × rate_per_unit (รองรับ rollover) */}
+                      {/* จำนวนเงิน: คำนวณจาก usage × rate_per_unit ÷ จำนวนผู้เช่า (รองรับ rollover) */}
                       {(() => {
                         if (row.isFirstTenant && electricity && electricity.usage != null && electricity.rate_per_unit != null) {
-                          const electricAmount = Number(electricity.usage) * Number(electricity.rate_per_unit);
-                          return electricAmount > 0 ? formatNumber(electricAmount) : '-';
+                          const tenantCount = Math.max(row.bill.tenant_count || 1, 1);
+                          const totalElectricAmount = Number(electricity.usage) * Number(electricity.rate_per_unit);
+                          const electricAmountPerPerson = totalElectricAmount / tenantCount;
+                          return electricAmountPerPerson > 0 ? formatNumber(electricAmountPerPerson) : '-';
                         }
-                        // ถ้าไม่มี utility_readings ให้ใช้ค่าจากฐานข้อมูล
-                        const electricAmount = row.bill.electric_amount || 0;
-                        return electricAmount > 0 ? formatNumber(electricAmount) : '-';
+                        // ถ้าไม่มี utility_readings ให้แสดง '-'
+                        return '-';
                       })()}
                     </td>
                     {/* น้ำ */}
@@ -900,40 +916,47 @@ const formatInteger = (num: number | null | undefined): string => {
                         : '-'}
                     </td>
                     <td className="px-3 py-2 text-right border">
-                      {/* จำนวนเงิน: คำนวณจาก usage × rate_per_unit */}
+                      {/* จำนวนเงิน: คำนวณจาก usage × rate_per_unit ÷ จำนวนผู้เช่า */}
                       {(() => {
                         if (row.isFirstTenant && water && water.usage != null && water.rate_per_unit != null) {
-                          const waterAmount = Number(water.usage) * Number(water.rate_per_unit);
-                          return waterAmount > 0 ? formatNumber(waterAmount) : '-';
+                          const tenantCount = Math.max(row.bill.tenant_count || 1, 1);
+                          const totalWaterAmount = Number(water.usage) * Number(water.rate_per_unit);
+                          const waterAmountPerPerson = totalWaterAmount / tenantCount;
+                          return waterAmountPerPerson > 0 ? formatNumber(waterAmountPerPerson) : '-';
                         }
-                        // ถ้าไม่มี utility_readings ให้ใช้ค่าจากฐานข้อมูล
-                        const waterAmount = row.bill.water_amount || 0;
-                        return waterAmount > 0 ? formatNumber(waterAmount) : '-';
+                        // ถ้าไม่มี utility_readings ให้แสดง '-'
+                        return '-';
                       })()}
                     </td>
                     {/* รวม */}
                     <td className="px-3 py-2 text-right font-medium border">
-                      {/* คำนวณยอดรวมทั้งสิ้นจาก electric_amount + water_amount + maintenance_fee (รองรับ rollover) */}
+                      {/* คำนวณยอดรวมทั้งสิ้นต่อคน = (ค่าไฟต่อคน) + (ค่าน้ำต่อคน) + ค่าบำรุงรักษา */}
                       {(() => {
-                        // คำนวณ electric_amount
-                        let electricAmount = 0;
+                        const tenantCount = Math.max(row.bill.tenant_count || 1, 1);
+                        const maintenanceFee = 1000; // ค่าบำรุงรักษาแต่ละคนจ่ายเต็ม
+                        
+                        // คำนวณ electric_amount ต่อคน
+                        let electricAmountPerPerson = 0;
                         if (row.isFirstTenant && electricity && electricity.usage != null && electricity.rate_per_unit != null) {
-                          electricAmount = Number(electricity.usage) * Number(electricity.rate_per_unit);
+                          const totalElectricAmount = Number(electricity.usage) * Number(electricity.rate_per_unit);
+                          electricAmountPerPerson = totalElectricAmount / tenantCount;
                         } else {
-                          electricAmount = row.bill.electric_amount || 0;
+                          // ถ้าไม่มี reading ให้ใช้ค่าจาก API (ที่คำนวณแล้ว)
+                          electricAmountPerPerson = row.bill.electric_amount || 0;
                         }
                         
-                        // คำนวณ water_amount
-                        let waterAmount = 0;
+                        // คำนวณ water_amount ต่อคน
+                        let waterAmountPerPerson = 0;
                         if (row.isFirstTenant && water && water.usage != null && water.rate_per_unit != null) {
-                          waterAmount = Number(water.usage) * Number(water.rate_per_unit);
+                          const totalWaterAmount = Number(water.usage) * Number(water.rate_per_unit);
+                          waterAmountPerPerson = totalWaterAmount / tenantCount;
                         } else {
-                          waterAmount = row.bill.water_amount || 0;
+                          // ถ้าไม่มี reading ให้ใช้ค่าจาก API (ที่คำนวณแล้ว)
+                          waterAmountPerPerson = row.bill.water_amount || 0;
                         }
                         
-                        // คำนวณ total_amount
-                        const maintenanceFee = Number(row.bill.maintenance_fee) || 0;
-                        const total = electricAmount + waterAmount + maintenanceFee;
+                        // ยอดรวมทั้งสิ้นต่อคน = (ค่าไฟต่อคน) + (ค่าน้ำต่อคน) + ค่าบำรุงรักษา
+                        const total = electricAmountPerPerson + waterAmountPerPerson + maintenanceFee;
                         return total > 0 ? formatNumber(total) : '-';
                       })()}
                     </td>

@@ -33,11 +33,7 @@ export async function GET(
         b.room_id,
         b.contract_id,
         b.cycle_id,
-        b.maintenance_fee,
-        b.electric_amount,
-        b.water_amount,
-        b.subtotal_amount,
-        b.total_amount,
+        1000 AS maintenance_fee,
         b.status,
         cy.billing_year,
         cy.billing_month,
@@ -273,7 +269,7 @@ export async function GET(
     const contractStatus = bill.contract_status === 'active' ? 'Active' : bill.contract_status || '-';
     worksheet.getCell('B14').value = contractStatus;
 
-    // ส่วนที่ 3: ตารางค่าใช้จ่าย
+    // ส่วนที่ 3: ตารางค่าใช้จ่าย (คำนวณจากมิเตอร์ + rate 100%)
     // ตารางที่ 1: ค่าดูแล/ค่าคงที่
     worksheet.mergeCells('A16:G16');
     const table1Header = worksheet.getCell('A16');
@@ -343,13 +339,16 @@ export async function GET(
       const meterStart = Number(electricReading.meter_start || 0);
       const meterEnd = Number(electricReading.meter_end || 0);
       const MOD = 10000; // มิเตอร์ไฟฟ้า 4 หลัก
-      const usage = meterEnd >= meterStart 
-        ? meterEnd - meterStart 
-        : (MOD - meterStart) + meterEnd; // กรณี rollover เช่น 9823 → 173
+      const usage =
+        meterEnd >= meterStart
+          ? meterEnd - meterStart
+          : (MOD - meterStart) + meterEnd; // กรณี rollover เช่น 9823 → 173
       
-      // คำนวณจำนวนเงินจาก usage × rate_per_unit (รองรับ rollover)
+      // คำนวณจำนวนเงินจาก usage × rate_per_unit ÷ จำนวนผู้เช่า (รองรับ rollover)
       const rate = Number(electricReading.rate_per_unit || 0);
-      const electricAmount = usage * rate;
+      const tenantCount = Math.max(bill.tenant_count || 1, 1);
+      const totalElectricAmountForRoom = usage * rate;
+      const electricAmount = totalElectricAmountForRoom / tenantCount; // หารด้วยจำนวนผู้เช่า (ยอดต่อคน)
       
       const electricRow = worksheet.addRow([
         meterStart,
@@ -392,9 +391,11 @@ export async function GET(
 
     if (waterReading) {
       const usage = Number(waterReading.meter_end || 0) - Number(waterReading.meter_start || 0);
-      // คำนวณจำนวนเงินจาก usage × rate_per_unit
+      // คำนวณจำนวนเงินจาก usage × rate_per_unit ÷ จำนวนผู้เช่า
       const rate = Number(waterReading.rate_per_unit || 0);
-      const waterAmount = usage * rate;
+      const tenantCount = Math.max(bill.tenant_count || 1, 1);
+      const totalWaterAmountForRoom = usage * rate;
+      const waterAmount = totalWaterAmountForRoom / tenantCount; // หารด้วยจำนวนผู้เช่า (ยอดต่อคน)
       
       const waterRow = worksheet.addRow([
         Number(waterReading.meter_start) || 0,
@@ -433,7 +434,8 @@ export async function GET(
     worksheet.mergeCells('A33:C33');
     worksheet.getCell('A33').value = 'รวมค่าสาธารณูปโภค';
     worksheet.getCell('A33').font = { bold: true };
-    // คำนวณจำนวนเงินใหม่จาก usage × rate_per_unit (รองรับ rollover)
+    // คำนวณจำนวนเงินใหม่จาก usage × rate_per_unit ÷ จำนวนผู้เช่า (รองรับ rollover) 100%
+    const tenantCount = Math.max(bill.tenant_count || 1, 1);
     let calculatedElectricAmount = 0;
     let calculatedWaterAmount = 0;
     
@@ -441,17 +443,16 @@ export async function GET(
       const meterStart = Number(electricReading.meter_start || 0);
       const meterEnd = Number(electricReading.meter_end || 0);
       const MOD = 10000;
-      const usage = meterEnd >= meterStart ? meterEnd - meterStart : (MOD - meterStart) + meterEnd;
-      calculatedElectricAmount = usage * Number(electricReading.rate_per_unit || 0);
-    } else {
-      calculatedElectricAmount = Number(bill.electric_amount) || 0;
+      const usage =
+        meterEnd >= meterStart ? meterEnd - meterStart : (MOD - meterStart) + meterEnd;
+      const totalElectricAmountForRoom = usage * Number(electricReading.rate_per_unit || 0);
+      calculatedElectricAmount = totalElectricAmountForRoom / tenantCount; // หารด้วยจำนวนผู้เช่า
     }
     
     if (waterReading) {
       const usage = Number(waterReading.meter_end || 0) - Number(waterReading.meter_start || 0);
-      calculatedWaterAmount = usage * Number(waterReading.rate_per_unit || 0);
-    } else {
-      calculatedWaterAmount = Number(bill.water_amount) || 0;
+      const totalWaterAmountForRoom = usage * Number(waterReading.rate_per_unit || 0);
+      calculatedWaterAmount = totalWaterAmountForRoom / tenantCount; // หารด้วยจำนวนผู้เช่า
     }
     
     const totalUtilities = calculatedElectricAmount + calculatedWaterAmount;
@@ -464,7 +465,7 @@ export async function GET(
     worksheet.mergeCells('A34:C34');
     worksheet.getCell('A34').value = 'ค่าดูแล/บำรุงรักษา';
     worksheet.getCell('A34').font = { bold: true };
-    const maintenanceFee = Number(bill.maintenance_fee) || 0;
+    const maintenanceFee = 1000; // ค่าบำรุงรักษาแต่ละคนจ่ายเต็ม (ไม่ต้องหาร)
     worksheet.getCell('D34').value = maintenanceFee;
     worksheet.getCell('D34').numFmt = '#,##0.00';
     worksheet.getCell('D34').font = { bold: true };
