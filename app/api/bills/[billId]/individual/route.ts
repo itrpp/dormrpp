@@ -144,10 +144,10 @@ export async function GET(
       return `${day} ${monthNames[month - 1]} ${year}`;
     };
 
-    // คำนวณยอดรวม
-    const utilityTotal = (bill.electric_amount || 0) + (bill.water_amount || 0);
-    const maintenanceFee = bill.maintenance_fee || 0;
-    const totalAmount = bill.total_amount || 0;
+    // คำนวณยอดรวม (แปลงเป็น Number เพื่อป้องกันการต่อ string)
+    const utilityTotal = Number(bill.electric_amount || 0) + Number(bill.water_amount || 0);
+    const maintenanceFee = Number(bill.maintenance_fee || 0);
+    const totalAmount = Number(bill.total_amount || 0);
 
     // สถานะบิล
     const statusText = bill.status === 'paid' ? 'ชำระแล้ว' : bill.status === 'sent' ? 'ส่งแล้ว' : 'รอชำระ';
@@ -173,30 +173,74 @@ export async function GET(
         tenant_count: bill.tenant_count || 1,
       },
       charges: {
-        maintenance_fee: bill.maintenance_fee || 0,
+        maintenance_fee: Number(bill.maintenance_fee || 0),
         other_fixed: 0,
         discount: 0,
       },
       utilities: {
-        electric: electricReading ? {
-          meter_start: electricReading.meter_start || 0,
-          meter_end: electricReading.meter_end || 0,
-          usage: (electricReading.meter_end || 0) - (electricReading.meter_start || 0),
-          rate_per_unit: electricReading.rate_per_unit || 0,
-          amount: bill.electric_amount || 0,
-        } : null,
-        water: waterReading ? {
-          meter_start: waterReading.meter_start || 0,
-          meter_end: waterReading.meter_end || 0,
-          usage: (waterReading.meter_end || 0) - (waterReading.meter_start || 0),
-          rate_per_unit: waterReading.rate_per_unit || 0,
-          amount: bill.water_amount || 0,
-        } : null,
+        electric: electricReading ? (() => {
+          const start = Number(electricReading.meter_start || 0);
+          const end = Number(electricReading.meter_end || 0);
+          const MOD = 10000; // มิเตอร์ไฟฟ้า 4 หลัก
+          const usage = end >= start 
+            ? end - start 
+            : (MOD - start) + end; // กรณี rollover เช่น 9823 → 173
+          const rate = Number(electricReading.rate_per_unit || 0);
+          const amount = usage * rate; // คำนวณจาก usage × rate_per_unit (รองรับ rollover)
+          return {
+            meter_start: electricReading.meter_start || 0,
+            meter_end: electricReading.meter_end || 0,
+            usage: usage,
+            rate_per_unit: rate,
+            amount: amount,
+          };
+        })() : null,
+        water: waterReading ? (() => {
+          const usage = (waterReading.meter_end || 0) - (waterReading.meter_start || 0);
+          const rate = Number(waterReading.rate_per_unit || 0);
+          const amount = usage * rate; // คำนวณจาก usage × rate_per_unit
+          return {
+            meter_start: waterReading.meter_start || 0,
+            meter_end: waterReading.meter_end || 0,
+            usage: usage,
+            rate_per_unit: rate,
+            amount: amount,
+          };
+        })() : null,
       },
       summary: {
-        utility_total: utilityTotal,
-        maintenance_fee: maintenanceFee,
-        total_amount: totalAmount,
+        utility_total: (() => {
+          // คำนวณ utility_total ใหม่จาก amount ที่คำนวณใหม่
+          const electricAmount = electricReading ? (() => {
+            const start = Number(electricReading.meter_start || 0);
+            const end = Number(electricReading.meter_end || 0);
+            const MOD = 10000;
+            const usage = end >= start ? end - start : (MOD - start) + end;
+            return usage * Number(electricReading.rate_per_unit || 0);
+          })() : Number(bill.electric_amount || 0);
+          const waterAmount = waterReading 
+            ? ((waterReading.meter_end || 0) - (waterReading.meter_start || 0)) * Number(waterReading.rate_per_unit || 0)
+            : Number(bill.water_amount || 0);
+          return Number(electricAmount) + Number(waterAmount);
+        })(),
+        maintenance_fee: Number(maintenanceFee),
+        total_amount: (() => {
+          // คำนวณ total_amount ใหม่จาก utility_total + maintenance_fee (รองรับ rollover)
+          const utilityTotal = (() => {
+            const electricAmount = electricReading ? (() => {
+              const start = Number(electricReading.meter_start || 0);
+              const end = Number(electricReading.meter_end || 0);
+              const MOD = 10000;
+              const usage = end >= start ? end - start : (MOD - start) + end;
+              return usage * Number(electricReading.rate_per_unit || 0);
+            })() : Number(bill.electric_amount || 0);
+            const waterAmount = waterReading 
+              ? ((waterReading.meter_end || 0) - (waterReading.meter_start || 0)) * Number(waterReading.rate_per_unit || 0)
+              : Number(bill.water_amount || 0);
+            return Number(electricAmount) + Number(waterAmount);
+          })();
+          return Number(utilityTotal) + Number(maintenanceFee);
+        })(),
       },
       meter_photos: {
         electric: electricPhoto ? {

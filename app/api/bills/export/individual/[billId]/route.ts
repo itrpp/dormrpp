@@ -339,13 +339,23 @@ export async function GET(
     });
 
     if (electricReading) {
-      const usage = Number(electricReading.meter_end || 0) - Number(electricReading.meter_start || 0);
-      const electricAmount = Number(bill.electric_amount) || 0;
+      // คำนวณหน่วยใช้ไฟฟ้า (รองรับมิเตอร์ 4 หลัก rollover)
+      const meterStart = Number(electricReading.meter_start || 0);
+      const meterEnd = Number(electricReading.meter_end || 0);
+      const MOD = 10000; // มิเตอร์ไฟฟ้า 4 หลัก
+      const usage = meterEnd >= meterStart 
+        ? meterEnd - meterStart 
+        : (MOD - meterStart) + meterEnd; // กรณี rollover เช่น 9823 → 173
+      
+      // คำนวณจำนวนเงินจาก usage × rate_per_unit (รองรับ rollover)
+      const rate = Number(electricReading.rate_per_unit || 0);
+      const electricAmount = usage * rate;
+      
       const electricRow = worksheet.addRow([
-        Number(electricReading.meter_start) || 0,
-        Number(electricReading.meter_end) || 0,
+        meterStart,
+        meterEnd,
         usage,
-        Number(electricReading.rate_per_unit) || 0,
+        rate,
         electricAmount,
       ]);
       electricRow.getCell(1).numFmt = '#,##0';
@@ -382,12 +392,15 @@ export async function GET(
 
     if (waterReading) {
       const usage = Number(waterReading.meter_end || 0) - Number(waterReading.meter_start || 0);
-      const waterAmount = Number(bill.water_amount) || 0;
+      // คำนวณจำนวนเงินจาก usage × rate_per_unit
+      const rate = Number(waterReading.rate_per_unit || 0);
+      const waterAmount = usage * rate;
+      
       const waterRow = worksheet.addRow([
         Number(waterReading.meter_start) || 0,
         Number(waterReading.meter_end) || 0,
         usage,
-        Number(waterReading.rate_per_unit) || 0,
+        rate,
         waterAmount,
       ]);
       waterRow.getCell(1).numFmt = '#,##0';
@@ -420,10 +433,28 @@ export async function GET(
     worksheet.mergeCells('A33:C33');
     worksheet.getCell('A33').value = 'รวมค่าสาธารณูปโภค';
     worksheet.getCell('A33').font = { bold: true };
-    // แปลงค่าเป็น number ก่อนบวกเพื่อป้องกันการต่อ string
-    const electricAmount = Number(bill.electric_amount) || 0;
-    const waterAmount = Number(bill.water_amount) || 0;
-    const totalUtilities = electricAmount + waterAmount;
+    // คำนวณจำนวนเงินใหม่จาก usage × rate_per_unit (รองรับ rollover)
+    let calculatedElectricAmount = 0;
+    let calculatedWaterAmount = 0;
+    
+    if (electricReading) {
+      const meterStart = Number(electricReading.meter_start || 0);
+      const meterEnd = Number(electricReading.meter_end || 0);
+      const MOD = 10000;
+      const usage = meterEnd >= meterStart ? meterEnd - meterStart : (MOD - meterStart) + meterEnd;
+      calculatedElectricAmount = usage * Number(electricReading.rate_per_unit || 0);
+    } else {
+      calculatedElectricAmount = Number(bill.electric_amount) || 0;
+    }
+    
+    if (waterReading) {
+      const usage = Number(waterReading.meter_end || 0) - Number(waterReading.meter_start || 0);
+      calculatedWaterAmount = usage * Number(waterReading.rate_per_unit || 0);
+    } else {
+      calculatedWaterAmount = Number(bill.water_amount) || 0;
+    }
+    
+    const totalUtilities = calculatedElectricAmount + calculatedWaterAmount;
     worksheet.getCell('D33').value = totalUtilities;
     worksheet.getCell('D33').numFmt = '#,##0.00';
     worksheet.getCell('D33').font = { bold: true };
@@ -447,7 +478,8 @@ export async function GET(
     worksheet.mergeCells('A36:C36');
     worksheet.getCell('A36').value = 'ยอดชำระทั้งสิ้น';
     worksheet.getCell('A36').font = { size: 14, bold: true };
-    const totalAmount = Number(bill.total_amount) || 0;
+    // คำนวณยอดรวมทั้งสิ้นใหม่จาก totalUtilities + maintenanceFee (รองรับ rollover)
+    const totalAmount = totalUtilities + maintenanceFee;
     worksheet.getCell('D36').value = totalAmount;
     worksheet.getCell('D36').numFmt = '#,##0.00';
     worksheet.getCell('D36').font = { size: 14, bold: true };

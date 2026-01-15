@@ -143,6 +143,53 @@ export async function GET(req: Request) {
         const uniqueTenants = new Set(roomBills.map((b: any) => b.tenant_id));
         const tenantCount = uniqueTenants.size || 1;
 
+        // คำนวณ utility_readings พร้อม usage ที่รองรับ rollover
+        const calculatedReadings = roomReadings.map((ur: any) => {
+          // คำนวณหน่วยใช้ไฟฟ้า (รองรับมิเตอร์ 4 หลัก rollover)
+          let usage: number;
+          if (ur.utility_code === 'electric') {
+            const meterStart = Number(ur.meter_start);
+            const meterEnd = Number(ur.meter_end);
+            const MOD = 10000; // มิเตอร์ไฟฟ้า 4 หลัก
+            if (meterEnd >= meterStart) {
+              usage = meterEnd - meterStart;
+            } else {
+              // กรณี rollover เช่น 9823 → 173
+              usage = (MOD - meterStart) + meterEnd;
+            }
+          } else {
+            // ค่าน้ำ: คำนวณแบบปกติ
+            usage = ur.meter_end - ur.meter_start;
+          }
+          const rate = ur.rate_per_unit || 0;
+          return {
+            reading_id: ur.reading_id,
+            utility_type: ur.utility_code,
+            utility_name: ur.utility_name,
+            meter_start: ur.meter_start,
+            meter_end: ur.meter_end,
+            usage: usage,
+            rate_per_unit: rate,
+            created_at: ur.created_at,
+          };
+        });
+
+        // คำนวณจำนวนเงินจาก usage × rate_per_unit (รองรับ rollover)
+        const electricReading = calculatedReadings.find((r: any) => r.utility_type === 'electric');
+        const waterReading = calculatedReadings.find((r: any) => r.utility_type === 'water');
+        
+        const calculatedElectricAmount = electricReading && electricReading.usage != null && electricReading.rate_per_unit != null
+          ? Number(electricReading.usage) * Number(electricReading.rate_per_unit)
+          : (bill.electric_amount || 0);
+        
+        const calculatedWaterAmount = waterReading && waterReading.usage != null && waterReading.rate_per_unit != null
+          ? Number(waterReading.usage) * Number(waterReading.rate_per_unit)
+          : (bill.water_amount || 0);
+
+        // คำนวณยอดรวมทั้งสิ้นใหม่จาก electric_amount + water_amount + maintenance_fee
+        const maintenanceFee = Number(bill.maintenance_fee) || 0;
+        const calculatedTotalAmount = calculatedElectricAmount + calculatedWaterAmount + maintenanceFee;
+
         groupedBills[billKey] = {
           bill_id: bill.bill_id,
           tenant_id: bill.tenant_id,
@@ -155,29 +202,16 @@ export async function GET(req: Request) {
           billing_month: bill.billing_month,
           billing_date: bill.billing_date,
           due_date: bill.due_date,
-          maintenance_fee: bill.maintenance_fee || 0,
-          // ใช้จำนวนเงินจากฐานข้อมูลโดยตรง (ไม่ต้องคำนวณใหม่)
-          electric_amount: bill.electric_amount || 0,
-          water_amount: bill.water_amount || 0,
+          maintenance_fee: maintenanceFee,
+          // ใช้จำนวนเงินที่คำนวณใหม่จาก usage × rate_per_unit (รองรับ rollover)
+          electric_amount: calculatedElectricAmount,
+          water_amount: calculatedWaterAmount,
           subtotal_amount: bill.subtotal_amount || 0,
-          total_amount: bill.total_amount || 0,
+          total_amount: calculatedTotalAmount, // คำนวณใหม่จาก electric_amount + water_amount + maintenance_fee
           status: bill.status || 'draft',
           tenant_count: tenantCount, // เพิ่มจำนวนผู้เช่าในห้อง
           tenants: [],
-          utility_readings: roomReadings.map((ur: any) => {
-            const usage = ur.meter_end - ur.meter_start;
-            const rate = ur.rate_per_unit || 0;
-            return {
-              reading_id: ur.reading_id,
-              utility_type: ur.utility_code,
-              utility_name: ur.utility_name,
-              meter_start: ur.meter_start,
-              meter_end: ur.meter_end,
-              usage: usage,
-              rate_per_unit: rate,
-              created_at: ur.created_at,
-            };
-          }),
+          utility_readings: calculatedReadings,
         };
       }
 

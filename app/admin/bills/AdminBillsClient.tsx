@@ -868,8 +868,13 @@ const formatInteger = (num: number | null | undefined): string => {
                         : '-'}
                     </td>
                     <td className="px-3 py-2 text-right border">
-                      {/* จำนวนเงิน: ใช้ค่าจากฐานข้อมูลโดยตรง (electric_amount) */}
+                      {/* จำนวนเงิน: คำนวณจาก usage × rate_per_unit (รองรับ rollover) */}
                       {(() => {
+                        if (row.isFirstTenant && electricity && electricity.usage != null && electricity.rate_per_unit != null) {
+                          const electricAmount = Number(electricity.usage) * Number(electricity.rate_per_unit);
+                          return electricAmount > 0 ? formatNumber(electricAmount) : '-';
+                        }
+                        // ถ้าไม่มี utility_readings ให้ใช้ค่าจากฐานข้อมูล
                         const electricAmount = row.bill.electric_amount || 0;
                         return electricAmount > 0 ? formatNumber(electricAmount) : '-';
                       })()}
@@ -895,17 +900,40 @@ const formatInteger = (num: number | null | undefined): string => {
                         : '-'}
                     </td>
                     <td className="px-3 py-2 text-right border">
-                      {/* จำนวนเงิน: ใช้ค่าจากฐานข้อมูลโดยตรง (water_amount) */}
+                      {/* จำนวนเงิน: คำนวณจาก usage × rate_per_unit */}
                       {(() => {
+                        if (row.isFirstTenant && water && water.usage != null && water.rate_per_unit != null) {
+                          const waterAmount = Number(water.usage) * Number(water.rate_per_unit);
+                          return waterAmount > 0 ? formatNumber(waterAmount) : '-';
+                        }
+                        // ถ้าไม่มี utility_readings ให้ใช้ค่าจากฐานข้อมูล
                         const waterAmount = row.bill.water_amount || 0;
                         return waterAmount > 0 ? formatNumber(waterAmount) : '-';
                       })()}
                     </td>
                     {/* รวม */}
                     <td className="px-3 py-2 text-right font-medium border">
-                      {/* ใช้ค่าจากฐานข้อมูลโดยตรง (total_amount) */}
+                      {/* คำนวณยอดรวมทั้งสิ้นจาก electric_amount + water_amount + maintenance_fee (รองรับ rollover) */}
                       {(() => {
-                        const total = row.bill.total_amount || 0;
+                        // คำนวณ electric_amount
+                        let electricAmount = 0;
+                        if (row.isFirstTenant && electricity && electricity.usage != null && electricity.rate_per_unit != null) {
+                          electricAmount = Number(electricity.usage) * Number(electricity.rate_per_unit);
+                        } else {
+                          electricAmount = row.bill.electric_amount || 0;
+                        }
+                        
+                        // คำนวณ water_amount
+                        let waterAmount = 0;
+                        if (row.isFirstTenant && water && water.usage != null && water.rate_per_unit != null) {
+                          waterAmount = Number(water.usage) * Number(water.rate_per_unit);
+                        } else {
+                          waterAmount = row.bill.water_amount || 0;
+                        }
+                        
+                        // คำนวณ total_amount
+                        const maintenanceFee = Number(row.bill.maintenance_fee) || 0;
+                        const total = electricAmount + waterAmount + maintenanceFee;
                         return total > 0 ? formatNumber(total) : '-';
                       })()}
                     </td>
