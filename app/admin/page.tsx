@@ -183,48 +183,20 @@ async function getDashboardStats(): Promise<DashboardStats> {
     // อัตราการเข้าพัก (occupied rooms / total rooms * 100)
     const occupancyRate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
 
-    // 4. สถิติการเงิน - รวม query เป็นอันเดียว
+    // 4. สถิติการเงิน
+    // หมายเหตุ: เดิมใช้คอลัมน์ total_amount / maintenance_fee จากตาราง bills แต่คอลัมน์เหล่านี้ถูกลบออกแล้ว
+    // เพื่อหลีกเลี่ยง SQL error และไม่ดึงข้อมูลผิด schema ตอนนี้จะปิดการดึงข้อมูลการเงินจริง และตั้งค่าเป็น 0 ชั่วคราว
     let revenueThisMonth = 0;
     let totalRevenue = 0;
     let expensesThisMonth = 0;
     let totalExpenses = 0;
     
-    try {
-    const [revenueThisMonthResult, totalRevenueResult, expensesThisMonthResult, totalExpensesResult] = await Promise.all([
-      query<{ total: number }>(
-        `SELECT COALESCE(SUM(b.total_amount), 0) as total 
-         FROM bills b
-         JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
-         WHERE cy.billing_year = ? AND cy.billing_month = ?`,
-        [buddhistYear, currentMonth]
-      ),
-      query<{ total: number }>(
-        'SELECT COALESCE(SUM(total_amount), 0) as total FROM bills'
-      ),
-      query<{ total: number }>(
-        `SELECT COALESCE(SUM(b.maintenance_fee), 0) as total 
-         FROM bills b
-         JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
-         WHERE cy.billing_year = ? AND cy.billing_month = ?`,
-        [buddhistYear, currentMonth]
-      ),
-      query<{ total: number }>(
-        'SELECT COALESCE(SUM(maintenance_fee), 0) as total FROM bills'
-      )
-    ]);
-    
-      revenueThisMonth = revenueThisMonthResult[0]?.total || 0;
-      totalRevenue = totalRevenueResult[0]?.total || 0;
-      expensesThisMonth = expensesThisMonthResult[0]?.total || 0;
-      totalExpenses = totalExpensesResult[0]?.total || 0;
-    } catch (error: any) {
-      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
-        // Silent fallback - ไม่ log เพื่อลด log noise
-      } else {
-        // ถ้าไม่ใช่ connection error ให้ throw ต่อ
-        throw error;
-      }
-    }
+    // TODO: ถ้าต้องการสถิติการเงินจริง ให้คำนวณจาก bill_utility_readings + utility_rates เหมือนหน้า Bills / Export
+    // ปัจจุบันตั้งค่าเป็น 0 เพื่อไม่ให้เกิด SQL error จากคอลัมน์ที่ถูกลบออกแล้ว
+    revenueThisMonth = 0;
+    totalRevenue = 0;
+    expensesThisMonth = 0;
+    totalExpenses = 0;
 
     // กำไรเดือนนี้
     const profitThisMonth = revenueThisMonth - expensesThisMonth;
@@ -340,30 +312,105 @@ async function getChartData() {
     const month = date.getMonth() + 1;
     const monthName = monthNames[month - 1];
 
+    let revenue = 0;
+
     try {
-      const [revenueResult] = await query<{ total: number }>(
-        `SELECT COALESCE(SUM(b.total_amount), 0) as total 
-         FROM bills b
-         JOIN billing_cycles cy ON b.cycle_id = cy.cycle_id
-         WHERE cy.billing_year = ? AND cy.billing_month = ?`,
+      // ดึง billing cycle สำหรับเดือนนี้
+      const [cycle] = await query<{ cycle_id: number }>(
+        `SELECT cycle_id FROM billing_cycles 
+         WHERE billing_year = ? AND billing_month = ?`,
         [buddhistYear, month]
       );
 
-      const revenue = revenueResult?.total || 0;
+      if (cycle?.cycle_id) {
+        // ดึงบิลทั้งหมดในรอบบิลนี้
+        const bills = await query<{ bill_id: number; room_id: number; tenant_id: number }>(
+          `SELECT bill_id, room_id, tenant_id FROM bills WHERE cycle_id = ?`,
+          [cycle.cycle_id]
+        );
 
-      monthlyRevenueData.push({
-        month: `${monthName} ${buddhistYear}`,
-        revenue,
-      });
-    } catch (error: any) {
-      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
-        // Silent fallback - ไม่ log เพื่อลด log noise
+        // คำนวณรายได้จากแต่ละบิล
+        for (const bill of bills) {
+          // นับจำนวนผู้เช่าในห้อง (active contracts)
+          const [tenantCountResult] = await query<{ count: number }>(
+            `SELECT COUNT(*) as count FROM contracts 
+             WHERE room_id = ? AND status = 'active'`,
+            [bill.room_id]
+          );
+          const tenantCount = Math.max(tenantCountResult?.count || 1, 1);
+
+          // ดึง utility readings สำหรับห้องนี้ในรอบบิลนี้ พร้อม rate_per_unit
+          const readings = await query<{
+            utility_type_id: number;
+            utility_code: string;
+            meter_start: number;
+            meter_end: number;
+            rate_per_unit: number;
+          }>(
+            `SELECT 
+              bur.utility_type_id,
+              ut.code AS utility_code,
+              bur.meter_start,
+              bur.meter_end,
+              COALESCE(
+                (SELECT rate_per_unit 
+                 FROM utility_rates 
+                 WHERE utility_type_id = bur.utility_type_id
+                   AND effective_date <= COALESCE(bc.end_date, CURDATE())
+                 ORDER BY effective_date DESC 
+                 LIMIT 1),
+                0
+              ) AS rate_per_unit
+             FROM bill_utility_readings bur
+             JOIN utility_types ut ON bur.utility_type_id = ut.utility_type_id
+             LEFT JOIN billing_cycles bc ON bur.cycle_id = bc.cycle_id
+             WHERE bur.room_id = ? AND bur.cycle_id = ?`,
+            [bill.room_id, cycle.cycle_id]
+          );
+
+          // คำนวณยอดรวมของห้อง
+          let totalElectricAmountForRoom = 0;
+          let totalWaterAmountForRoom = 0;
+
+          for (const reading of readings) {
+            // ตรวจสอบว่าเป็นไฟฟ้าหรือน้ำจาก utility_code
+            if (reading.utility_code === 'electric') {
+              // ไฟฟ้า: รองรับ rollover
+              const start = Number(reading.meter_start || 0);
+              const end = Number(reading.meter_end || 0);
+              const MOD = 10000;
+              const usage = end >= start ? end - start : (MOD - start) + end;
+              totalElectricAmountForRoom = usage * Number(reading.rate_per_unit || 0);
+            } else if (reading.utility_code === 'water') {
+              // น้ำ: คำนวณปกติ
+              const usage = Number(reading.meter_end || 0) - Number(reading.meter_start || 0);
+              totalWaterAmountForRoom = usage * Number(reading.rate_per_unit || 0);
+            }
+          }
+
+          // หารด้วยจำนวนผู้เช่า (แต่ละคนจ่ายส่วนแบ่ง)
+          const electricAmountPerPerson = totalElectricAmountForRoom / tenantCount;
+          const waterAmountPerPerson = totalWaterAmountForRoom / tenantCount;
+          const maintenanceFee = 1000; // แต่ละคนจ่ายเต็ม
+
+          // ยอดรวมต่อคน
+          const totalPerPerson = electricAmountPerPerson + waterAmountPerPerson + maintenanceFee;
+          revenue += totalPerPerson;
+        }
       }
-      monthlyRevenueData.push({
-        month: `${monthName} ${buddhistYear}`,
-        revenue: 0,
-      });
+    } catch (error: any) {
+      // Fallback: ถ้ามี error ให้ตั้งค่าเป็น 0
+      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
+        // Silent fallback
+      } else {
+        console.error('Error calculating revenue:', error);
+      }
     }
+
+    monthlyRevenueData.push({
+      month: `${monthName} ${buddhistYear}`,
+      revenue,
+    });
   }
 
   // ข้อมูลจำนวนผู้เช่าใหม่/ออกรายเดือน (6 เดือนล่าสุด)

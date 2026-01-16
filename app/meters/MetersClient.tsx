@@ -44,9 +44,9 @@ interface Props {
   initialReadings: MeterReading[];
 }
 
-// ฟังก์ชันจัดรูปแบบตัวเลข
+// ฟังก์ชันจัดรูปแบบตัวเลข (ไม่ใส่ comma)
 function formatNumber(num: number): string {
-  return new Intl.NumberFormat('th-TH').format(num);
+  return num.toString();
 }
 
 // ฟังก์ชันแปลงเดือนเป็นชื่อภาษาไทย

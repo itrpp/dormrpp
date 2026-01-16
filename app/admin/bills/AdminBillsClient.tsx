@@ -549,7 +549,7 @@ export default function AdminBillsClient() {
     }
   };
 
-  // จัดรูปแบบตัวเลข
+  // จัดรูปแบบตัวเลขทศนิยม 2 ตำแหน่ง (ใช้กับจำนวนเงิน)
   const formatNumber = (num: number | null | undefined): string => {
     if (num === null || num === undefined || isNaN(Number(num))) return '-';
     const numValue = Number(num);
@@ -560,14 +560,12 @@ export default function AdminBillsClient() {
     }).format(numValue);
   };
 
-// จัดรูปแบบตัวเลขจำนวนเต็ม (ไม่แสดงทศนิยม) สำหรับเลขมิเตอร์เริ่มต้น/สิ้นสุด
-const formatInteger = (num: number | null | undefined): string => {
-  if (num === null || num === undefined) return '-';
-  return new Intl.NumberFormat('th-TH', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(num);
-};
+  // จัดรูปแบบตัวเลขจำนวนเต็ม (ไม่แสดงทศนิยม และไม่ใส่ comma) สำหรับเลขมิเตอร์/หน่วยใช้
+  const formatInteger = (num: number | null | undefined): string => {
+    if (num === null || num === undefined || isNaN(Number(num))) return '-';
+    const intValue = Math.trunc(Number(num));
+    return intValue.toString();
+  };
 
   // ดึงข้อมูล utility reading
   const getUtilityReading = (
@@ -873,7 +871,7 @@ const formatInteger = (num: number | null | undefined): string => {
                     </td>
                     <td className="px-3 py-2 text-center border">
                       {row.isFirstTenant && electricity
-                        ? formatNumber(electricity.usage)
+                        ? formatInteger(electricity.usage)
                         : ''}
                     </td>
                     <td className="px-3 py-2 text-center border">
@@ -907,7 +905,7 @@ const formatInteger = (num: number | null | undefined): string => {
                         : ''}
                     </td>
                     <td className="px-3 py-2 text-center border">
-                      {row.isFirstTenant && water ? formatNumber(water.usage) : ''}
+                      {row.isFirstTenant && water ? formatInteger(water.usage) : ''}
                     </td>
                     <td className="px-3 py-2 text-center border">
                       {/* อัตรา: ดึงจาก utility_rates */}

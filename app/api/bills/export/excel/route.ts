@@ -367,23 +367,36 @@ export async function GET(req: Request) {
       });
     });
 
-    // แถวรวม
+    // คำนวณผลรวมจากข้อมูลจริง
+    let totalMaintenance = 0;
+    let totalElectric = 0;
+    let totalWater = 0;
+    let totalAmount = 0;
+
+    billList.forEach((bill: any) => {
+      totalMaintenance += Number(bill.maintenance_fee || 0);
+      totalElectric += Number(bill.electric_amount || 0);
+      totalWater += Number(bill.water_amount || 0);
+      totalAmount += Number(bill.total_amount || 0);
+    });
+
+    // แถวรวม - ใช้ค่าที่คำนวณแล้วแทนสูตร Excel
     const totalRow = worksheet.addRow([
       'รวม',
       '',
       '',
-      `=SUM(D4:D${worksheet.rowCount})`,
+      totalMaintenance, // ค่าบำรุงรักษา (คอลัมน์ D)
       '',
       '',
       '',
       '',
-      `=SUM(I4:I${worksheet.rowCount})`,
+      totalElectric, // ค่าไฟฟ้า (คอลัมน์ I)
       '',
       '',
       '',
       '',
-      `=SUM(N4:N${worksheet.rowCount})`,
-      `=SUM(O4:O${worksheet.rowCount})`,
+      totalWater, // ค่าน้ำ (คอลัมน์ N)
+      totalAmount, // รวมทั้งสิ้น (คอลัมน์ O)
       '',
     ]);
 

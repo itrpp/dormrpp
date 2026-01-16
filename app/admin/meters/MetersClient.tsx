@@ -44,9 +44,9 @@ interface Props {
   initialReadings: MeterReading[];
 }
 
-// ฟังก์ชันจัดรูปแบบตัวเลข
+// ฟังก์ชันจัดรูปแบบตัวเลข (ไม่ใส่ comma)
 function formatNumber(num: number): string {
-  return new Intl.NumberFormat('th-TH').format(num);
+  return num.toString();
 }
 
 // ฟังก์ชันแปลงเดือนเป็นชื่อภาษาไทย
@@ -93,6 +93,8 @@ export default function MetersClient({
   const [selectedFloor, setSelectedFloor] = useState<number | ''>(''); // เปลี่ยนจาก selectedRoomId เป็น selectedFloor
   const [showRoomsWithZeroUsageWater, setShowRoomsWithZeroUsageWater] = useState<boolean>(false); // แสดงห้องที่มีหน่วยใช้งานน้ำ = 0
   const [showRoomsWithZeroUsageElectric, setShowRoomsWithZeroUsageElectric] = useState<boolean>(false); // แสดงห้องที่มีหน่วยใช้งานไฟฟ้า = 0
+  const [sortField, setSortField] = useState<'electricUsage' | 'waterUsage' | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   
   // State สำหรับดูรูปมิเตอร์
   const [photoModalOpen, setPhotoModalOpen] = useState(false);
@@ -194,6 +196,19 @@ export default function MetersClient({
 
     fetchPhotoStatus();
   }, [selectedCycleId, initialCycles]);
+
+  const handleSortUsage = (field: 'electricUsage' | 'waterUsage') => {
+    setSortField((prevField) => {
+      if (prevField === field) {
+        // ถ้าคลิกซ้ำคอลัมน์เดียวกัน ให้สลับทิศทาง
+        setSortDirection((prevDir) => (prevDir === 'asc' ? 'desc' : 'asc'));
+        return prevField;
+      }
+      // ถ้าเปลี่ยนคอลัมน์ ให้เริ่มที่มาก → น้อย
+      setSortDirection('desc');
+      return field;
+    });
+  };
 
   // สร้างรายการชั้นจาก rooms
   const floorOptions = useMemo(() => {
@@ -305,12 +320,34 @@ export default function MetersClient({
       });
     }
 
-    // ถ้าไม่เลือก checkbox ใดๆ ให้แสดงทั้งหมด
-    // (ไม่ต้อง filter เพิ่ม)
+    // ถ้าไม่เลือก checkbox ใดๆ ให้แสดงทั้งหมด (ไม่ต้อง filter เพิ่ม)
+
+    const getElectricUsage = (group: (typeof result)[number]): number => {
+      const electricUsage =
+        group.electric?.usage ??
+        (group.electric ? calculateElectricUsage(group.electric.meter_start, group.electric.meter_end) ?? 0 : 0);
+      return Number(electricUsage) || 0;
+    };
+
+    const getWaterUsage = (group: (typeof result)[number]): number => {
+      const waterUsage =
+        group.water?.usage ??
+        (group.water ? Math.max(0, (group.water.meter_end ?? 0) - (group.water.meter_start ?? 0)) : 0);
+      return Number(waterUsage) || 0;
+    };
 
     // Sort
     result.sort((a, b) => {
-      // เรียงตามรอบบิล (ใหม่สุดก่อน) แล้วตามอาคารและห้อง
+      // ถ้ามีการเลือก sort โดยใช้คอลัมน์ "ใช้ไป"
+      if (sortField) {
+        const aUsage = sortField === 'electricUsage' ? getElectricUsage(a) : getWaterUsage(a);
+        const bUsage = sortField === 'electricUsage' ? getElectricUsage(b) : getWaterUsage(b);
+        if (aUsage !== bUsage) {
+          return sortDirection === 'asc' ? aUsage - bUsage : bUsage - aUsage;
+        }
+      }
+
+      // ดีฟอลต์: เรียงตามรอบบิล (ใหม่สุดก่อน) แล้วตามอาคารและห้อง
       if (a.cycle.billing_year !== b.cycle.billing_year) {
         return b.cycle.billing_year - a.cycle.billing_year;
       }
@@ -479,44 +516,60 @@ export default function MetersClient({
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-2.5 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                     No.
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     ห้อง
                   </th>
-                  <th colSpan={4} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-l border-gray-200">
+                  <th colSpan={4} className="px-4 py-2.5 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-l border-gray-200">
                     ⚡ มิเตอร์ไฟฟ้า
                   </th>
-                  <th colSpan={4} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-l border-gray-200">
+                  <th colSpan={4} className="px-4 py-2.5 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-l border-gray-200">
                     💧 มิเตอร์น้ำ
                   </th>
                 </tr>
                 <tr className="bg-gray-50">
                   <th></th>
                   <th></th>
-                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 border-l border-gray-200">
+                  <th className="px-4 py-1.5 text-center text-xs font-medium text-gray-500 border-l border-gray-200">
                     เริ่มต้น
                   </th>
-                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">
+                  <th className="px-4 py-1.5 text-center text-xs font-medium text-gray-500">
                     สิ้นสุด
                   </th>
-                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">
-                    ใช้ไป (หน่วย)
+                  <th
+                    className="px-4 py-1.5 text-center text-xs font-medium text-gray-500 cursor-pointer select-none"
+                    onClick={() => handleSortUsage('electricUsage')}
+                  >
+                    ใช้ไป
+                    {sortField === 'electricUsage' && (
+                      <span className="ml-1">
+                        {sortDirection === 'asc' ? '▲' : '▼'}
+                      </span>
+                    )}
                   </th>
-                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">
+                  <th className="px-4 py-1.5 text-center text-xs font-medium text-gray-500">
                     รูปภาพ
                   </th>
-                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 border-l border-gray-200">
+                  <th className="px-4 py-1.5 text-center text-xs font-medium text-gray-500 border-l border-gray-200">
                     เริ่มต้น
                   </th>
-                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">
+                  <th className="px-4 py-1.5 text-center text-xs font-medium text-gray-500">
                     สิ้นสุด
                   </th>
-                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">
-                    ใช้ไป (หน่วย)
+                  <th
+                    className="px-4 py-1.5 text-center text-xs font-medium text-gray-500 cursor-pointer select-none"
+                    onClick={() => handleSortUsage('waterUsage')}
+                  >
+                    ใช้ไป
+                    {sortField === 'waterUsage' && (
+                      <span className="ml-1">
+                        {sortDirection === 'asc' ? '▲' : '▼'}
+                      </span>
+                    )}
                   </th>
-                  <th className="px-4 py-2 text-center text-xs font-medium text-gray-500">
+                  <th className="px-4 py-1.5 text-center text-xs font-medium text-gray-500">
                     รูปภาพ
                   </th>
                 </tr>
@@ -543,20 +596,20 @@ export default function MetersClient({
                 ) : (
                   groupedReadings.map((group, idx) => (
                     <tr key={`${group.room.room_id}-${group.cycle.cycle_id}`} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-center text-gray-600">
+                      <td className="px-4 py-2.5 whitespace-nowrap text-sm text-center text-gray-600">
                         {idx + 1}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                      <td className="px-4 py-2.5 whitespace-nowrap text-sm font-medium text-gray-900">
                         {group.room.room_number}
                       </td>
                       {/* มิเตอร์ไฟฟ้า */}
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-600 border-l border-gray-200">
+                      <td className="px-4 py-2.5 whitespace-nowrap text-sm text-right text-gray-600 border-l border-gray-200">
                         {group.electric ? formatNumber(group.electric.meter_start) : '-'}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-600">
+                      <td className="px-4 py-2.5 whitespace-nowrap text-sm text-right text-gray-600">
                         {group.electric ? formatNumber(group.electric.meter_end) : '-'}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-yellow-600">
+                      <td className="px-4 py-2.5 whitespace-nowrap text-sm text-right font-medium text-yellow-600">
                         {group.electric
                           ? (() => {
                               // ใช้สูตร rollover เสมอ (ไม่ใช้ usage จาก SQL เพราะอาจเป็นค่าติดลบ)
@@ -565,99 +618,77 @@ export default function MetersClient({
                             })()
                           : '-'}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-center">
+                      <td className="px-4 py-2.5 whitespace-nowrap text-center">
                         {group.electric ? (() => {
                           const photoKey = `${group.room.room_id}-${group.cycle.billing_year}-${group.cycle.billing_month}-electric`;
                           const hasPhoto = photoStatus.get(photoKey) || false;
                           
                           return (
-                            <div className="flex flex-col items-center justify-center gap-1">
-                              <button
-                                onClick={() => {
-                                  if (!hasPhoto) return;
-                                  viewMeterPhoto(
-                                    group.room.room_id,
-                                    'electric',
-                                    group.cycle.billing_year,
-                                    group.cycle.billing_month,
-                                    group.room.room_number,
-                                    group.room.building_name
-                                  );
-                                }}
-                                disabled={!hasPhoto}
-                                className={`text-sm px-2 py-1 rounded transition-colors flex items-center justify-center ${
-                                  hasPhoto
-                                    ? 'text-green-600 hover:text-green-800 bg-green-50 hover:bg-green-100 cursor-pointer'
-                                    : 'text-gray-400 bg-gray-50 cursor-not-allowed'
-                                }`}
-                                title={hasPhoto ? 'ดูรูปมิเตอร์ไฟฟ้า' : 'ยังไม่มีรูปมิเตอร์ไฟฟ้า'}
-                              >
-                                📷
-                              </button>
-                              {hasPhoto ? (
-                                <span className="text-[11px] text-green-600 font-medium">
-                                  เปิดดูรูป
-                                </span>
-                              ) : (
-                                <span className="text-[11px] text-gray-400">
-                                  ยังไม่มีรูป
-                                </span>
-                              )}
-                            </div>
+                            <button
+                              onClick={() => {
+                                if (!hasPhoto) return;
+                                viewMeterPhoto(
+                                  group.room.room_id,
+                                  'electric',
+                                  group.cycle.billing_year,
+                                  group.cycle.billing_month,
+                                  group.room.room_number,
+                                  group.room.building_name
+                                );
+                              }}
+                              disabled={!hasPhoto}
+                              className={`text-sm px-2 py-1 rounded transition-colors flex items-center justify-center ${
+                                hasPhoto
+                                  ? 'text-green-600 hover:text-green-800 bg-green-50 hover:bg-green-100 cursor-pointer'
+                                  : 'text-gray-400 bg-gray-50 cursor-not-allowed'
+                              }`}
+                              title={hasPhoto ? 'ดูรูปมิเตอร์ไฟฟ้า' : 'ยังไม่มีรูปมิเตอร์ไฟฟ้า'}
+                            >
+                              📷
+                            </button>
                           );
                         })() : (
                           <span className="text-gray-400">-</span>
                         )}
                       </td>
                       {/* มิเตอร์น้ำ */}
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-600 border-l border-gray-200">
+                      <td className="px-4 py-2.5 whitespace-nowrap text-sm text-right text-gray-600 border-l border-gray-200">
                         {group.water ? formatNumber(group.water.meter_start) : '-'}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-600">
+                      <td className="px-4 py-2.5 whitespace-nowrap text-sm text-right text-gray-600">
                         {group.water ? formatNumber(group.water.meter_end) : '-'}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-blue-600">
+                      <td className="px-4 py-2.5 whitespace-nowrap text-sm text-right font-medium text-blue-600">
                         {group.water ? formatNumber(group.water.usage ?? (group.water.meter_end - group.water.meter_start)) : '-'}
                       </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-center">
+                      <td className="px-4 py-2.5 whitespace-nowrap text-center">
                         {group.water ? (() => {
                           const photoKey = `${group.room.room_id}-${group.cycle.billing_year}-${group.cycle.billing_month}-water`;
                           const hasPhoto = photoStatus.get(photoKey) || false;
                           
                           return (
-                            <div className="flex flex-col items-center justify-center gap-1">
-                              <button
-                                onClick={() => {
-                                  if (!hasPhoto) return;
-                                  viewMeterPhoto(
-                                    group.room.room_id,
-                                    'water',
-                                    group.cycle.billing_year,
-                                    group.cycle.billing_month,
-                                    group.room.room_number,
-                                    group.room.building_name
-                                  );
-                                }}
-                                disabled={!hasPhoto}
-                                className={`text-sm px-2 py-1 rounded transition-colors flex items-center justify-center ${
-                                  hasPhoto
-                                    ? 'text-green-600 hover:text-green-800 bg-green-50 hover:bg-green-100 cursor-pointer'
-                                    : 'text-gray-400 bg-gray-50 cursor-not-allowed'
-                                }`}
-                                title={hasPhoto ? 'ดูรูปมิเตอร์น้ำ' : 'ยังไม่มีรูปมิเตอร์น้ำ'}
-                              >
-                                📷
-                              </button>
-                              {hasPhoto ? (
-                                <span className="text-[11px] text-green-600 font-medium">
-                                  เปิดดูรูป
-                                </span>
-                              ) : (
-                                <span className="text-[11px] text-gray-400">
-                                  ยังไม่มีรูป
-                                </span>
-                              )}
-                            </div>
+                            <button
+                              onClick={() => {
+                                if (!hasPhoto) return;
+                                viewMeterPhoto(
+                                  group.room.room_id,
+                                  'water',
+                                  group.cycle.billing_year,
+                                  group.cycle.billing_month,
+                                  group.room.room_number,
+                                  group.room.building_name
+                                );
+                              }}
+                              disabled={!hasPhoto}
+                              className={`text-sm px-2 py-1 rounded transition-colors flex items-center justify-center ${
+                                hasPhoto
+                                  ? 'text-green-600 hover:text-green-800 bg-green-50 hover:bg-green-100 cursor-pointer'
+                                  : 'text-gray-400 bg-gray-50 cursor-not-allowed'
+                              }`}
+                              title={hasPhoto ? 'ดูรูปมิเตอร์น้ำ' : 'ยังไม่มีรูปมิเตอร์น้ำ'}
+                            >
+                              📷
+                            </button>
                           );
                         })() : (
                           <span className="text-gray-400">-</span>
