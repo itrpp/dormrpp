@@ -30,6 +30,10 @@ export type AdminTenantRow = {
   floor_no: number | null;
   building_id: number | null;
   building_name: string | null;
+  /** auth_user_id ที่ผูกกับผู้เช่านี้ (tenant_auth_users.is_primary=1) */
+  mapped_auth_user_id: number | null;
+  /** ชื่อแสดงผลของ AD user ที่ผูกกับผู้เช่านี้ */
+  ad_mapping_display_name: string | null;
 };
 
 export async function getAllTenantsForAdmin(): Promise<AdminTenantRow[]> {
@@ -53,7 +57,9 @@ export async function getAllTenantsForAdmin(): Promise<AdminTenantRow[]> {
           r.room_number,
           r.floor_no,
           b.building_id,
-          b.name_th AS building_name
+          b.name_th AS building_name,
+          (SELECT tau.auth_user_id FROM tenant_auth_users tau WHERE tau.tenant_id = t.tenant_id AND tau.is_primary = 1 LIMIT 1) AS mapped_auth_user_id,
+          (SELECT au.display_name FROM tenant_auth_users tau JOIN auth_users au ON au.auth_user_id = tau.auth_user_id WHERE tau.tenant_id = t.tenant_id AND tau.is_primary = 1 LIMIT 1) AS ad_mapping_display_name
         FROM tenants t
         LEFT JOIN contracts c
           ON c.tenant_id = t.tenant_id

@@ -1,10 +1,29 @@
 // app/api/bills/route.ts
 import { NextResponse } from 'next/server';
 import { getBillsByMonth, createBill } from '@/lib/repositories/bills';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import type { AppRoleCode } from '@/lib/auth/app-roles';
+
+// สิทธิ์ที่อนุญาตให้เข้าถึงข้อมูลบิล (ระดับระบบ)
+const BILL_ACCESS_ROLES: AppRoleCode[] = [
+  'ADMIN',        // ผู้ดูแลระบบ
+  'FINANCE',      // การเงิน
+  'SUPERUSER_RP', // Superuser หอพักรวงผึ้ง
+  'SUPERUSER_MED' // Superuser หอพักแพทยศาสตร์
+];
 
 // GET /api/bills?year=2568&month=10&room_id=1
 export async function GET(req: Request) {
   try {
+    // ตรวจสอบสิทธิ์ก่อน (ต้องมีอย่างน้อยหนึ่ง role ใน BILL_ACCESS_ROLES)
+    const authResult = await requireAppRoles(BILL_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json(
+        { error: 'Forbidden' },
+        { status: 403 }
+      );
+    }
+
     const { searchParams } = new URL(req.url);
     const year = searchParams.get('year');
     const month = searchParams.get('month');
@@ -16,6 +35,10 @@ export async function GET(req: Request) {
         { status: 400 }
       );
     }
+
+    // หมายเหตุ: ปัจจุบันยังไม่ได้กรองตามอาคารจาก role
+    // (เช่น SUPERUSER_RP เห็นเฉพาะหอรวงผึ้ง) เพราะยังไม่มี mapping building code ใน DB
+    // แต่โครงสร้างนี้พร้อมให้เพิ่มเงื่อนไข WHERE ตาม role ได้ในอนาคต
 
     const bills = await getBillsByMonth(
       Number(year),

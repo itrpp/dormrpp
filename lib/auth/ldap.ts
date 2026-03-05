@@ -298,6 +298,123 @@ export class LDAPService {
   }
 
   /**
+   * ดึงผู้ใช้ทั้งหมดที่อยู่ใน AD Group ที่กำหนด (เช่น DromRpp)
+   * ใช้สำหรับ sync รายชื่อเข้า auth_users/auth_user_roles โดยไม่ต้องให้ user login
+   */
+  async getUsersInGroup(groupDn: string): Promise<LDAPUserData[]> {
+    const client = await this.createClient();
+
+    try {
+      // Bind ด้วย service account
+      await client.bind(this.config.bindDN, this.config.bindPassword);
+
+      // ใช้ LDAP_MATCHING_RULE_IN_CHAIN เพื่อรองรับกรณี nested group
+      // และกรองเฉพาะ object ที่เป็น user/person
+      const primaryFilter = `(&
+        (objectCategory=person)
+        (objectClass=user)
+        (memberOf:1.2.840.113556.1.4.1941:=${groupDn})
+      )`.replace(/\s+/g, '');
+
+      let { searchEntries } = await client.search(this.config.baseDN, {
+        scope: "sub",
+        filter: primaryFilter,
+      });
+
+      // fallback: ถ้าไม่เจออะไรเลย ให้ลองใช้ filter เดิมแบบตรง ๆ
+      if (!searchEntries || searchEntries.length === 0) {
+        const fallbackFilter = `(memberOf=${groupDn})`;
+        const fallback = await client.search(this.config.baseDN, {
+          scope: "sub",
+          filter: fallbackFilter,
+        });
+        searchEntries = fallback.searchEntries;
+      }
+
+      if (!searchEntries || searchEntries.length === 0) {
+        return [];
+      }
+
+      const results: LDAPUserData[] = [];
+
+      for (const entry of searchEntries) {
+        // แปลง search entry ให้เป็นโครง LDAPSearchResult แล้วใช้ parseUserData ต่อ
+        const searchResult: LDAPSearchResult = {
+          objectName: (entry as any).dn,
+          attributes: Object.entries(entry)
+            .map(([type, values]) => {
+              const toGuidString = (buf: Buffer): string => {
+                const h = (i: number) => buf[i]!.toString(16).padStart(2, "0");
+                return `${h(3)}${h(2)}${h(1)}${h(0)}-${h(5)}${h(4)}-${h(7)}${h(6)}-${h(8)}${h(9)}-${h(10)}${h(11)}${h(12)}${h(13)}${h(14)}${h(15)}`;
+              };
+
+              const convertValue = (val: unknown): string => {
+                if (type === "objectGUID") {
+                  let buf: Buffer;
+                  if (Buffer.isBuffer(val)) {
+                    buf = val;
+                  } else if (typeof val === "string") {
+                    buf = Buffer.from(val, "utf8");
+                  } else if (val instanceof ArrayBuffer) {
+                    buf = Buffer.from(val);
+                  } else if (Array.isArray(val)) {
+                    buf = Buffer.from(val as any);
+                  } else {
+                    buf = Buffer.from(String(val), "utf8");
+                  }
+
+                  if (buf.length === 16) {
+                    return toGuidString(buf);
+                  }
+
+                  const str = typeof val === "string" ? val : String(val);
+                  const cleaned = str.replace(/[^0-9a-fA-F]/g, "");
+
+                  if (cleaned.length === 32) {
+                    const b = Buffer.from(cleaned, "hex");
+                    return toGuidString(b);
+                  }
+
+                  return str;
+                }
+
+                if (Buffer.isBuffer(val)) {
+                  return (val as Buffer).toString("utf8");
+                }
+
+                return typeof val === "string" ? val : String(val);
+              };
+
+              const convertedValues = Array.isArray(values)
+                ? (values as unknown[]).map((v) => convertValue(v))
+                : [convertValue(values)];
+
+              return { type, values: convertedValues };
+            })
+            .filter((attr) => attr.type !== "dn"),
+        };
+
+        const userData = this.parseUserData(searchResult);
+        if (userData && userData.id) {
+          results.push(userData);
+        }
+      }
+
+      return results;
+    } catch (error) {
+      console.error("LDAP getUsersInGroup error:", error);
+
+      if (this.isConnectionError(error)) {
+        throw new Error("LDAP_CONNECTION_ERROR");
+      }
+
+      return [];
+    } finally {
+      await this.closeClient();
+    }
+  }
+
+  /**
    * Authenticate ผู้ใช้ผ่าน LDAP
    */
   async authenticate(

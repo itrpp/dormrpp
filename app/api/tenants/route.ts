@@ -56,11 +56,12 @@ export async function GET(req: Request) {
               OR CONCAT(t.first_name_th, ' ', t.last_name_th) LIKE ?
               OR t.phone LIKE ?
               OR t.email LIKE ?
+              OR r_last.room_number LIKE ?
             )
           ORDER BY t.tenant_id DESC
           LIMIT 20
         `,
-          [keyword, keyword, keyword, keyword, keyword]
+          [keyword, keyword, keyword, keyword, keyword, keyword]
         );
         return NextResponse.json(rows);
       } catch (err: any) {
@@ -106,11 +107,12 @@ export async function GET(req: Request) {
                 OR CONCAT(t.first_name, ' ', t.last_name) LIKE ?
                 OR t.phone LIKE ?
                 OR t.email LIKE ?
+                OR r_last.room_number LIKE ?
               )
             ORDER BY t.tenant_id DESC
             LIMIT 20
           `,
-            [keyword, keyword, keyword, keyword, keyword]
+            [keyword, keyword, keyword, keyword, keyword, keyword]
           );
           return NextResponse.json(rows);
         }

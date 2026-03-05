@@ -3,6 +3,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { getMonthNameThai } from '@/lib/date-utils';
+import BillPreviewContent, {
+  type BillPreviewData,
+} from '@/components/BillPreviewContent';
 
 // ค่าบำรุงรักษาคงที่
 const MAINTENANCE_FEE = 1000;
@@ -117,7 +120,7 @@ export default function AdminBillsClient() {
   // State สำหรับ preview modal
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
   const [previewBillId, setPreviewBillId] = useState<number | null>(null);
-  const [previewBillData, setPreviewBillData] = useState<any>(null);
+  const [previewBillData, setPreviewBillData] = useState<BillPreviewData | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
   
   // สำหรับ modal form
@@ -143,12 +146,14 @@ export default function AdminBillsClient() {
     },
     status: 'draft',
   });
+  const [bulkStatus, setBulkStatus] = useState<string>('sent');
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const selectedContracts = useMemo(
     () => contracts.filter((c) => form.contract_ids.includes(c.contract_id)),
     [contracts, form.contract_ids]
   );
 
-  // เปลี่ยนสถานะบิล
+  // เปลี่ยนสถานะบิล (รายการเดียว)
   const handleBillStatusChange = async (billId: number, newStatus: string) => {
     try {
       const res = await fetch(`/api/bills/${billId}`, {
@@ -170,6 +175,39 @@ export default function AdminBillsClient() {
     } catch (error: any) {
       console.error('Error updating bill status:', error);
       alert(`ไม่สามารถอัปเดตสถานะบิลได้: ${error.message || 'Unknown error'}`);
+    }
+  };
+
+  // ปรับสถานะบิลทั้งหมดในหน้านี้ (รอบบิลที่เลือก)
+  const handleBulkStatusChange = async () => {
+    if (bills.length === 0) return;
+    const statusLabel = bulkStatus === 'draft' ? 'ร่าง' : bulkStatus === 'sent' ? 'ส่งแล้ว' : 'ชำระแล้ว';
+    if (!confirm(`ต้องการเปลี่ยนสถานะบิลทั้งหมด (${bills.length} รายการ) เป็น "${statusLabel}" ใช่หรือไม่?`)) {
+      return;
+    }
+    setIsBulkUpdating(true);
+    try {
+      const results = await Promise.allSettled(
+        bills.map((b) =>
+          fetch(`/api/bills/${b.bill_id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: bulkStatus }),
+          })
+        )
+      );
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length > 0) {
+        alert(`อัปเดตสำเร็จ ${results.length - failed.length} รายการ มีข้อผิดพลาด ${failed.length} รายการ`);
+      }
+      setBills((prev) =>
+        prev.map((b) => ({ ...b, status: bulkStatus }))
+      );
+    } catch (error: any) {
+      console.error('Error bulk updating bill status:', error);
+      alert(`ไม่สามารถปรับสถานะทั้งหมดได้: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsBulkUpdating(false);
     }
   };
 
@@ -225,7 +263,7 @@ export default function AdminBillsClient() {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || 'Failed to fetch bill');
       }
-      const data = await res.json();
+      const data: BillPreviewData = await res.json();
       setPreviewBillData(data);
     } catch (error: any) {
       console.error('Error fetching bill preview:', error);
@@ -783,8 +821,28 @@ export default function AdminBillsClient() {
                 <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase border">
                   รวมทั้งสิ้น
                 </th>
-                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase border">
-                  สถานะบิล
+                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase border align-top">
+                  <div className="font-medium">สถานะบิล</div>
+                  <div className="mt-1.5 flex flex-col items-center gap-1">
+                    <select
+                      className="border rounded px-1.5 py-0.5 text-xs bg-white w-full max-w-[90px]"
+                      value={bulkStatus}
+                      onChange={(e) => setBulkStatus(e.target.value)}
+                      disabled={isBulkUpdating}
+                    >
+                      <option value="draft">ร่าง</option>
+                      <option value="sent">ส่งแล้ว</option>
+                      <option value="paid">ชำระแล้ว</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleBulkStatusChange}
+                      disabled={isBulkUpdating || bills.length === 0}
+                      className="px-2 py-1 text-[11px] rounded border bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                    >
+                      {isBulkUpdating ? 'กำลังอัปเดต...' : 'ปรับสถานะทั้งหมด'}
+                    </button>
+                  </div>
                 </th>
                 <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase border">
                   จัดการ
@@ -1252,15 +1310,7 @@ export default function AdminBillsClient() {
             <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center">
               <h2 className="text-xl font-bold">พรีวิวบิล</h2>
               <div className="flex gap-3">
-                <button
-                  onClick={() => window.print()}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                  </svg>
-                  พิมพ์
-                </button>
+          
                 <button
                   onClick={handleExportFromModal}
                   className="bg-green-700 text-white px-4 py-2 rounded-lg hover:bg-green-800 flex items-center gap-2"
@@ -1329,97 +1379,318 @@ export default function AdminBillsClient() {
                     </div>
                   </div>
 
-                  {/* ส่วนที่ 3: ตารางค่าใช้จ่าย */}
+                  {/* ส่วนที่ 3: ตารางค่าใช้จ่าย (ตารางเดียว ดูง่ายขึ้น) */}
                   <div className="mb-6">
-                    {/* ตารางที่ 1: ค่าดูแล/ค่าคงที่ */}
-                    <h3 className="text-base font-bold bg-gray-100 p-2 mb-2">ตารางที่ 1 : ค่าดูแล / ค่าคงที่</h3>
+                    <h3 className="text-base font-bold bg-gray-100 p-2 mb-2">
+                      ตารางค่าใช้จ่ายและค่าสาธารณูปโภค
+                    </h3>
                     <table className="w-full border-collapse border border-gray-300 mb-4">
                       <thead>
                         <tr className="bg-gray-100">
-                          <th className="border border-gray-300 px-4 py-2 text-left">รายการ</th>
-                          <th className="border border-gray-300 px-4 py-2 text-right">จำนวนเงิน (บาท)</th>
+                          <th
+                            className="border border-gray-300 px-4 py-2 text-left align-middle"
+                            rowSpan={2}
+                          >
+                            รายการ
+                          </th>
+                          <th
+                            className="border border-gray-300 px-4 py-2 text-center"
+                            colSpan={5}
+                          >
+                            ค่าไฟฟ้า
+                          </th>
+                          <th
+                            className="border border-gray-300 px-4 py-2 text-center"
+                            colSpan={5}
+                          >
+                            ค่าน้ำประปา
+                          </th>
+                          <th
+                            className="border border-gray-300 px-4 py-2 text-right align-middle"
+                            rowSpan={2}
+                          >
+                            จำนวนเงิน (บาท)
+                          </th>
+                        </tr>
+                        <tr className="bg-gray-100">
+                          <th className="border border-gray-300 px-2 py-1 text-center text-xs">
+                            เริ่มต้น
+                          </th>
+                          <th className="border border-gray-300 px-2 py-1 text-center text-xs">
+                            สิ้นสุด
+                          </th>
+                          <th className="border border-gray-300 px-2 py-1 text-center text-xs">
+                            หน่วยใช้
+                          </th>
+                          <th className="border border-gray-300 px-2 py-1 text-center text-xs">
+                            อัตรา
+                          </th>
+                          <th className="border border-gray-300 px-2 py-1 text-center text-xs">
+                            เป็นเงิน
+                          </th>
+                          <th className="border border-gray-300 px-2 py-1 text-center text-xs">
+                            เริ่มต้น
+                          </th>
+                          <th className="border border-gray-300 px-2 py-1 text-center text-xs">
+                            สิ้นสุด
+                          </th>
+                          <th className="border border-gray-300 px-2 py-1 text-center text-xs">
+                            หน่วยใช้
+                          </th>
+                          <th className="border border-gray-300 px-2 py-1 text-center text-xs">
+                            อัตรา
+                          </th>
+                          <th className="border border-gray-300 px-2 py-1 text-center text-xs">
+                            เป็นเงิน
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
+                        {/* ค่าดูแล */}
                         <tr>
-                          <td className="border border-gray-300 px-4 py-2">ค่าดูแลและบำรุงรักษาหอพัก</td>
-                          <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.charges.maintenance_fee)}</td>
+                          <td className="border border-gray-300 px-4 py-2">
+                            ค่าดูแลและบำรุงรักษาหอพัก
+                          </td>
+                          {/* ค่าไฟฟ้า (ไม่มีรายละเอียดในแถวนี้) */}
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          {/* ค่าน้ำ (ไม่มีรายละเอียดในแถวนี้) */}
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-4 py-2 text-right">
+                            {formatNumber(previewBillData.charges.maintenance_fee)}
+                          </td>
                         </tr>
+
+                        {/* ค่าใช้จ่ายคงที่อื่น */}
                         <tr>
-                          <td className="border border-gray-300 px-4 py-2">ค่าใช้จ่ายคงที่อื่น</td>
-                          <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.charges.other_fixed)}</td>
+                          <td className="border border-gray-300 px-4 py-2">
+                            ค่าใช้จ่ายคงที่อื่น
+                          </td>
+                          {/* ค่าไฟฟ้า */}
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          {/* ค่าน้ำ */}
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-4 py-2 text-right">
+                            {formatNumber(previewBillData.charges.other_fixed)}
+                          </td>
                         </tr>
+
+                        {/* ส่วนลด */}
                         <tr>
                           <td className="border border-gray-300 px-4 py-2">ส่วนลด</td>
-                          <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.charges.discount)}</td>
+                          {/* ค่าไฟฟ้า */}
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          {/* ค่าน้ำ */}
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-4 py-2 text-right">
+                            {formatNumber(previewBillData.charges.discount)}
+                          </td>
                         </tr>
-                      </tbody>
-                    </table>
 
-                    {/* ตารางที่ 2: ค่าสาธารณูปโภค */}
-                    <h3 className="text-base font-bold bg-gray-100 p-2 mb-2">ตารางที่ 2 : ค่าสาธารณูปโภค (อ้างอิงมิเตอร์)</h3>
-                    
-                    {/* ค่าไฟฟ้า */}
-                    <h4 className="text-sm font-bold mb-2">🔌 ค่าไฟฟ้า</h4>
-                    <table className="w-full border-collapse border border-gray-300 mb-4">
-                      <thead>
-                        <tr className="bg-gray-100">
-                          <th className="border border-gray-300 px-4 py-2 text-center">เริ่มต้น</th>
-                          <th className="border border-gray-300 px-4 py-2 text-center">สิ้นสุด</th>
-                          <th className="border border-gray-300 px-4 py-2 text-center">หน่วยใช้</th>
-                          <th className="border border-gray-300 px-4 py-2 text-center">อัตรา</th>
-                          <th className="border border-gray-300 px-4 py-2 text-center">เป็นเงิน</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {previewBillData.utilities.electric ? (
-                          <tr>
-                            <td className="border border-gray-300 px-4 py-2 text-right">{formatInteger(previewBillData.utilities.electric.meter_start)}</td>
-                            <td className="border border-gray-300 px-4 py-2 text-right">{formatInteger(previewBillData.utilities.electric.meter_end)}</td>
-                            <td className="border border-gray-300 px-4 py-2 text-right">{formatInteger(previewBillData.utilities.electric.usage)}</td>
-                            <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.utilities.electric.rate_per_unit)}</td>
-                            <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.utilities.electric.amount)}</td>
-                          </tr>
-                        ) : (
-                          <tr>
-                            <td colSpan={5} className="border border-gray-300 px-4 py-2 text-center text-gray-500">ไม่มีข้อมูล</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
+                        {/* แถวค่าไฟฟ้า */}
+                        <tr>
+                          <td className="border border-gray-300 px-4 py-2">🔌 ค่าไฟฟ้า</td>
+                          {previewBillData.utilities.electric ? (
+                            <>
+                              <td className="border border-gray-300 px-2 py-2 text-right text-xs">
+                                {formatInteger(previewBillData.utilities.electric.meter_start)}
+                              </td>
+                              <td className="border border-gray-300 px-2 py-2 text-right text-xs">
+                                {formatInteger(previewBillData.utilities.electric.meter_end)}
+                              </td>
+                              <td className="border border-gray-300 px-2 py-2 text-right text-xs">
+                                {formatInteger(previewBillData.utilities.electric.usage)}
+                              </td>
+                              <td className="border border-gray-300 px-2 py-2 text-right text-xs">
+                                {formatNumber(
+                                  previewBillData.utilities.electric.rate_per_unit,
+                                )}
+                              </td>
+                              <td className="border border-gray-300 px-2 py-2 text-right text-xs">
+                                {formatNumber(previewBillData.utilities.electric.amount)}
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td
+                                className="border border-gray-300 px-2 py-2 text-center text-xs"
+                                colSpan={5}
+                              >
+                                ไม่มีข้อมูล
+                              </td>
+                            </>
+                          )}
 
-                    {/* ค่าน้ำ */}
-                    <h4 className="text-sm font-bold mb-2">🚿 ค่าน้ำประปา</h4>
-                    <table className="w-full border-collapse border border-gray-300 mb-4">
-                      <thead>
-                        <tr className="bg-gray-100">
-                          <th className="border border-gray-300 px-4 py-2 text-center">เริ่มต้น</th>
-                          <th className="border border-gray-300 px-4 py-2 text-center">สิ้นสุด</th>
-                          <th className="border border-gray-300 px-4 py-2 text-center">หน่วยใช้</th>
-                          <th className="border border-gray-300 px-4 py-2 text-center">อัตรา</th>
-                          <th className="border border-gray-300 px-4 py-2 text-center">เป็นเงิน</th>
+                          {/* ค่าน้ำ (แถวไฟฟ้าไม่มีรายละเอียดน้ำ) */}
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-4 py-2 text-right">
+                            {previewBillData.utilities.electric
+                              ? formatNumber(previewBillData.utilities.electric.amount)
+                              : '-'}
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {previewBillData.utilities.water ? (
-                          <tr>
-                            <td className="border border-gray-300 px-4 py-2 text-right">{formatInteger(previewBillData.utilities.water.meter_start)}</td>
-                            <td className="border border-gray-300 px-4 py-2 text-right">{formatInteger(previewBillData.utilities.water.meter_end)}</td>
-                            <td className="border border-gray-300 px-4 py-2 text-right">{formatInteger(previewBillData.utilities.water.usage)}</td>
-                            <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.utilities.water.rate_per_unit)}</td>
-                            <td className="border border-gray-300 px-4 py-2 text-right">{formatNumber(previewBillData.utilities.water.amount)}</td>
-                          </tr>
-                        ) : (
-                          <tr>
-                            <td colSpan={5} className="border border-gray-300 px-4 py-2 text-center text-gray-500">ไม่มีข้อมูล</td>
-                          </tr>
-                        )}
+
+                        {/* แถวค่าน้ำประปา */}
+                        <tr>
+                          <td className="border border-gray-300 px-4 py-2">🚿 ค่าน้ำประปา</td>
+                          {/* ค่าไฟ (แถวค่าน้ำไม่มีรายละเอียดไฟ) */}
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+                          <td className="border border-gray-300 px-2 py-2 text-center text-xs">
+                            -
+                          </td>
+
+                          {previewBillData.utilities.water ? (
+                            <>
+                              <td className="border border-gray-300 px-2 py-2 text-right text-xs">
+                                {formatInteger(previewBillData.utilities.water.meter_start)}
+                              </td>
+                              <td className="border border-gray-300 px-2 py-2 text-right text-xs">
+                                {formatInteger(previewBillData.utilities.water.meter_end)}
+                              </td>
+                              <td className="border border-gray-300 px-2 py-2 text-right text-xs">
+                                {formatInteger(previewBillData.utilities.water.usage)}
+                              </td>
+                              <td className="border border-gray-300 px-2 py-2 text-right text-xs">
+                                {formatNumber(
+                                  previewBillData.utilities.water.rate_per_unit,
+                                )}
+                              </td>
+                              <td className="border border-gray-300 px-2 py-2 text-right text-xs">
+                                {formatNumber(previewBillData.utilities.water.amount)}
+                              </td>
+                            </>
+                          ) : (
+                            <>
+                              <td
+                                className="border border-gray-300 px-2 py-2 text-center text-xs"
+                                colSpan={5}
+                              >
+                                ไม่มีข้อมูล
+                              </td>
+                            </>
+                          )}
+
+                          <td className="border border-gray-300 px-4 py-2 text-right">
+                            {previewBillData.utilities.water
+                              ? formatNumber(previewBillData.utilities.water.amount)
+                              : '-'}
+                          </td>
+                        </tr>
                       </tbody>
                     </table>
 
                     {/* หมายเหตุ */}
                     <p className="text-xs italic text-gray-600 mb-4">
-                      📝 หมายเหตุ: ค่าไฟ/น้ำเป็นการใช้งานร่วมของห้อง ระบบออกบิล "ซ้ำต่อผู้เช่า" ตามระเบียบหอพัก
+                      📝 หมายเหตุ: ค่าไฟ/น้ำเป็นการใช้งานร่วมของห้อง ระบบออกบิล "ซ้ำต่อผู้เช่า"
+                      ตามระเบียบหอพัก
                     </p>
                   </div>
 
@@ -1447,19 +1718,81 @@ export default function AdminBillsClient() {
                     <p className="mb-4">
                       <strong>สถานะบิล</strong> : {previewBillData.bill.status_text}
                     </p>
-                    <div className="mt-6">
-                      <p className="mb-2">ผู้จัดทำ ..................................................</p>
-                      <p>หัวหน้าฝ่าย ................................................</p>
-                    </div>
+                 
                   </div>
 
                   {/* ส่วนที่ 6: Footer */}
                   <div className="mt-8 border-t border-gray-300 pt-4">
                     <h4 className="font-bold mb-2">หมายเหตุ</h4>
                     <ul className="text-sm space-y-1">
-                      <li>- กรุณาชำระภายในกำหนด หากเกินกำหนดอาจมีค่าปรับ</li>
-                      <li>- เอกสารนี้ออกโดยระบบหอพักโรงพยาบาลราชพิพัฒน์</li>
+                      <li>- กรุณาชำระภายในกำหนด </li>
+                
                     </ul>
+                  </div>
+
+                  {/* ส่วนที่ 7: รูปภาพมิเตอร์ */}
+                  <div className="mt-8 border-t border-gray-300 pt-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      {/* รูปภาพมิเตอร์ไฟฟ้า */}
+                      <div className="border-2 border-red-500 rounded-lg p-3 text-center">
+                        <p className="font-bold text-sm mb-3 text-red-600">
+                          picture มิเตอร์ไฟ
+                        </p>
+                        {previewBillData.meter_photos?.electric ? (
+                          <div className="flex justify-center items-center min-h-[200px]">
+                            <img
+                              src={previewBillData.meter_photos.electric.photo_url}
+                              alt="รูปภาพมิเตอร์ไฟฟ้า"
+                              className="max-w-full h-auto max-h-[300px] object-contain rounded"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = 'none';
+                                const parent = (e.target as HTMLImageElement).parentElement;
+                                if (parent) {
+                                  const errorMsg = document.createElement('p');
+                                  errorMsg.className = 'text-red-500 text-sm';
+                                  errorMsg.textContent = 'ไม่พบรูปภาพ';
+                                  parent.appendChild(errorMsg);
+                                }
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <div className="py-12 text-gray-400">
+                            <p className="text-sm">ไม่มีรูปภาพ</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* รูปภาพมิเตอร์น้ำ */}
+                      <div className="border-2 border-red-500 rounded-lg p-3 text-center">
+                        <p className="font-bold text-sm mb-3 text-red-600">
+                          picture มิเตอร์น้ำ
+                        </p>
+                        {previewBillData.meter_photos?.water ? (
+                          <div className="flex justify-center items-center min-h-[200px]">
+                            <img
+                              src={previewBillData.meter_photos.water.photo_url}
+                              alt="รูปภาพมิเตอร์น้ำ"
+                              className="max-w-full h-auto max-h-[300px] object-contain rounded"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = 'none';
+                                const parent = (e.target as HTMLImageElement).parentElement;
+                                if (parent) {
+                                  const errorMsg = document.createElement('p');
+                                  errorMsg.className = 'text-red-500 text-sm';
+                                  errorMsg.textContent = 'ไม่พบรูปภาพ';
+                                  parent.appendChild(errorMsg);
+                                }
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <div className="py-12 text-gray-400">
+                            <p className="text-sm">ไม่มีรูปภาพ</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </>
               ) : (

@@ -35,6 +35,13 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
 
   // state สำหรับ modal (แก้ไขเท่านั้น)
   const [isModalOpen, setIsModalOpen] = useState(false);
+  // state สำหรับ modal จัดการแมป AD ↔ ผู้เช่า
+  const [mappingModalTenant, setMappingModalTenant] = useState<AdminTenantRow | null>(null);
+  const [authUsersForMapping, setAuthUsersForMapping] = useState<{ auth_user_id: number; display_name: string; ad_username: string; department: string | null; tenant_id: number | null }[]>([]);
+  const [selectedAuthUserIdForMapping, setSelectedAuthUserIdForMapping] = useState<number | ''>('');
+  const [mappingSearchQuery, setMappingSearchQuery] = useState('');
+  const [isMappingModalOpen, setIsMappingModalOpen] = useState(false);
+  const [isMappingSaving, setIsMappingSaving] = useState(false);
   const [form, setForm] = useState<TenantForm>({
     tenant_id: undefined,
     first_name: '',
@@ -224,6 +231,109 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
   };
 
   const closeModal = () => setIsModalOpen(false);
+
+  const openMappingModal = async (tenant: AdminTenantRow) => {
+    setMappingModalTenant(tenant);
+    setSelectedAuthUserIdForMapping(tenant.mapped_auth_user_id ?? '');
+    setMappingSearchQuery('');
+    setIsMappingModalOpen(true);
+    setAuthUsersForMapping([]);
+    try {
+      const res = await fetch('/api/admin/tenant-auth-users');
+      if (!res.ok) throw new Error('โหลดรายชื่อผู้ใช้ AD ไม่สำเร็จ');
+      const data = await res.json();
+      setAuthUsersForMapping(
+        (data as { auth_user_id: number; display_name: string; ad_username: string; department: string | null; tenant_id: number | null }[]).map((u) => ({
+          auth_user_id: u.auth_user_id,
+          display_name: u.display_name ?? u.ad_username ?? '',
+          ad_username: u.ad_username ?? '',
+          department: u.department ?? null,
+          tenant_id: u.tenant_id ?? null,
+        }))
+      );
+    } catch (e: any) {
+      alert(e?.message ?? 'โหลดรายชื่อผู้ใช้ AD ไม่สำเร็จ');
+      setIsMappingModalOpen(false);
+    }
+  };
+
+  const closeMappingModal = () => {
+    setIsMappingModalOpen(false);
+    setMappingModalTenant(null);
+    setSelectedAuthUserIdForMapping('');
+    setMappingSearchQuery('');
+  };
+
+  const filteredAuthUsersForMapping = useMemo(() => {
+    const q = mappingSearchQuery.trim().toLowerCase();
+    if (!q) return authUsersForMapping;
+    return authUsersForMapping.filter(
+      (u) =>
+        String(u.display_name ?? '').toLowerCase().includes(q) ||
+        String(u.department ?? '').toLowerCase().includes(q) ||
+        String(u.ad_username ?? '').toLowerCase().includes(q)
+    );
+  }, [authUsersForMapping, mappingSearchQuery]);
+
+  const handleSaveMapping = async () => {
+    if (!mappingModalTenant || selectedAuthUserIdForMapping === '') {
+      alert('กรุณาเลือกผู้ใช้ AD');
+      return;
+    }
+    setIsMappingSaving(true);
+    try {
+      const res = await fetch(`/api/admin/tenant-auth-users/${selectedAuthUserIdForMapping}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: mappingModalTenant.tenant_id }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? 'บันทึกการแมปไม่สำเร็จ');
+      }
+      const selectedUser = authUsersForMapping.find((u) => u.auth_user_id === selectedAuthUserIdForMapping);
+      setTenants((prev) =>
+        prev.map((t) =>
+          t.tenant_id === mappingModalTenant.tenant_id
+            ? { ...t, mapped_auth_user_id: selectedAuthUserIdForMapping as number, ad_mapping_display_name: selectedUser?.display_name ?? null }
+            : t
+        )
+      );
+      closeMappingModal();
+    } catch (e: any) {
+      alert(e?.message ?? 'บันทึกการแมปไม่สำเร็จ');
+    } finally {
+      setIsMappingSaving(false);
+    }
+  };
+
+  const handleUnmap = async () => {
+    if (!mappingModalTenant?.mapped_auth_user_id) return;
+    setIsMappingSaving(true);
+    try {
+      const res = await fetch(`/api/admin/tenant-auth-users/${mappingModalTenant.mapped_auth_user_id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId: null }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? 'ยกเลิกการแมปไม่สำเร็จ');
+      }
+      setTenants((prev) =>
+        prev.map((t) =>
+          t.tenant_id === mappingModalTenant.tenant_id
+            ? { ...t, mapped_auth_user_id: null, ad_mapping_display_name: null }
+            : t
+        )
+      );
+      closeMappingModal();
+    } catch (e: any) {
+      alert(e?.message ?? 'ยกเลิกการแมปไม่สำเร็จ');
+    } finally {
+      setIsMappingSaving(false);
+    }
+  };
 
   // submit ฟอร์ม (แก้ไขเท่านั้น) - แก้ไขได้เฉพาะ 4 ฟิลด์: ชื่อ, นามสกุล, อีเมล, เบอร์โทร
   const handleSubmit = async () => {
@@ -438,7 +548,7 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
                 วันที่เข้าพัก
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                สถานะ
+                สถานะการเชื่อมโยงผู้ใช้ระบบ ↔ ผู้เช่าหอพัก
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 การจัดการ
@@ -482,18 +592,24 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
                     ? new Date(tenant.move_in_date).toLocaleDateString('th-TH')
                     : '-'}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span
-                    className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                      (tenant.status || 'inactive').toLowerCase() === 'active'
-                        ? 'bg-green-100 text-green-800'
-                        : 'bg-gray-100 text-gray-800'
-                    }`}
-                  >
-                    {(tenant.status || 'inactive').toLowerCase() === 'active' 
-                      ? 'active' 
-                      : 'inactive'}
-                  </span>
+                <td className="px-6 py-4 text-sm">
+                  <div className="flex flex-col gap-1">
+                    <span className={tenant.mapped_auth_user_id ? 'text-green-700 font-medium' : 'text-gray-500'}>
+                      {tenant.mapped_auth_user_id ? 'เชื่อมโยงแล้ว' : 'ยังไม่เชื่อมโยง'}
+                      {tenant.ad_mapping_display_name && (
+                        <span className="ml-1 text-gray-600 font-normal">
+                          ({tenant.ad_mapping_display_name})
+                        </span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => openMappingModal(tenant)}
+                      className="text-xs text-blue-600 hover:text-blue-800 underline"
+                    >
+                      เชื่อมโยงผู้ใช้ระบบ ↔ ผู้เช่า
+                    </button>
+                  </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                   <button
@@ -705,6 +821,95 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
                 onClick={handleSubmit}
               >
                 บันทึก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal จัดการแมปผู้ใช้ AD ↔ ผู้เช่าหอพัก */}
+      {isMappingModalOpen && mappingModalTenant && (
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-xl max-h-[90vh] flex flex-col">
+            <div className="p-5 border-b border-gray-200 flex-shrink-0">
+              <h2 className="text-lg font-semibold mb-2">จัดการเชื่อมโยงผู้ใช้ระบบ ↔ ผู้เช่า</h2>
+              <p className="text-sm text-gray-600 mb-1">
+                ผู้เช่า: <strong>{mappingModalTenant.first_name} {mappingModalTenant.last_name}</strong>
+                {mappingModalTenant.room_number && (
+                  <span> — ห้อง {mappingModalTenant.room_number}</span>
+                )}
+              </p>
+              <p className="text-xs text-gray-500">
+                {mappingModalTenant.mapped_auth_user_id
+                  ? `เชื่อมกับ: ${mappingModalTenant.ad_mapping_display_name ?? '-'}`
+                  : 'ยังไม่มีการเชื่อมกับผู้ใช้ระบบ'}
+              </p>
+            </div>
+            <div className="p-5 flex-1 flex flex-col min-h-0">
+              <label className="block text-sm font-medium text-gray-700 mb-2">ค้นหาผู้ใช้ระบบ (ชื่อ หรือ แผนก)</label>
+              <input
+                type="text"
+                className="w-full border rounded-md px-3 py-2 text-sm mb-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                placeholder="พิมพ์เพื่อค้นหา..."
+                value={mappingSearchQuery}
+                onChange={(e) => setMappingSearchQuery(e.target.value)}
+              />
+              <div className="border rounded-md overflow-hidden flex-1 min-h-[200px] max-h-[320px] overflow-y-auto bg-gray-50">
+                <button
+                  type="button"
+                  onClick={() => setSelectedAuthUserIdForMapping('')}
+                  className={`w-full px-4 py-2.5 text-left text-sm border-b border-gray-200 hover:bg-gray-100 ${selectedAuthUserIdForMapping === '' ? 'bg-blue-50 text-blue-800 font-medium' : 'bg-white'}`}
+                >
+                  — ไม่ผูก / ยกเลิกการเชื่อม —
+                </button>
+                {filteredAuthUsersForMapping.length === 0 ? (
+                  <div className="px-4 py-6 text-center text-sm text-gray-500">
+                    {authUsersForMapping.length === 0 ? 'กำลังโหลด...' : 'ไม่พบรายการตามคำค้น'}
+                  </div>
+                ) : (
+                  filteredAuthUsersForMapping.map((u) => (
+                    <button
+                      key={u.auth_user_id}
+                      type="button"
+                      onClick={() => setSelectedAuthUserIdForMapping(u.auth_user_id)}
+                      className={`w-full px-4 py-2.5 text-left text-sm border-b border-gray-100 hover:bg-gray-100 ${selectedAuthUserIdForMapping === u.auth_user_id ? 'bg-blue-50 text-blue-800 font-medium' : 'bg-white'}`}
+                    >
+                      {u.display_name || u.ad_username} <span className="text-gray-500">({u.department ?? '-'})</span>
+                    </button>
+                  ))
+                )}
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                แสดง {filteredAuthUsersForMapping.length} จาก {authUsersForMapping.length} รายการ
+                {mappingSearchQuery.trim() && ' (กรองแล้ว)'}
+              </p>
+            </div>
+            <div className="p-5 border-t border-gray-200 flex justify-end gap-2 flex-wrap flex-shrink-0">
+              {mappingModalTenant.mapped_auth_user_id && (
+                <button
+                  type="button"
+                  className="px-3 py-2 rounded-md border border-red-300 text-red-700 hover:bg-red-50 text-sm"
+                  onClick={handleUnmap}
+                  disabled={isMappingSaving}
+                >
+                  ยกเลิกการแมป
+                </button>
+              )}
+              <button
+                type="button"
+                className="px-3 py-2 rounded-md border"
+                onClick={closeMappingModal}
+                disabled={isMappingSaving}
+              >
+                ปิด
+              </button>
+              <button
+                type="button"
+                className="px-3 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700 text-sm disabled:opacity-50"
+                onClick={handleSaveMapping}
+                disabled={isMappingSaving || selectedAuthUserIdForMapping === ''}
+              >
+                {isMappingSaving ? 'กำลังบันทึก...' : 'ผูกกับผู้ใช้ที่เลือก'}
               </button>
             </div>
           </div>

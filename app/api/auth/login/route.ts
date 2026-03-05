@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { createLDAPService } from '@/lib/auth/ldap';
 import { determineUserRole, isUserAllowed } from '@/lib/auth/roles';
 import { createSession, setSession } from '@/lib/auth/session';
+import { upsertAuthUser, ensureUserRoleForNewUser } from '@/lib/auth/app-roles';
 import type { ActiveDirectoryUser } from '@/lib/auth/active-directory';
 
 export async function POST(req: Request) {
@@ -97,6 +98,17 @@ export async function POST(req: Request) {
 
       // กำหนด role จาก AD groups
       const role = determineUserRole(adUser);
+
+      // บันทึก/อัปเดตผู้ใช้ลงตาราง auth_users ทุกครั้งที่ล็อกอินสำเร็จ
+      // เก็บ display_name + department เท่านั้น (ไม่ใช้ email ใน auth_users แล้ว)
+      await upsertAuthUser(
+        authResult.user.id,
+        authResult.user.name,
+        authResult.user.department ?? null,
+      );
+
+      // ถ้ายังไม่มีสิทธิ์ใด ๆ ใน auth_user_roles ให้กำหนดสิทธิ์ USER ให้เป็นค่าเริ่มต้น
+      await ensureUserRoleForNewUser(authResult.user.id);
 
       // สร้าง session token
       const token = await createSession(authResult.user, role);

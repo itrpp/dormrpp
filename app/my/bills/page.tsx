@@ -1,90 +1,54 @@
-// app/my/bills/page.tsx - Tenant can see own bills
-import Link from 'next/link';
-import { getBillsByMonth } from '@/lib/repositories/bills';
-import type { BillWithDetails } from '@/lib/repositories/bills';
+import TenantBillsClient from './TenantBillsClient';
+import { getSession } from '@/lib/auth/session';
+import { getAppRolesForSessionUser, type AppRoleCode } from '@/lib/auth/app-roles';
+import { getAuthRoles } from '@/lib/repositories/auth-users';
+import AdminLayoutClient from '@/components/AdminLayout';
+import { redirect } from 'next/navigation';
 
-// Note: In a real app, you would get tenant_id and room_id from session/auth
-async function getTenantBills(roomId: number = 1) {
-  const now = new Date();
-  const buddhistYear = now.getFullYear() + 543;
-  const month = now.getMonth() + 1;
+// หน้า /my/bills สำหรับผู้เช่า ใช้เมนูร่วมกับ lib/menu-items.ts ผ่าน AdminLayoutClient
+export default async function MyBillsPage() {
+  const session = await getSession();
 
-  return await getBillsByMonth(buddhistYear, month, roomId);
-}
+  if (!session) {
+    redirect('/login');
+  }
 
-export default async function TenantBillsPage() {
-  // TODO: Get room_id from session/auth based on tenant
-  const bills: BillWithDetails[] = await getTenantBills(1);
+  const appRoleCodes =
+    session.username
+      ? await getAppRolesForSessionUser(session).catch(() => [])
+      : [];
+
+  let sessionRoleLabel: string | undefined;
+  try {
+    const allRoles = await getAuthRoles();
+    const priority: AppRoleCode[] = [
+      'ADMIN',
+      'SUPERUSER_RP',
+      'SUPERUSER_MED',
+      'FINANCE',
+      'TENANT_RP',
+      'TENANT_MED',
+      'USER',
+    ];
+    const primaryCode =
+      priority.find((code) => appRoleCodes.includes(code)) || appRoleCodes[0];
+    const primaryRole = primaryCode
+      ? allRoles.find((r) => r.code === primaryCode)
+      : undefined;
+    sessionRoleLabel = primaryRole?.name_th;
+  } catch {
+    sessionRoleLabel = undefined;
+  }
 
   return (
-    <div className="max-w-6xl mx-auto">
-      <h1 className="text-3xl font-bold mb-6 text-gray-800">บิลค่าใช้จ่ายของฉัน</h1>
-
-      {bills.length === 0 ? (
-        <div className="bg-white shadow rounded-lg p-8 text-center">
-          <p className="text-gray-600">ยังไม่มีบิลค่าใช้จ่าย</p>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          {bills.map((bill) => (
-            <div
-              key={bill.bill_id}
-              className="bg-white shadow rounded-lg p-6 hover:shadow-lg transition-shadow"
-            >
-              <div className="flex justify-between items-start mb-4">
-                <div>
-                  <h3 className="text-xl font-semibold text-gray-800">
-                    บิลประจำเดือน {bill.billing_month}/{bill.billing_year}
-                  </h3>
-                  <p className="text-sm text-gray-500">
-                    วันที่ออกบิล: {new Date(bill.billing_date).toLocaleDateString('th-TH')}
-                  </p>
-                  <p className="text-sm text-gray-500">
-                    ครบกำหนดชำระ: {new Date(bill.due_date).toLocaleDateString('th-TH')}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-gray-900">
-                    {bill.total_amount.toLocaleString('th-TH')} บาท
-                  </p>
-                  <span
-                    className={`mt-2 px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                      bill.status === 'paid'
-                        ? 'bg-green-100 text-green-800'
-                        : bill.status === 'sent'
-                        ? 'bg-yellow-100 text-yellow-800'
-                        : 'bg-gray-100 text-gray-800'
-                    }`}
-                  >
-                    {bill.status === 'paid'
-                      ? 'ชำระแล้ว'
-                      : bill.status === 'sent'
-                      ? 'รอชำระ'
-                      : 'ร่าง'}
-                  </span>
-                </div>
-              </div>
-              <div className="border-t pt-4">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">ค่าบำรุงรักษา:</span>
-                  <span className="font-medium">
-                    {bill.maintenance_fee.toLocaleString('th-TH')} บาท
-                  </span>
-                </div>
-              </div>
-              <div className="mt-4">
-                <Link
-                  href={`/my/bills/${bill.bill_id}`}
-                  className="text-blue-600 hover:text-blue-800 font-medium"
-                >
-                  ดูรายละเอียด →
-                </Link>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    <AdminLayoutClient
+      sessionName={session.name}
+      sessionRole={session.role}
+      appRoleCodes={appRoleCodes}
+      sessionRoleLabel={sessionRoleLabel}
+    >
+      <TenantBillsClient />
+    </AdminLayoutClient>
   );
 }
 

@@ -39,13 +39,21 @@ function safeLowerTrim(value: unknown): string {
 const AD_GROUP_PATHS = {
   ADMIN: 'CN=manage Ad_admin,CN=User,DC=rpphosp,DC=local',
   IT: 'CN=manage Ad_it,CN=Users-RPP,DC=rpphosp,DC=local',
-  USER: 'CN=DromRpp,CN=Users-RPP,DC=rpphosp,DC=local',
+  // กลุ่มผู้ใช้ DromRpp — จาก AD Properties: Canonical name = rpphosp.local/Users-RPP/DromRpp
+  // Users-RPP เป็น OU จึงใช้ OU=Users-RPP (ไม่ใช้ CN=Users-RPP)
+  USER: 'CN=DromRpp,OU=Users-RPP,DC=rpphosp,DC=local',
 } as const;
 
 /**
- * Group ที่อนุญาตให้เข้าถึงระบบได้ (เฉพาะ group นี้เท่านั้น)
+ * Group ที่อนุญาตให้เข้าถึงระบบได้ (Sync ผู้ใช้จาก AD / จำกัดสิทธิ์ login)
+ * ต้องตรงกับ DN จริงของ group DromRpp ใน AD (จาก Properties → Canonical name)
  */
-export const ALLOWED_GROUP_DN = 'CN=DromRpp,CN=Users-RPP,DC=rpphosp,DC=local';
+export const ALLOWED_GROUP_DN =
+  'CN=DromRpp,OU=Users-RPP,DC=rpphosp,DC=local';
+
+/** DN แบบเก่า (CN=Users-RPP) ใช้เป็น fallback ถ้า AD ใช้ container แทน OU */
+export const ALLOWED_GROUP_DN_FALLBACK =
+  'CN=DromRpp,CN=Users-RPP,DC=rpphosp,DC=local';
 
 /**
  * Group names ที่ใช้สำหรับตรวจสอบ (เพื่อรองรับ format ที่แตกต่างกัน)

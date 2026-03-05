@@ -10,14 +10,23 @@ interface AdminLayoutProps {
   children: React.ReactNode;
   sessionName?: string;
   sessionRole?: string;
+  /** สิทธิ์จากตาราง auth_roles (ผ่าน auth_user_roles) ใช้จำกัดเมนู */
+  appRoleCodes?: string[];
+  /** label แสดงชื่อสิทธิ์หลัก จาก auth_roles.name_th */
+  sessionRoleLabel?: string;
 }
 
-export default function AdminLayout({ children, sessionName, sessionRole }: AdminLayoutProps) {
+export default function AdminLayout({
+  children,
+  sessionName,
+  sessionRole,
+  appRoleCodes = [],
+  sessionRoleLabel,
+}: AdminLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const pathname = usePathname();
 
-  // โหลดสถานะ sidebar จาก localStorage
   useEffect(() => {
     const saved = localStorage.getItem('adminSidebarCollapsed');
     if (saved !== null) {
@@ -25,24 +34,33 @@ export default function AdminLayout({ children, sessionName, sessionRole }: Admi
     }
   }, []);
 
-  // บันทึกสถานะ sidebar ลง localStorage
   const toggleSidebar = () => {
     const newState = !sidebarCollapsed;
     setSidebarCollapsed(newState);
     localStorage.setItem('adminSidebarCollapsed', String(newState));
   };
 
-  // ใช้เมนูจากไฟล์ shared
-  const menuItems = getMenuItems(sessionRole);
+  const menuItems = getMenuItems(sessionRole, appRoleCodes);
 
   const isActive = (href: string) => {
-    if (href === '/admin') {
-      return pathname === '/admin';
+    // รองรับทั้ง URL เดิม (/admin) และ URL ใหม่ (/dormrpp)
+    const current = pathname || '';
+
+    if (href === '/dormrpp') {
+      return current === '/dormrpp' || current === '/admin';
     }
+
     if (href.startsWith('http')) {
       return false;
     }
-    return pathname?.startsWith(href);
+
+    // ถ้าเมนูเป็น /dormrpp/... ให้ถือว่า active เมื่ออยู่ที่ /dormrpp/... หรือ /admin/... เดิม
+    if (href.startsWith('/dormrpp')) {
+      const adminHref = href.replace('/dormrpp', '/admin');
+      return current.startsWith(href) || current.startsWith(adminHref);
+    }
+
+    return current.startsWith(href);
   };
 
   return (
@@ -207,30 +225,50 @@ export default function AdminLayout({ children, sessionName, sessionRole }: Admi
               {/* Desktop Title - Dynamic based on pathname */}
               <div className="hidden lg:block">
                 <h2 className="text-lg font-semibold text-gray-900">
-                  {pathname === '/admin' ? 'หน้าหลัก' : 
-                   pathname?.startsWith('/admin/rooms') ? 'ห้องพัก' :
-                   pathname?.startsWith('/admin/tenants') ? 'ผู้เช่า' :
-                   pathname?.startsWith('/admin/utility-readings') ? 'บันทึกเลขมิเตอร์' :
-                   pathname?.startsWith('/admin/bills') ? 'บิลค่าใช้จ่าย' :
-                   pathname?.startsWith('/admin/announcements') ? 'จัดการประกาศ' :
-                   pathname?.startsWith('/admin/meters') ? 'ตรวจสอบ💧⚡ มิเตอร์น้ำและไฟฟ้า' :
-                   pathname?.startsWith('/announcements') ? 'ประกาศ' :
-                   'ระบบจัดการหอพัก'}
+                  {pathname === '/admin' || pathname === '/dormrpp'
+                    ? 'หน้าหลัก'
+                    : pathname?.startsWith('/admin/rooms') || pathname?.startsWith('/dormrpp/rooms')
+                    ? 'ห้องพัก'
+                    : pathname?.startsWith('/admin/tenants') || pathname?.startsWith('/dormrpp/tenants')
+                    ? 'ผู้เช่า'
+                    : pathname?.startsWith('/admin/utility-readings') ||
+                      pathname?.startsWith('/dormrpp/utility-readings')
+                    ? 'บันทึกเลขมิเตอร์'
+                    : pathname?.startsWith('/admin/bills') || pathname?.startsWith('/dormrpp/bills')
+                    ? 'บิลค่าใช้จ่าย'
+                    : pathname?.startsWith('/admin/announcements') ||
+                      pathname?.startsWith('/dormrpp/announcements')
+                    ? 'จัดการประกาศ'
+                    : pathname?.startsWith('/admin/meters') || pathname?.startsWith('/dormrpp/meters')
+                    ? 'ตรวจสอบ💧⚡ มิเตอร์น้ำและไฟฟ้า'
+                    : pathname?.startsWith('/announcements')
+                    ? 'ประกาศ'
+                    : 'ระบบจัดการหอพัก'}
                 </h2>
               </div>
 
               {/* Mobile Title */}
               <div className="lg:hidden flex-1 ml-3">
                 <h2 className="text-base font-semibold text-gray-900">
-                  {pathname === '/admin' ? 'หน้าหลัก' : 
-                   pathname?.startsWith('/admin/rooms') ? 'ห้องพัก' :
-                   pathname?.startsWith('/admin/tenants') ? 'ผู้เช่า' :
-                   pathname?.startsWith('/admin/utility-readings') ? 'บันทึกเลขมิเตอร์' :
-                   pathname?.startsWith('/admin/bills') ? 'บิลค่าใช้จ่าย' :
-                   pathname?.startsWith('/admin/announcements') ? 'จัดการประกาศ' :
-                   pathname?.startsWith('/admin/meters') ? '💧⚡ มิเตอร์' :
-                   pathname?.startsWith('/announcements') ? 'ประกาศ' :
-                   'ระบบจัดการหอพัก'}
+                  {pathname === '/admin' || pathname === '/dormrpp'
+                    ? 'หน้าหลัก'
+                    : pathname?.startsWith('/admin/rooms') || pathname?.startsWith('/dormrpp/rooms')
+                    ? 'ห้องพัก'
+                    : pathname?.startsWith('/admin/tenants') || pathname?.startsWith('/dormrpp/tenants')
+                    ? 'ผู้เช่า'
+                    : pathname?.startsWith('/admin/utility-readings') ||
+                      pathname?.startsWith('/dormrpp/utility-readings')
+                    ? 'บันทึกเลขมิเตอร์'
+                    : pathname?.startsWith('/admin/bills') || pathname?.startsWith('/dormrpp/bills')
+                    ? 'บิลค่าใช้จ่าย'
+                    : pathname?.startsWith('/admin/announcements') ||
+                      pathname?.startsWith('/dormrpp/announcements')
+                    ? 'จัดการประกาศ'
+                    : pathname?.startsWith('/admin/meters') || pathname?.startsWith('/dormrpp/meters')
+                    ? '💧⚡ มิเตอร์'
+                    : pathname?.startsWith('/announcements')
+                    ? 'ประกาศ'
+                    : 'ระบบจัดการหอพัก'}
                 </h2>
               </div>
 
@@ -249,7 +287,9 @@ export default function AdminLayout({ children, sessionName, sessionRole }: Admi
                         <p className="text-sm font-medium text-gray-900 truncate max-w-[150px]">
                           {sessionName}
                         </p>
-                        <p className="text-xs text-gray-500">ผู้ดูแลระบบ</p>
+                        <p className="text-xs text-gray-500">
+                          {sessionRoleLabel || 'ผู้ใช้งานระบบ'}
+                        </p>
                       </div>
                     </div>
                     <LogoutButton />
@@ -266,7 +306,9 @@ export default function AdminLayout({ children, sessionName, sessionRole }: Admi
                       <p className="text-xs font-medium text-gray-900 truncate max-w-[100px]">
                         {sessionName}
                       </p>
-                      <p className="text-[10px] text-gray-500">ผู้ดูแลระบบ</p>
+                      <p className="text-[10px] text-gray-500">
+                        {sessionRoleLabel || 'ผู้ใช้งานระบบ'}
+                      </p>
                     </div>
                     <LogoutButton />
                   </div>

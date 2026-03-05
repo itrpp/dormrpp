@@ -1,9 +1,11 @@
-// app/announcements/[id]/page.tsx - หน้าแสดงรายละเอียดประกาศ (public)
+// app/announcements/[id]/page.tsx - หน้าแสดงรายละเอียดประกาศ (ใช้เมนูตามสิทธิ์)
 import { query } from '@/lib/db';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getSession } from '@/lib/auth/session';
-import PublicLayout from '@/components/PublicLayout';
+import { getAppRolesForSessionUser, type AppRoleCode } from '@/lib/auth/app-roles';
+import { getAuthRoles } from '@/lib/repositories/auth-users';
+import AdminLayoutClient from '@/components/AdminLayout';
 
 async function getAnnouncement(id: number) {
   try {
@@ -87,9 +89,40 @@ export default async function AnnouncementDetailPage({
 
   const { announcement, files } = data;
   const session = await getSession();
+  const appRoleCodes =
+    session && session.username
+      ? await getAppRolesForSessionUser(session).catch(() => [])
+      : [];
+
+  let sessionRoleLabel: string | undefined;
+  try {
+    const allRoles = await getAuthRoles();
+    const priority: AppRoleCode[] = [
+      'ADMIN',
+      'SUPERUSER_RP',
+      'SUPERUSER_MED',
+      'FINANCE',
+      'TENANT_RP',
+      'TENANT_MED',
+      'USER',
+    ];
+    const primaryCode =
+      priority.find((code) => appRoleCodes.includes(code)) || appRoleCodes[0];
+    const primaryRole = primaryCode
+      ? allRoles.find((r) => r.code === primaryCode)
+      : undefined;
+    sessionRoleLabel = primaryRole?.name_th;
+  } catch {
+    sessionRoleLabel = undefined;
+  }
 
   return (
-    <PublicLayout session={session}>
+    <AdminLayoutClient
+      sessionName={session?.name}
+      sessionRole={session?.role}
+      appRoleCodes={appRoleCodes}
+      sessionRoleLabel={sessionRoleLabel}
+    >
       <div className="max-w-4xl mx-auto">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <h1 className="text-2xl font-bold text-gray-900 mb-2">
@@ -137,7 +170,7 @@ export default async function AnnouncementDetailPage({
           )}
         </div>
       </div>
-    </PublicLayout>
+    </AdminLayoutClient>
   );
 }
 

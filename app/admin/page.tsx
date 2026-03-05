@@ -248,48 +248,13 @@ async function getDashboardStats(): Promise<DashboardStats> {
   }
 }
 
-// ฟังก์ชันดึงข้อมูลสำหรับกราฟ
+// ฟังก์ชันดึงข้อมูลสำหรับกราฟ (ลดจำนวน query ให้เหลือเฉพาะ aggregate สำคัญ)
 async function getChartData() {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
 
-  // ข้อมูลสถานะห้องพัก
-  let roomStatusData = [
-    { name: 'ว่าง', value: 0, color: '#10b981' },
-    { name: 'มีผู้อาศัย', value: 0, color: '#3b82f6' },
-    { name: 'ซ่อมบำรุง', value: 0, color: '#6b7280' },
-  ];
-
-  try {
-    // รวม query เป็นอันเดียว
-    const roomStatusCounts = await query<{ status: string; count: number }>(
-      `SELECT status, COUNT(*) as count 
-       FROM rooms 
-       WHERE COALESCE(is_deleted, 0) = 0
-       GROUP BY status`
-    );
-
-    roomStatusData = [
-      { name: 'ว่าง', value: roomStatusCounts.find(r => r.status === 'available')?.count || 0, color: '#10b981' },
-      { name: 'มีผู้อาศัย', value: roomStatusCounts.find(r => r.status === 'occupied')?.count || 0, color: '#3b82f6' },
-      { name: 'ซ่อมบำรุง', value: roomStatusCounts.find(r => r.status === 'maintenance')?.count || 0, color: '#6b7280' },
-    ];
-  } catch (error: any) {
-    // ถ้าเป็น "Too many connections" ให้ใช้ค่า default (0) แทนการ log error
-    if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
-      // Silent fallback - ไม่ log เพื่อลด log noise
-    } else {
-    console.error('Error fetching room status data:', error);
-    }
-  }
-
-  // ข้อมูลรายได้รายเดือน (6 เดือนล่าสุด)
-  const monthlyRevenueData: Array<{
-    month: string;
-    revenue: number;
-  }> = [];
-
+  // เตรียมช่วง 6 เดือนล่าสุด (สำหรับทุกกราฟที่อิงเดือน)
   const monthNames = [
     'ม.ค.',
     'ก.พ.',
@@ -305,191 +270,188 @@ async function getChartData() {
     'ธ.ค.',
   ];
 
-  for (let i = 5; i >= 0; i--) {
-    const date = new Date(currentYear, currentMonth - 1 - i, 1);
-    const year = date.getFullYear();
-    const buddhistYear = year + 543; // แปลงเป็นปีพุทธศักราช
-    const month = date.getMonth() + 1;
-    const monthName = monthNames[month - 1];
-
-    let revenue = 0;
-
-    try {
-      // ดึง billing cycle สำหรับเดือนนี้
-      const [cycle] = await query<{ cycle_id: number }>(
-        `SELECT cycle_id FROM billing_cycles 
-         WHERE billing_year = ? AND billing_month = ?`,
-        [buddhistYear, month]
-      );
-
-      if (cycle?.cycle_id) {
-        // ดึงบิลทั้งหมดในรอบบิลนี้
-        const bills = await query<{ bill_id: number; room_id: number; tenant_id: number }>(
-          `SELECT bill_id, room_id, tenant_id FROM bills WHERE cycle_id = ?`,
-          [cycle.cycle_id]
-        );
-
-        // คำนวณรายได้จากแต่ละบิล
-        for (const bill of bills) {
-          // นับจำนวนผู้เช่าในห้อง (active contracts)
-          const [tenantCountResult] = await query<{ count: number }>(
-            `SELECT COUNT(*) as count FROM contracts 
-             WHERE room_id = ? AND status = 'active'`,
-            [bill.room_id]
-          );
-          const tenantCount = Math.max(tenantCountResult?.count || 1, 1);
-
-          // ดึง utility readings สำหรับห้องนี้ในรอบบิลนี้ พร้อม rate_per_unit
-          const readings = await query<{
-            utility_type_id: number;
-            utility_code: string;
-            meter_start: number;
-            meter_end: number;
-            rate_per_unit: number;
-          }>(
-            `SELECT 
-              bur.utility_type_id,
-              ut.code AS utility_code,
-              bur.meter_start,
-              bur.meter_end,
-              COALESCE(
-                (SELECT rate_per_unit 
-                 FROM utility_rates 
-                 WHERE utility_type_id = bur.utility_type_id
-                   AND effective_date <= COALESCE(bc.end_date, CURDATE())
-                 ORDER BY effective_date DESC 
-                 LIMIT 1),
-                0
-              ) AS rate_per_unit
-             FROM bill_utility_readings bur
-             JOIN utility_types ut ON bur.utility_type_id = ut.utility_type_id
-             LEFT JOIN billing_cycles bc ON bur.cycle_id = bc.cycle_id
-             WHERE bur.room_id = ? AND bur.cycle_id = ?`,
-            [bill.room_id, cycle.cycle_id]
-          );
-
-          // คำนวณยอดรวมของห้อง
-          let totalElectricAmountForRoom = 0;
-          let totalWaterAmountForRoom = 0;
-
-          for (const reading of readings) {
-            // ตรวจสอบว่าเป็นไฟฟ้าหรือน้ำจาก utility_code
-            if (reading.utility_code === 'electric') {
-              // ไฟฟ้า: รองรับ rollover
-              const start = Number(reading.meter_start || 0);
-              const end = Number(reading.meter_end || 0);
-              const MOD = 10000;
-              const usage = end >= start ? end - start : (MOD - start) + end;
-              totalElectricAmountForRoom = usage * Number(reading.rate_per_unit || 0);
-            } else if (reading.utility_code === 'water') {
-              // น้ำ: คำนวณปกติ
-              const usage = Number(reading.meter_end || 0) - Number(reading.meter_start || 0);
-              totalWaterAmountForRoom = usage * Number(reading.rate_per_unit || 0);
-            }
-          }
-
-          // หารด้วยจำนวนผู้เช่า (แต่ละคนจ่ายส่วนแบ่ง)
-          const electricAmountPerPerson = totalElectricAmountForRoom / tenantCount;
-          const waterAmountPerPerson = totalWaterAmountForRoom / tenantCount;
-          const maintenanceFee = 1000; // แต่ละคนจ่ายเต็ม
-
-          // ยอดรวมต่อคน
-          const totalPerPerson = electricAmountPerPerson + waterAmountPerPerson + maintenanceFee;
-          revenue += totalPerPerson;
-        }
-      }
-    } catch (error: any) {
-      // Fallback: ถ้ามี error ให้ตั้งค่าเป็น 0
-      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
-        // Silent fallback
-      } else {
-        console.error('Error calculating revenue:', error);
-      }
-    }
-
-    monthlyRevenueData.push({
-      month: `${monthName} ${buddhistYear}`,
-      revenue,
-    });
-  }
-
-  // ข้อมูลจำนวนผู้เช่าใหม่/ออกรายเดือน (6 เดือนล่าสุด)
-  const tenantFlowData: Array<{ month: string; new: number; left: number }> =
-    [];
+  const monthRange: {
+    adYear: number;
+    beYear: number;
+    month: number;
+    label: string;
+  }[] = [];
 
   for (let i = 5; i >= 0; i--) {
     const date = new Date(currentYear, currentMonth - 1 - i, 1);
-    const year = date.getFullYear();
+    const adYear = date.getFullYear();
+    const beYear = adYear + 543;
     const month = date.getMonth() + 1;
-    const monthName = monthNames[month - 1];
-
-    let newCount = 0;
-    let leftCount = 0;
-
-    try {
-      const [newResult] = await query<{ count: number }>(
-        `SELECT COUNT(DISTINCT c.tenant_id) as count 
-         FROM contracts c 
-         WHERE YEAR(c.start_date) = ? AND MONTH(c.start_date) = ?`,
-        [year, month]
-      );
-      newCount = newResult?.count || 0;
-
-      const [leftResult] = await query<{ count: number }>(
-        `SELECT COUNT(DISTINCT c.tenant_id) as count 
-         FROM contracts c 
-         WHERE YEAR(c.end_date) = ? AND MONTH(c.end_date) = ? AND c.end_date IS NOT NULL`,
-        [year, month]
-      );
-      leftCount = leftResult?.count || 0;
-    } catch (error: any) {
-      // Fallback if contracts table doesn't exist or Too many connections
-      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
-        // Silent fallback - ไม่ log เพื่อลด log noise
-      }
-    }
-
-    tenantFlowData.push({
-      month: `${monthName} ${year + 543}`,
-      new: newCount,
-      left: leftCount,
-    });
+    const label = `${monthNames[month - 1]} ${beYear}`;
+    monthRange.push({ adYear, beYear, month, label });
   }
 
-  // ข้อมูลอัตราการเข้าพักรายเดือน (6 เดือนล่าสุด)
+  // -----------------------------
+  // 1) สถานะห้องพัก (1 query)
+  // -----------------------------
+  let roomStatusData = [
+    { name: 'ว่าง', value: 0, color: '#10b981' },
+    { name: 'มีผู้อาศัย', value: 0, color: '#3b82f6' },
+    { name: 'ซ่อมบำรุง', value: 0, color: '#6b7280' },
+  ];
+
+  try {
+    const roomStatusCounts = await query<{ status: string; count: number }>(
+      `SELECT status, COUNT(*) as count 
+       FROM rooms 
+       WHERE COALESCE(is_deleted, 0) = 0
+       GROUP BY status`
+    );
+
+    roomStatusData = [
+      {
+        name: 'ว่าง',
+        value: roomStatusCounts.find((r) => r.status === 'available')?.count || 0,
+        color: '#10b981',
+      },
+      {
+        name: 'มีผู้อาศัย',
+        value: roomStatusCounts.find((r) => r.status === 'occupied')?.count || 0,
+        color: '#3b82f6',
+      },
+      {
+        name: 'ซ่อมบำรุง',
+        value: roomStatusCounts.find((r) => r.status === 'maintenance')?.count || 0,
+        color: '#6b7280',
+      },
+    ];
+  } catch (error: any) {
+    if (!(error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections'))) {
+      console.error('Error fetching room status data:', error);
+    }
+  }
+
+  // -----------------------------
+  // 2) รายได้รายเดือน
+  // หมายเหตุ: คอลัมน์ total_amount ถูกถอดออกจากตาราง bills แล้ว
+  // ตอนนี้จะไม่ query DB เพื่อหลีกเลี่ยง SQL error และแสดงกราฟด้วยค่า 0 ชั่วคราว
+  // ถ้าต้องการใช้จริง ให้คำนวณจาก bill_utility_readings + utility_rates เหมือนหน้า Bills/Export
+  // -----------------------------
+  const monthlyRevenueData: Array<{ month: string; revenue: number }> = [];
+
+  if (monthRange.length > 0) {
+    for (const m of monthRange) {
+      monthlyRevenueData.push({
+        month: m.label,
+        revenue: 0,
+      });
+    }
+  }
+
+  // -----------------------------
+  // 3) ผู้เช่าใหม่/ออก (2 queries รวมทุกเดือน)
+  // -----------------------------
+  const tenantFlowData: Array<{ month: string; new: number; left: number }> = [];
+
+  try {
+    if (monthRange.length > 0) {
+      const rangeStart = new Date(
+        monthRange[0]!.adYear,
+        monthRange[0]!.month - 1,
+        1
+      );
+      const rangeEnd = new Date(
+        monthRange[monthRange.length - 1]!.adYear,
+        monthRange[monthRange.length - 1]!.month,
+        0
+      );
+
+      const newRows = await query<{
+        y: number;
+        m: number;
+        count: number;
+      }>(
+        `
+        SELECT 
+          YEAR(c.start_date) AS y,
+          MONTH(c.start_date) AS m,
+          COUNT(DISTINCT c.tenant_id) AS count
+        FROM contracts c
+        WHERE c.start_date IS NOT NULL
+          AND c.start_date BETWEEN ? AND ?
+        GROUP BY YEAR(c.start_date), MONTH(c.start_date)
+        `,
+        [rangeStart, rangeEnd]
+      );
+
+      const leftRows = await query<{
+        y: number;
+        m: number;
+        count: number;
+      }>(
+        `
+        SELECT 
+          YEAR(c.end_date) AS y,
+          MONTH(c.end_date) AS m,
+          COUNT(DISTINCT c.tenant_id) AS count
+        FROM contracts c
+        WHERE c.end_date IS NOT NULL
+          AND c.end_date BETWEEN ? AND ?
+        GROUP BY YEAR(c.end_date), MONTH(c.end_date)
+        `,
+        [rangeStart, rangeEnd]
+      );
+
+      const newMap = new Map<string, number>();
+      newRows.forEach((r) => {
+        newMap.set(`${r.y}-${r.m}`, r.count || 0);
+      });
+
+      const leftMap = new Map<string, number>();
+      leftRows.forEach((r) => {
+        leftMap.set(`${r.y}-${r.m}`, r.count || 0);
+      });
+
+      for (const m of monthRange) {
+        const key = `${m.adYear}-${m.month}`;
+        tenantFlowData.push({
+          month: `${monthNames[m.month - 1]} ${m.adYear + 543}`,
+          new: newMap.get(key) ?? 0,
+          left: leftMap.get(key) ?? 0,
+        });
+      }
+    }
+  } catch (error: any) {
+    if (!(error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections'))) {
+      console.error('Error aggregating tenant flow:', error);
+    }
+  }
+
+  // -----------------------------
+  // 4) อัตราการเข้าพักรายเดือน (ใช้ค่าปัจจุบัน ทำซ้ำ 6 เดือน)
+  // -----------------------------
   const occupancyData: Array<{ month: string; rate: number }> = [];
 
-  for (let i = 5; i >= 0; i--) {
-    const date = new Date(currentYear, currentMonth - 1 - i, 1);
-    const year = date.getFullYear();
-    const month = date.getMonth() + 1;
-    const monthName = monthNames[month - 1];
+  let baseRate = 0;
+  try {
+    const [totalRoomsResult, occupiedRoomsResult] = await Promise.all([
+      query<{ count: number }>(
+        'SELECT COUNT(*) as count FROM rooms WHERE COALESCE(is_deleted, 0) = 0'
+      ),
+      query<{ count: number }>(
+        "SELECT COUNT(*) as count FROM rooms WHERE status = 'occupied' AND COALESCE(is_deleted, 0) = 0"
+      ),
+    ]);
 
-    try {
-      // รวม query เป็นอันเดียว
-      const [totalRoomsResult, occupiedRoomsResult] = await Promise.all([
-        query<{ count: number }>('SELECT COUNT(*) as count FROM rooms WHERE COALESCE(is_deleted, 0) = 0'),
-        query<{ count: number }>("SELECT COUNT(*) as count FROM rooms WHERE status = 'occupied' AND COALESCE(is_deleted, 0) = 0")
-      ]);
-
-      const totalRooms = totalRoomsResult[0]?.count || 0;
-      const occupiedRooms = occupiedRoomsResult[0]?.count || 0;
-      const rate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
-
-      occupancyData.push({
-        month: `${monthName} ${year + 543}`,
-        rate: Number(rate.toFixed(2)),
-      });
-    } catch (error: any) {
-      // ถ้าเป็น "Too many connections" ให้ใช้ค่า default (0)
-      if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
-        // Silent fallback - ไม่ log เพื่อลด log noise
-      }
-      occupancyData.push({
-        month: `${monthName} ${year + 543}`,
-        rate: 0,
-      });
+    const totalRooms = totalRoomsResult[0]?.count || 0;
+    const occupiedRooms = occupiedRoomsResult[0]?.count || 0;
+    baseRate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
+  } catch (error: any) {
+    if (!(error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections'))) {
+      console.error('Error calculating base occupancy:', error);
     }
+  }
+
+  for (const m of monthRange) {
+    occupancyData.push({
+      month: `${monthNames[m.month - 1]} ${m.adYear + 543}`,
+      rate: Number(baseRate.toFixed(2)),
+    });
   }
 
   return {
