@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 
 export interface BillPreviewData {
   bill: {
@@ -79,6 +79,7 @@ const formatInteger = (num: number | null | undefined): string => {
 
 export default function BillPreviewContent({ data }: Props) {
   const { bill, tenant, charges, utilities, summary, meter_photos } = data;
+  const [fullscreenPhoto, setFullscreenPhoto] = useState<'electric' | 'water' | null>(null);
 
   return (
     <div className="bg-white shadow-lg rounded-lg p-8 print:shadow-none print:p-4">
@@ -311,18 +312,23 @@ export default function BillPreviewContent({ data }: Props) {
         </ul>
       </div>
 
-      {/* ส่วนที่ 7: รูปภาพมิเตอร์ */}
+      {/* ส่วนที่ 7: รูปภาพมิเตอร์ — คลิกเพื่อดูแบบเต็มจอ */}
       <div className="mt-8 border-t border-gray-300 pt-6">
         <div className="grid grid-cols-2 gap-8">
           {/* รูปภาพมิเตอร์ไฟฟ้า */}
           <div className="border-2 border-red-500 rounded-lg p-3 text-center">
             <p className="font-bold text-sm mb-3 text-red-600">picture มิเตอร์ไฟ</p>
             {meter_photos.electric ? (
-              <div className="flex justify-center items-center min-h-[200px]">
+              <button
+                type="button"
+                onClick={() => setFullscreenPhoto('electric')}
+                className="w-full flex justify-center items-center min-h-[200px] cursor-zoom-in hover:opacity-90 transition-opacity focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 rounded"
+                title="คลิกเพื่อดูแบบเต็มจอ"
+              >
                 <img
                   src={meter_photos.electric.photo_url}
                   alt="รูปภาพมิเตอร์ไฟฟ้า"
-                  className="max-w-full h-auto max-h-[300px] object-contain rounded"
+                  className="max-w-full h-auto max-h-[300px] object-contain rounded pointer-events-none"
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = 'none';
                     const parent = (e.target as HTMLImageElement).parentElement;
@@ -334,7 +340,7 @@ export default function BillPreviewContent({ data }: Props) {
                     }
                   }}
                 />
-              </div>
+              </button>
             ) : (
               <div className="py-12 text-gray-400">
                 <p className="text-sm">ไม่มีรูปภาพ</p>
@@ -346,11 +352,16 @@ export default function BillPreviewContent({ data }: Props) {
           <div className="border-2 border-red-500 rounded-lg p-3 text-center">
             <p className="font-bold text-sm mb-3 text-red-600">picture มิเตอร์น้ำ</p>
             {meter_photos.water ? (
-              <div className="flex justify-center items-center min-h-[200px]">
+              <button
+                type="button"
+                onClick={() => setFullscreenPhoto('water')}
+                className="w-full flex justify-center items-center min-h-[200px] cursor-zoom-in hover:opacity-90 transition-opacity focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 rounded"
+                title="คลิกเพื่อดูแบบเต็มจอ"
+              >
                 <img
                   src={meter_photos.water.photo_url}
                   alt="รูปภาพมิเตอร์น้ำ"
-                  className="max-w-full h-auto max-h-[300px] object-contain rounded"
+                  className="max-w-full h-auto max-h-[300px] object-contain rounded pointer-events-none"
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = 'none';
                     const parent = (e.target as HTMLImageElement).parentElement;
@@ -362,7 +373,7 @@ export default function BillPreviewContent({ data }: Props) {
                     }
                   }}
                 />
-              </div>
+              </button>
             ) : (
               <div className="py-12 text-gray-400">
                 <p className="text-sm">ไม่มีรูปภาพ</p>
@@ -370,7 +381,44 @@ export default function BillPreviewContent({ data }: Props) {
             )}
           </div>
         </div>
+        {(meter_photos.electric || meter_photos.water) && (
+          <p className="text-xs text-gray-500 mt-2 text-center">คลิกรูปเพื่อดูแบบเต็มจอ</p>
+        )}
       </div>
+
+      {/* Modal เต็มจอสำหรับรูปมิเตอร์ */}
+      {fullscreenPhoto && (fullscreenPhoto === 'electric' ? meter_photos.electric : meter_photos.water) && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/90 flex flex-col items-center justify-center p-4"
+          onClick={() => setFullscreenPhoto(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label={fullscreenPhoto === 'electric' ? 'รูปมิเตอร์ไฟฟ้าแบบเต็มจอ' : 'รูปมิเตอร์น้ำแบบเต็มจอ'}
+        >
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <span className="text-white text-sm font-medium bg-black/50 px-3 py-1.5 rounded">
+              {fullscreenPhoto === 'electric' ? 'มิเตอร์ไฟฟ้า' : 'มิเตอร์น้ำ'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setFullscreenPhoto(null)}
+              className="text-white hover:bg-white/20 rounded-full p-2 transition-colors"
+              aria-label="ปิด"
+            >
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <img
+            src={fullscreenPhoto === 'electric' ? meter_photos.electric!.photo_url : meter_photos.water!.photo_url}
+            alt={fullscreenPhoto === 'electric' ? 'รูปภาพมิเตอร์ไฟฟ้า' : 'รูปภาพมิเตอร์น้ำ'}
+            className="max-w-full max-h-[calc(100vh-5rem)] w-auto h-auto object-contain rounded"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <p className="text-white/80 text-sm mt-2">คลิกนอกรูปเพื่อปิด</p>
+        </div>
+      )}
     </div>
   );
 }
