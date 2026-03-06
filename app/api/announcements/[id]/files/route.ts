@@ -1,4 +1,6 @@
 // app/api/announcements/[id]/files/route.ts
+// อัปโหลดไฟล์: ต้องตั้ง body size ที่ next.config (serverActions.bodySizeLimit, proxyClientMaxBodySize)
+// ถ้า deploy หลัง Nginx: เพิ่ม client_max_body_size 50m; ใน server หรือ http block
 import { NextResponse } from 'next/server';
 import { query, pool } from '@/lib/db';
 import { getSession } from '@/lib/auth/session';
@@ -161,9 +163,26 @@ export async function POST(
       );
     }
 
-    const formData = await req.formData();
+    let formData: FormData;
+    try {
+      formData = await req.formData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const bodyTooLarge =
+        /body|413|payload|too large|limit|size|exceeded/i.test(msg);
+      console.error('[announcements/files] formData error:', msg);
+      return NextResponse.json(
+        {
+          error: bodyTooLarge
+            ? 'ขนาดไฟล์เกินขีดจำกัดของเซิร์ฟเวอร์ (ลองตั้งค่า body size limit ที่ next.config หรือ Nginx client_max_body_size)'
+            : 'อ่านข้อมูลฟอร์มไม่สำเร็จ',
+        },
+        { status: bodyTooLarge ? 413 : 500 }
+      );
+    }
+
     const fileEntries = formData.getAll('files');
-    
+
     // Filter และแปลง FormDataEntryValue เป็น File
     const files = fileEntries.filter((entry): entry is File => entry instanceof File);
 
