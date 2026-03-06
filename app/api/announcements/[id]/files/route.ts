@@ -2,6 +2,8 @@
 import { NextResponse } from 'next/server';
 import { query, pool } from '@/lib/db';
 import { getSession } from '@/lib/auth/session';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import type { AppRoleCode } from '@/lib/auth/app-roles';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
@@ -10,15 +12,20 @@ import type { AnnouncementFile } from '@/types/db';
 // บังคับให้ route นี้เป็น dynamic
 export const dynamic = 'force-dynamic';
 
-// กำหนด allowed file types และ max size
-const ALLOWED_TYPES = [
+const ANNOUNCEMENT_ADMIN_ROLES: AppRoleCode[] = ['ADMIN', 'SUPERUSER_RP', 'SUPERUSER_MED'];
+
+// กำหนด allowed file types และ max size (รองรับ MIME ที่เบราว์เซอร์ส่งต่างกัน)
+const ALLOWED_MIME_TYPES = [
   'application/pdf',
   'image/jpeg',
   'image/jpg',
+  'image/pjpeg', // บางเบราว์เซอร์ส่ง JPEG แบบนี้
   'image/png',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // XLSX
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // DOCX
 ];
+
+const ALLOWED_EXTENSIONS = ['.pdf', '.jpg', '.jpeg', '.png', '.xlsx', '.docx'];
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
@@ -40,9 +47,10 @@ export async function GET(
       );
     }
 
-    // ไม่จำกัดการเข้าถึง - ให้เห็นได้ทุกคน (เฉพาะที่ published)
-    // ถ้าไม่ใช่ admin ให้ตรวจสอบว่า published แล้ว
-    if (!session || (session.role !== 'admin' && session.role !== 'superUser')) {
+    // Admin (session หรือ app role) เห็นไฟล์ทุกประกาศ; คนอื่นเห็นเฉพาะที่ published
+    const appAuth = session ? await requireAppRoles(ANNOUNCEMENT_ADMIN_ROLES) : { authorized: false };
+    const isAdmin = session && (session.role === 'admin' || session.role === 'superUser' || appAuth.authorized);
+    if (!isAdmin) {
       try {
         const [announcement] = await query<{ status?: string | null; is_published?: number | null }>(
           `SELECT status, is_published FROM announcements WHERE announcement_id = ?`,
@@ -56,17 +64,15 @@ export async function GET(
           );
         }
 
-        // ตรวจสอบ status หรือ is_published (backward compatibility)
-        const isPublished = announcement.status === 'published' || 
+        const isPublished = announcement.status === 'published' ||
                            (announcement.status === null && Boolean(announcement.is_published));
-        
+
         if (!isPublished) {
           return NextResponse.json(
             { error: 'Announcement not published' },
             { status: 404 }
           );
         }
-        // ไม่ตรวจสอบ publish_start, publish_end - ให้เห็นได้ทุกคน
       } catch (error: any) {
         return NextResponse.json(
           { error: 'Failed to fetch files' },
@@ -105,17 +111,31 @@ export async function GET(
   }
 }
 
-// POST /api/announcements/[id]/files - อัปโหลดไฟล์ (Admin only)
+function isFileAllowed(file: File): boolean {
+  const type = (file.type || '').toLowerCase();
+  const name = (file.name || '').toLowerCase();
+  if (ALLOWED_MIME_TYPES.includes(type)) return true;
+  if (!type || type === 'application/octet-stream') {
+    return ALLOWED_EXTENSIONS.some((ext) => name.endsWith(ext));
+  }
+  return false;
+}
+
+// POST /api/announcements/[id]/files - อัปโหลดไฟล์ (Admin / ผู้จัดการประกาศ)
 export async function POST(
   req: Request,
   { params }: { params: { id: string } }
 ) {
   try {
     const session = await getSession();
-    
-    if (!session || (session.role !== 'admin' && session.role !== 'superUser')) {
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    }
+    const appAuth = await requireAppRoles(ANNOUNCEMENT_ADMIN_ROLES);
+    const legacyAdmin = session.role === 'admin' || session.role === 'superUser';
+    if (!appAuth.authorized && !legacyAdmin) {
       return NextResponse.json(
-        { error: 'Unauthorized' },
+        { error: 'ไม่มีสิทธิ์อัปโหลดไฟล์ประกาศ' },
         { status: 403 }
       );
     }
@@ -172,9 +192,8 @@ export async function POST(
     }
 
     for (const file of files) {
-      // ตรวจสอบ file type
-      if (!ALLOWED_TYPES.includes(file.type)) {
-        continue; // ข้ามไฟล์ที่ไม่รองรับ
+      if (!isFileAllowed(file)) {
+        continue;
       }
 
       // ตรวจสอบ file size
@@ -241,7 +260,10 @@ export async function POST(
 
     if (uploadedFiles.length === 0) {
       return NextResponse.json(
-        { error: 'No valid files uploaded' },
+        {
+          error:
+            'ไม่มีไฟล์ที่รองรับ (รองรับ PDF, JPG, PNG, XLSX, DOCX ขนาดไม่เกิน 50MB) หรือประเภทไฟล์ไม่ตรง',
+        },
         { status: 400 }
       );
     }

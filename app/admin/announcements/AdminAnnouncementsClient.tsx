@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import type { AnnouncementStatus } from '@/types/db';
 import type { AdminAnnouncementForClient } from './page';
 
@@ -81,6 +81,8 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
   const [uploadedFiles, setUploadedFiles] = useState<AnnouncementFile[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [announcementsPage, setAnnouncementsPage] = useState(1);
 
   // Get status label helper function (รองรับ status workflow และ backward compatibility)
   const getStatusLabel = (announcement: Announcement): AnnouncementStatus => {
@@ -158,6 +160,17 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
     });
   }, [announcements, searchText, selectedRole, selectedStatus]);
 
+  const ANNOUNCEMENTS_PAGE_SIZE = 20;
+  const announcementsTotalPages = Math.max(1, Math.ceil(filteredAnnouncements.length / ANNOUNCEMENTS_PAGE_SIZE));
+  const paginatedAnnouncements = useMemo(() => {
+    const start = (announcementsPage - 1) * ANNOUNCEMENTS_PAGE_SIZE;
+    return filteredAnnouncements.slice(start, start + ANNOUNCEMENTS_PAGE_SIZE);
+  }, [filteredAnnouncements, announcementsPage]);
+
+  useEffect(() => {
+    setAnnouncementsPage(1);
+  }, [searchText, selectedRole, selectedStatus, filteredAnnouncements.length]);
+
   // Load announcements
   const loadAnnouncements = async () => {
     try {
@@ -211,6 +224,7 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
     });
     setUploadedFiles([]);
     setSelectedFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setIsModalOpen(true);
   };
 
@@ -256,6 +270,7 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
     }
     
     setSelectedFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
     setIsModalOpen(true);
   };
 
@@ -306,7 +321,7 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
       const result = await response.json();
       const announcementId = isEditing ? form.announcement_id : result.announcement_id;
 
-      // Upload files if any
+      // Upload files if any (ไม่ใส่ Content-Type เพื่อให้เบราว์เซอร์ตั้ง multipart boundary เอง)
       if (selectedFiles.length > 0 && announcementId) {
         const formData = new FormData();
         selectedFiles.forEach((file) => {
@@ -321,8 +336,9 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
 
         if (!uploadResponse.ok) {
           const uploadError = await uploadResponse.json().catch(() => ({ error: 'Unknown error' }));
+          const msg = uploadError?.error || `HTTP ${uploadResponse.status}`;
           console.error('Failed to upload files:', uploadError);
-          alert(`บันทึกประกาศสำเร็จ แต่ไม่สามารถอัปโหลดไฟล์ได้: ${uploadError.error || 'Unknown error'}`);
+          alert(`บันทึกประกาศสำเร็จ แต่อัปโหลดไฟล์ไม่สำเร็จ: ${msg}\n\nตรวจสอบว่าไฟล์เป็น PDF/JPG/PNG/XLSX/DOCX และขนาดไม่เกิน 50MB`);
         }
       }
 
@@ -482,35 +498,38 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
 
 
   return (
-    <div>
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-        <h1 className="text-3xl font-bold text-gray-800">จัดการประกาศ</h1>
+    <div className="max-w-5xl mx-auto">
+      {/* Header - สไตล์เดียวกับหน้าประกาศสาธารณะ */}
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-1">📢 จัดการประกาศ</h1>
+          <p className="text-sm text-gray-500">หอพักรวงผึ้ง - โรงพยาบาลราชพิพัฒน์</p>
+        </div>
         <button
           onClick={handleCreate}
-          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+          className="shrink-0 bg-blue-600 text-white px-5 py-2.5 rounded-lg hover:bg-blue-700 transition-colors shadow-sm font-medium"
         >
           + เพิ่มประกาศ
         </button>
       </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div>
+      {/* Filters - การ์ดเหมือนหน้าประกาศ */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 mb-6">
+        <div className="flex flex-col md:flex-row gap-4 items-stretch md:items-end">
+          <div className="flex-1">
             <label className="block text-sm font-medium text-gray-700 mb-1">ค้นหา</label>
             <input
               type="text"
-              className="w-full border rounded-md px-3 py-2 text-sm"
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               placeholder="ค้นหาหัวข้อหรือเนื้อหา..."
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
             />
           </div>
-          <div>
+          <div className="w-full md:w-40">
             <label className="block text-sm font-medium text-gray-700 mb-1">กลุ่มเป้าหมาย</label>
             <select
-              className="w-full border rounded-md px-3 py-2 text-sm"
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
               value={selectedRole}
               onChange={(e) => setSelectedRole(e.target.value)}
             >
@@ -519,10 +538,10 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
               <option value="admin">Admin</option>
             </select>
           </div>
-          <div>
+          <div className="w-full md:w-44">
             <label className="block text-sm font-medium text-gray-700 mb-1">สถานะ</label>
             <select
-              className="w-full border rounded-md px-3 py-2 text-sm"
+              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
             >
@@ -538,198 +557,221 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
         </div>
       </div>
 
-      {/* Table */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                หัวข้อ
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                กลุ่มเป้าหมาย
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                สถานะ
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                วันที่
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                การจัดการ
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {filteredAnnouncements.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="px-6 py-4 text-center text-gray-500">
-                  ไม่พบข้อมูลประกาศ
-                </td>
-              </tr>
-            ) : (
-              filteredAnnouncements.map((announcement) => {
-                const status = getStatusLabel(announcement);
-                return (
-                  <tr key={announcement.announcement_id}>
-                    <td className="px-6 py-4 text-sm font-medium text-gray-900">
-                      {announcement.title}
-                      {announcement.file_count && announcement.file_count > 0 && (
-                        <span className="ml-2 text-blue-600">📎 {announcement.file_count}</span>
+      {/* รายการประกาศแบบการ์ด - สไตล์เดียวกับหน้าประกาศ */}
+      {filteredAnnouncements.length === 0 ? (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-12 text-center">
+          <p className="text-gray-500">ไม่พบประกาศ</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {paginatedAnnouncements.map((announcement, index) => {
+            const status = getStatusLabel(announcement);
+            const rowNo = (announcementsPage - 1) * ANNOUNCEMENTS_PAGE_SIZE + index + 1;
+            return (
+              <div
+                key={announcement.announcement_id}
+                className="bg-white rounded-lg shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
+              >
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className="flex-shrink-0 w-8 h-8 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center text-sm font-semibold">
+                        {rowNo}
+                      </span>
+                      <div className="min-w-0">
+                        <h3 className="text-lg font-semibold text-gray-900 truncate">
+                          {announcement.title}
+                        </h3>
+                        <p className="text-sm text-gray-500 mt-0.5">
+                          {announcement.publish_start
+                            ? new Date(announcement.publish_start).toLocaleDateString('th-TH', {
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric',
+                              })
+                            : new Date(announcement.created_at).toLocaleDateString('th-TH', {
+                                year: 'numeric',
+                                month: 'short',
+                                day: 'numeric',
+                              })}
+                          <span className="mx-1.5">•</span>
+                          {announcement.target_role === 'all'
+                            ? 'ทุกคน'
+                            : announcement.target_role === 'tenant'
+                              ? 'ผู้เช่า'
+                              : 'Admin'}
+                          {announcement.file_count && announcement.file_count > 0 && (
+                            <span className="ml-1.5 text-blue-600">📎 {announcement.file_count}</span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                      <span
+                        className={`px-2.5 py-1 text-xs font-semibold rounded-full ${getStatusColorClass(status)}`}
+                      >
+                        {getStatusDisplayLabel(status)}
+                      </span>
+                      {status !== 'cancelled' && (
+                        <select
+                          value={status}
+                          onChange={(e) => {
+                            const newStatus = e.target.value as AnnouncementStatus;
+                            const confirmMessages: Record<AnnouncementStatus, string> = {
+                              draft: 'คุณต้องการเปลี่ยนสถานะเป็น "ร่าง" หรือไม่?',
+                              scheduled: 'คุณต้องการเปลี่ยนสถานะเป็น "ตั้งเวลาไว้" หรือไม่?',
+                              published: 'คุณต้องการเปลี่ยนสถานะเป็น "เผยแพร่แล้ว" หรือไม่?',
+                              paused: 'คุณต้องการเปลี่ยนสถานะเป็น "ปิดชั่วคราว" หรือไม่?',
+                              expired: 'คุณต้องการเปลี่ยนสถานะเป็น "หมดอายุ" หรือไม่?',
+                              cancelled:
+                                'คุณต้องการเปลี่ยนสถานะเป็น "ยกเลิก" หรือไม่? (ไม่สามารถแก้ไขได้)',
+                            };
+                            updateStatus(announcement, newStatus, confirmMessages[newStatus]);
+                          }}
+                          className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white hover:bg-gray-50 focus:ring-1 focus:ring-blue-500"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <option value="draft">ร่าง</option>
+                          <option value="scheduled">ตั้งเวลาไว้</option>
+                          <option value="published">เผยแพร่</option>
+                          <option value="paused">ปิดชั่วคราว</option>
+                          <option value="expired">หมดอายุ</option>
+                          <option value="cancelled">ยกเลิก</option>
+                        </select>
                       )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {announcement.target_role === 'all' ? 'ทุกคน' : 
-                       announcement.target_role === 'tenant' ? 'ผู้เช่า' : 'Admin'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColorClass(status)}`}
-                        >
-                          {getStatusDisplayLabel(status)}
-                        </span>
-                        {status !== 'cancelled' && (
-                          <select
-                            value={status}
-                            onChange={(e) => {
-                              const newStatus = e.target.value as AnnouncementStatus;
-                              const confirmMessages: Record<AnnouncementStatus, string> = {
-                                draft: 'คุณต้องการเปลี่ยนสถานะเป็น "ร่าง" หรือไม่?',
-                                scheduled: 'คุณต้องการเปลี่ยนสถานะเป็น "ตั้งเวลาไว้" หรือไม่?',
-                                published: 'คุณต้องการเปลี่ยนสถานะเป็น "เผยแพร่แล้ว" หรือไม่?',
-                                paused: 'คุณต้องการเปลี่ยนสถานะเป็น "ปิดชั่วคราว" หรือไม่?',
-                                expired: 'คุณต้องการเปลี่ยนสถานะเป็น "หมดอายุ" หรือไม่?',
-                                cancelled: 'คุณต้องการเปลี่ยนสถานะเป็น "ยกเลิก" หรือไม่? (ไม่สามารถแก้ไขได้)',
-                              };
-                              updateStatus(announcement, newStatus, confirmMessages[newStatus]);
-                            }}
-                            className="text-xs border rounded px-2 py-1 bg-white hover:bg-gray-50 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <option value="draft">ร่าง</option>
-                            <option value="scheduled">ตั้งเวลาไว้</option>
-                            <option value="published">เผยแพร่</option>
-                            <option value="paused">ปิดชั่วคราว</option>
-                            <option value="expired">หมดอายุ</option>
-                            <option value="cancelled">ยกเลิก</option>
-                          </select>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {announcement.publish_start
-                        ? new Date(announcement.publish_start).toLocaleDateString('th-TH')
-                        : new Date(announcement.created_at).toLocaleDateString('th-TH')}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      <div className="flex gap-2 flex-wrap">
-                        {/* แก้ไข - แสดงได้ทุก status ยกเว้น cancelled */}
-                        {status !== 'cancelled' && (
-                          <button
-                            onClick={() => handleEdit(announcement)}
-                            className="px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors"
-                            title="แก้ไขประกาศ"
-                          >
-                            ✏️ แก้ไข
-                          </button>
-                        )}
-                        
-                        {/* ปุ่มตาม status */}
-                        {status === 'draft' && (
-                          <button
-                            onClick={() => handlePublish(announcement)}
-                            className="px-3 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors"
-                            title="เผยแพร่ประกาศ"
-                          >
-                            ✅ เผยแพร่
-                          </button>
-                        )}
-                        
-                        {status === 'scheduled' && (
-                          <>
-                            <button
-                              onClick={() => handlePublish(announcement)}
-                              className="px-3 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors"
-                              title="เผยแพร่ทันที"
-                            >
-                              ✅ เผยแพร่ทันที
-                            </button>
-                            <button
-                              onClick={() => handlePause(announcement)}
-                              className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200 transition-colors"
-                              title="ปิดชั่วคราว"
-                            >
-                              ⏸️ ปิดชั่วคราว
-                            </button>
-                          </>
-                        )}
-                        
-                        {status === 'published' && (
-                          <>
-                            <button
-                              onClick={() => handlePause(announcement)}
-                              className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded hover:bg-yellow-200 transition-colors"
-                              title="ปิดชั่วคราว"
-                            >
-                              ⏸️ ปิดชั่วคราว
-                            </button>
-                            <button
-                              onClick={() => handleUnpublish(announcement)}
-                              className="px-3 py-1 bg-orange-100 text-orange-700 rounded hover:bg-orange-200 transition-colors"
-                              title="ยกเลิกการเผยแพร่"
-                            >
-                              🚫 ยกเลิกเผยแพร่
-                            </button>
-                          </>
-                        )}
-                        
-                        {status === 'paused' && (
-                          <>
-                            <button
-                              onClick={() => handlePublish(announcement)}
-                              className="px-3 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 transition-colors"
-                              title="เผยแพร่อีกครั้ง"
-                            >
-                              ✅ เผยแพร่
-                            </button>
-                            <button
-                              onClick={() => handleUnpublish(announcement)}
-                              className="px-3 py-1 bg-orange-100 text-orange-700 rounded hover:bg-orange-200 transition-colors"
-                              title="เปลี่ยนเป็นร่าง"
-                            >
-                              📝 เปลี่ยนเป็นร่าง
-                            </button>
-                          </>
-                        )}
-                        
-                        {(status === 'expired' || status === 'draft') && (
-                          <button
-                            onClick={() => handleCancel(announcement)}
-                            className="px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
-                            title="ยกเลิกถาวร"
-                          >
-                            ❌ ยกเลิก
-                          </button>
-                        )}
-                        
-                        {/* ลบ - แสดงได้ทุก status */}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 shrink-0">
+                    {status !== 'cancelled' && (
+                      <button
+                        onClick={() => handleEdit(announcement)}
+                        className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 transition-colors text-sm font-medium"
+                        title="แก้ไขประกาศ"
+                      >
+                        ✏️ แก้ไข
+                      </button>
+                    )}
+                    {status === 'draft' && (
+                      <button
+                        onClick={() => handlePublish(announcement)}
+                        className="px-3 py-1.5 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors text-sm font-medium"
+                        title="เผยแพร่ประกาศ"
+                      >
+                        ✅ เผยแพร่
+                      </button>
+                    )}
+                    {status === 'scheduled' && (
+                      <>
                         <button
-                          onClick={() => handleDelete(announcement.announcement_id)}
-                          className="px-3 py-1 bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors"
-                          title="ลบประกาศ"
+                          onClick={() => handlePublish(announcement)}
+                          className="px-3 py-1.5 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors text-sm font-medium"
+                          title="เผยแพร่ทันที"
                         >
-                          🗑️ ลบ
+                          ✅ เผยแพร่ทันที
                         </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+                        <button
+                          onClick={() => handlePause(announcement)}
+                          className="px-3 py-1.5 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 transition-colors text-sm font-medium"
+                          title="ปิดชั่วคราว"
+                        >
+                          ⏸️ ปิดชั่วคราว
+                        </button>
+                      </>
+                    )}
+                    {status === 'published' && (
+                      <>
+                        <button
+                          onClick={() => handlePause(announcement)}
+                          className="px-3 py-1.5 bg-yellow-100 text-yellow-700 rounded-lg hover:bg-yellow-200 transition-colors text-sm font-medium"
+                          title="ปิดชั่วคราว"
+                        >
+                          ⏸️ ปิดชั่วคราว
+                        </button>
+                        <button
+                          onClick={() => handleUnpublish(announcement)}
+                          className="px-3 py-1.5 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm font-medium"
+                          title="ยกเลิกการเผยแพร่"
+                        >
+                          🚫 ยกเลิกเผยแพร่
+                        </button>
+                      </>
+                    )}
+                    {status === 'paused' && (
+                      <>
+                        <button
+                          onClick={() => handlePublish(announcement)}
+                          className="px-3 py-1.5 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors text-sm font-medium"
+                          title="เผยแพร่อีกครั้ง"
+                        >
+                          ✅ เผยแพร่
+                        </button>
+                        <button
+                          onClick={() => handleUnpublish(announcement)}
+                          className="px-3 py-1.5 bg-orange-100 text-orange-700 rounded-lg hover:bg-orange-200 transition-colors text-sm font-medium"
+                          title="เปลี่ยนเป็นร่าง"
+                        >
+                          📝 เปลี่ยนเป็นร่าง
+                        </button>
+                      </>
+                    )}
+                    {(status === 'expired' || status === 'draft') && (
+                      <button
+                        onClick={() => handleCancel(announcement)}
+                        className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors text-sm font-medium"
+                        title="ยกเลิกถาวร"
+                      >
+                        ❌ ยกเลิก
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleDelete(announcement.announcement_id)}
+                      className="px-3 py-1.5 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition-colors text-sm font-medium"
+                      title="ลบประกาศ"
+                    >
+                      🗑️ ลบ
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Pagination - 20 รายการต่อหน้า */}
+      {filteredAnnouncements.length > 0 && (
+        <div className="mt-6 bg-white rounded-lg shadow-sm border border-gray-100 px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <p className="text-sm text-gray-600">
+            แสดง{' '}
+            <span className="font-medium">
+              {(announcementsPage - 1) * ANNOUNCEMENTS_PAGE_SIZE + 1} -{' '}
+              {Math.min(announcementsPage * ANNOUNCEMENTS_PAGE_SIZE, filteredAnnouncements.length)}
+            </span>{' '}
+            จาก <span className="font-medium">{filteredAnnouncements.length}</span> รายการ
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="px-4 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              onClick={() => setAnnouncementsPage((p) => Math.max(1, p - 1))}
+              disabled={announcementsPage <= 1}
+            >
+              ก่อนหน้า
+            </button>
+            <span className="text-sm text-gray-600 min-w-[80px] text-center">
+              หน้า {announcementsPage} / {announcementsTotalPages}
+            </span>
+            <button
+              type="button"
+              className="px-4 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              onClick={() => setAnnouncementsPage((p) => Math.min(announcementsTotalPages, p + 1))}
+              disabled={announcementsPage >= announcementsTotalPages}
+            >
+              ถัดไป
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Modal */}
       {isModalOpen && (
@@ -792,26 +834,39 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    📎 แนบไฟล์ (PDF, JPG, PNG, XLSX, DOCX)
+                    📎 แนบไฟล์ (PDF, JPG, PNG, XLSX, DOCX ไม่เกิน 50MB)
                   </label>
                   <input
+                    ref={fileInputRef}
                     type="file"
                     multiple
-                    accept=".pdf,.jpg,.jpeg,.png,.xlsx,.docx"
-                    className="w-full border rounded-md px-3 py-2"
+                    accept=".pdf,.jpg,.jpeg,.png,.xlsx,.docx,application/pdf,image/jpeg,image/png,image/jpg"
+                    className="w-full border rounded-md px-3 py-2 text-sm file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
                     onChange={(e) => {
-                      if (e.target.files) {
-                        setSelectedFiles(Array.from(e.target.files));
+                      const files = e.target.files;
+                      if (files && files.length > 0) {
+                        setSelectedFiles(Array.from(files));
                       }
+                      e.target.value = '';
                     }}
                   />
                   {selectedFiles.length > 0 && (
                     <div className="mt-2 space-y-1">
                       {selectedFiles.map((file, idx) => (
-                        <div key={idx} className="text-sm text-gray-600">
-                          • {file.name} ({formatFileSize(file.size)})
+                        <div key={idx} className="text-sm text-gray-600 flex items-center justify-between gap-2">
+                          <span>• {file.name} ({formatFileSize(file.size)})</span>
                         </div>
                       ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedFiles([]);
+                          if (fileInputRef.current) fileInputRef.current.value = '';
+                        }}
+                        className="text-xs text-red-600 hover:text-red-800 mt-1"
+                      >
+                        ล้างรายการไฟล์ที่เลือก
+                      </button>
                     </div>
                   )}
                 </div>
