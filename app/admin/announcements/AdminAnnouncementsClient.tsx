@@ -15,15 +15,18 @@ interface AnnouncementFile {
   download_url: string;
 }
 
+export type AnnouncementLinkItem = { url: string; label: string };
+
 interface AnnouncementForm {
   announcement_id?: number;
   title: string;
   content: string;
   target_role: 'all' | 'tenant' | 'admin';
   status?: AnnouncementStatus | null;
-  is_published?: boolean | null; // Legacy: เก็บไว้สำหรับ backward compatibility
+  is_published?: boolean | null;
   publish_start: string;
   publish_end: string;
+  links: AnnouncementLinkItem[];
 }
 
 type Props = {
@@ -73,9 +76,10 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
   const [form, setForm] = useState<AnnouncementForm>({
     title: '',
     content: '',
-    target_role: 'all', // ใช้ค่า default 'all' เสมอ
+    target_role: 'all',
     publish_start: '',
     publish_end: '',
+    links: [],
   });
   
   const [uploadedFiles, setUploadedFiles] = useState<AnnouncementFile[]>([]);
@@ -218,9 +222,10 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
     setForm({
       title: '',
       content: '',
-      target_role: 'all', // ใช้ค่า default 'all' เสมอ
+      target_role: 'all',
       publish_start: '',
       publish_end: '',
+      links: [],
     });
     setUploadedFiles([]);
     setSelectedFiles([]);
@@ -231,44 +236,37 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
   // Open edit modal
   const handleEdit = async (announcement: Announcement) => {
     setIsEditing(true);
-    
-    // ถ้า announcement ไม่มี content ให้ดึงจาก API
     let content = announcement.content || '';
-    if (!content && announcement.announcement_id) {
-      try {
-        const detailResponse = await fetch(`/api/announcements/${announcement.announcement_id}`, {
-          credentials: 'include',
-        });
-        const detailData = await detailResponse.json();
-        if (detailData.announcement?.content) {
-          content = detailData.announcement.content;
-        }
-      } catch (error) {
-        console.error('Error loading announcement detail:', error);
+    let files: AnnouncementFile[] = [];
+    let links: AnnouncementLinkItem[] = [];
+
+    try {
+      const detailResponse = await fetch(`/api/announcements/${announcement.announcement_id}`, {
+        credentials: 'include',
+      });
+      const detailData = await detailResponse.json();
+      if (detailData.announcement?.content) content = detailData.announcement.content;
+      if (Array.isArray(detailData.files)) files = detailData.files;
+      if (Array.isArray(detailData.links)) {
+        links = detailData.links.map((l: { url: string; label?: string }) => ({
+          url: l.url || '',
+          label: l.label ?? l.url ?? '',
+        }));
       }
+    } catch (error) {
+      console.error('Error loading announcement detail:', error);
     }
-    
+
     setForm({
       announcement_id: announcement.announcement_id,
       title: announcement.title || '',
-      content: content,
-      target_role: 'all', // ใช้ค่า default 'all' เสมอ
+      content,
+      target_role: 'all',
       publish_start: announcement.publish_start ? announcement.publish_start.split('T')[0] : '',
       publish_end: announcement.publish_end ? announcement.publish_end.split('T')[0] : '',
+      links,
     });
-    
-    // Load files
-    try {
-      const response = await fetch(`/api/announcements/${announcement.announcement_id}/files`, {
-        credentials: 'include',
-      });
-      const data = await response.json();
-      setUploadedFiles(data.files || []);
-    } catch (error) {
-      console.error('Error loading files:', error);
-      setUploadedFiles([]);
-    }
-    
+    setUploadedFiles(files);
     setSelectedFiles([]);
     if (fileInputRef.current) fileInputRef.current.value = '';
     setIsModalOpen(true);
@@ -292,9 +290,10 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
       const requestBody = {
         title: form.title,
         content: form.content,
-        target_role: 'all', // ใช้ค่า default 'all' เสมอ
+        target_role: 'all',
         publish_start: form.publish_start || null,
         publish_end: form.publish_end || null,
+        links: form.links.filter((l) => l.url.trim()),
       };
 
       console.log(`[handleSave] ${method} ${url}`, requestBody);
@@ -335,9 +334,24 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
         });
 
         if (!uploadResponse.ok) {
-          const uploadError = await uploadResponse.json().catch(() => ({ error: 'Unknown error' }));
-          const msg = uploadError?.error || `HTTP ${uploadResponse.status}`;
-          console.error('Failed to upload files:', uploadError);
+          const contentType = uploadResponse.headers.get('content-type') || '';
+          let msg = `HTTP ${uploadResponse.status}`;
+          try {
+            const raw = await uploadResponse.text();
+            if (contentType.includes('application/json')) {
+              const data = JSON.parse(raw);
+              msg = data?.error || msg;
+            } else if (raw && raw.length < 500) {
+              msg = `${msg} — ${raw.trim().slice(0, 200)}`;
+            } else if (uploadResponse.status === 413) {
+              msg = 'ขนาดไฟล์เกินขีดจำกัดของเซิร์ฟเวอร์ (413) — ให้ตั้งค่า client_max_body_size ใน Nginx หรือ body size limit ใน next.config';
+            }
+          } catch {
+            if (uploadResponse.status === 413) {
+              msg = 'ขนาดไฟล์เกินขีดจำกัดของเซิร์ฟเวอร์ (413) — ให้ตั้งค่า client_max_body_size ใน Nginx หรือ body size limit ใน next.config';
+            }
+          }
+          console.error('Failed to upload files:', uploadResponse.status, msg);
           alert(`บันทึกประกาศสำเร็จ แต่อัปโหลดไฟล์ไม่สำเร็จ: ${msg}\n\nตรวจสอบว่าไฟล์เป็น PDF/JPG/PNG/XLSX/DOCX และขนาดไม่เกิน 50MB`);
         }
       }
@@ -830,6 +844,63 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
                     value={form.content}
                     onChange={(e) => setForm({ ...form, content: e.target.value })}
                   />
+                </div>
+
+                {/* แนบลิงก์ */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    🔗 แนบลิงก์
+                  </label>
+                  <div className="space-y-2">
+                    {form.links.map((link, idx) => (
+                      <div key={idx} className="flex flex-wrap items-center gap-2 p-2 bg-gray-50 rounded-lg border border-gray-200">
+                        <input
+                          type="url"
+                          placeholder="https://..."
+                          className="flex-1 min-w-[200px] border rounded px-3 py-2 text-sm"
+                          value={link.url}
+                          onChange={(e) => {
+                            const next = [...form.links];
+                            next[idx] = { ...next[idx], url: e.target.value };
+                            setForm({ ...form, links: next });
+                          }}
+                        />
+                        <input
+                          type="text"
+                          placeholder="ข้อความแสดง (ไม่บังคับ)"
+                          className="w-40 border rounded px-3 py-2 text-sm"
+                          value={link.label}
+                          onChange={(e) => {
+                            const next = [...form.links];
+                            next[idx] = { ...next[idx], label: e.target.value };
+                            setForm({ ...form, links: next });
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setForm({
+                              ...form,
+                              links: form.links.filter((_, i) => i !== idx),
+                            })
+                          }
+                          className="text-red-600 hover:text-red-800 text-sm px-2 py-1"
+                          title="ลบลิงก์"
+                        >
+                          ลบ
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setForm({ ...form, links: [...form.links, { url: '', label: '' }] })
+                      }
+                      className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                    >
+                      + เพิ่มลิงก์
+                    </button>
+                  </div>
                 </div>
 
                 <div>

@@ -35,6 +35,7 @@ interface AnnouncementDetail {
     file_size: number;
     download_url: string;
   }>;
+  links?: Array<{ url: string; label?: string }>;
 }
 
 export default function AnnouncementsClient() {
@@ -233,6 +234,28 @@ export default function AnnouncementsClient() {
               {selectedAnnouncement.announcement.content}
             </div>
           </div>
+
+          {selectedAnnouncement.links && selectedAnnouncement.links.length > 0 && (
+            <div className="mt-6 border-t pt-6">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">🔗 ลิงก์ที่แนบ:</h3>
+              <div className="space-y-2">
+                {selectedAnnouncement.links.map((link, idx) => (
+                  <a
+                    key={idx}
+                    href={link.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 p-3 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-blue-700 hover:text-blue-900 transition-colors"
+                  >
+                    <span className="shrink-0">↗</span>
+                    <span className="truncate">
+                      {link.label && link.label.trim() ? link.label : link.url}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
 
           {selectedAnnouncement.files && selectedAnnouncement.files.length > 0 && (
             <div className="mt-6 border-t pt-6">

@@ -228,7 +228,7 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
-    const { title, content, target_role, status, is_published, publish_start, publish_end } = body;
+    const { title, content, target_role, status, is_published, publish_start, publish_end, links: bodyLinks } = body;
 
     if (!title || !content) {
       return NextResponse.json(
@@ -281,6 +281,24 @@ export async function POST(req: Request) {
       const insertId = result?.insertId;
       if (!insertId) {
         throw new Error('Failed to get insertId from query result');
+      }
+
+      const linksArray = Array.isArray(bodyLinks) ? bodyLinks : [];
+      try {
+        for (let i = 0; i < linksArray.length; i++) {
+          const item = linksArray[i];
+          const url = item?.url && String(item.url).trim();
+          if (!url) continue;
+          const label = item?.label != null ? String(item.label).trim() : null;
+          await query(
+            `INSERT INTO announcement_links (announcement_id, url, label, sort_order) VALUES (?, ?, ?, ?)`,
+            [insertId, url, label || url, i]
+          );
+        }
+      } catch (linksErr: any) {
+        if (!linksErr.message?.includes("doesn't exist")) {
+          console.warn('Cannot save announcement links:', linksErr.message);
+        }
       }
 
       return NextResponse.json(

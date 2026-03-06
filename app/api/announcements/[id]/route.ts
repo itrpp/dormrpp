@@ -73,9 +73,22 @@ export async function GET(
         [announcementId]
       );
     } catch (error: any) {
-      // ถ้ายังไม่มีตาราง announcement_files ให้ข้าม
       if (!error.message?.includes("doesn't exist")) {
         console.warn('Cannot fetch announcement files:', error.message);
+      }
+    }
+
+    // ดึงลิงก์แนบ
+    type LinkRow = { link_id: number; url: string; label: string | null; sort_order: number };
+    let links: LinkRow[] = [];
+    try {
+      links = await query<LinkRow>(
+        `SELECT link_id, url, label, sort_order FROM announcement_links WHERE announcement_id = ? ORDER BY sort_order ASC, link_id ASC`,
+        [announcementId]
+      );
+    } catch (error: any) {
+      if (!error.message?.includes("doesn't exist")) {
+        console.warn('Cannot fetch announcement links:', error.message);
       }
     }
 
@@ -101,6 +114,7 @@ export async function GET(
         file_size: file.file_size,
         download_url: `/api/announcements/files/${file.file_id}/download`,
       })),
+      links: links.map((l) => ({ url: l.url, label: l.label || l.url })),
     });
   } catch (error: any) {
     console.error('Error fetching announcement:', error);
@@ -151,7 +165,7 @@ export async function PUT(
     }
 
     const body = await req.json();
-    const { title, content, target_role, status, is_published, publish_start, publish_end } = body;
+    const { title, content, target_role, status, is_published, publish_start, publish_end, links: bodyLinks } = body;
 
     // Validation
     if (publish_start && publish_end && new Date(publish_start) > new Date(publish_end)) {
@@ -195,6 +209,26 @@ export async function PUT(
           announcementId,
         ]
       );
+
+      // บันทึกลิงก์แนบ (ถ้ามีตาราง announcement_links)
+      const linksArray = Array.isArray(bodyLinks) ? bodyLinks : [];
+      try {
+        await query('DELETE FROM announcement_links WHERE announcement_id = ?', [announcementId]);
+        for (let i = 0; i < linksArray.length; i++) {
+          const item = linksArray[i];
+          const url = item?.url && String(item.url).trim();
+          if (!url) continue;
+          const label = item?.label != null ? String(item.label).trim() : null;
+          await query(
+            `INSERT INTO announcement_links (announcement_id, url, label, sort_order) VALUES (?, ?, ?, ?)`,
+            [announcementId, url, label || url, i]
+          );
+        }
+      } catch (linksErr: any) {
+        if (!linksErr.message?.includes("doesn't exist")) {
+          console.warn('Cannot save announcement links:', linksErr.message);
+        }
+      }
 
       return NextResponse.json({ ok: true });
     } catch (error: any) {
