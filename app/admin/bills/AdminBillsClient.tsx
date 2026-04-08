@@ -135,6 +135,10 @@ export default function AdminBillsClient() {
 
   // แท็บเลือกอาคาร (เพื่อกรองตาราง/Export/สัญญาที่ใช้สร้างบิล)
   const [selectedBuildingId, setSelectedBuildingId] = useState<number | 'all'>('all');
+  /** ยกเว้นค่าบำรุงรักษา/ค่าห้องรายห้อง (เก็บเป็น room_id) สำหรับตอน “ออกบิล” */
+  const [exemptMaintenanceRoomIds, setExemptMaintenanceRoomIds] = useState<Set<number>>(
+    () => new Set(),
+  );
   
   // State สำหรับ preview modal
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
@@ -171,6 +175,19 @@ export default function AdminBillsClient() {
     () => contracts.filter((c) => form.contract_ids.includes(c.contract_id)),
     [contracts, form.contract_ids]
   );
+
+  // กัน state ค้าง: เมื่อเปลี่ยนสัญญาที่เลือก ให้เหลือเฉพาะ room_id ที่ยังถูกเลือกอยู่
+  useEffect(() => {
+    const allowedRoomIds = new Set<number>(selectedContracts.map((c) => c.room_id));
+    setExemptMaintenanceRoomIds((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set<number>();
+      prev.forEach((id) => {
+        if (allowedRoomIds.has(id)) next.add(id);
+      });
+      return next;
+    });
+  }, [selectedContracts]);
 
   const buildingOptions = useMemo(() => {
     const map = new Map<number, string>();
@@ -555,14 +572,43 @@ export default function AdminBillsClient() {
         return;
     }
 
-    // ตรวจสอบบิลซ้ำและสร้างบิลสำหรับทุก contract ที่เลือก
+    // อัปเดตการยกเว้นค่าบำรุงรักษารายห้องก่อน (มีผลแม้ห้องนั้นมีบิลอยู่แล้ว)
     try {
+      const contractsToProcess = contracts.filter(c => form.contract_ids.includes(c.contract_id));
+      const uniqueRooms = Array.from(
+        new Map(
+          contractsToProcess.map((c) => [c.room_id, { room_id: c.room_id }]),
+        ).values(),
+      );
+      let exemptionChangedCount = 0;
+      for (const room of uniqueRooms) {
+        const isExempt = exemptMaintenanceRoomIds.has(room.room_id);
+        const exRes = await fetch('/api/bills/maintenance-exemptions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cycle_id: cycleId,
+            room_id: room.room_id,
+            is_exempt: isExempt,
+          }),
+        });
+        if (exRes.ok) {
+          exemptionChangedCount++;
+        } else {
+          const exErr = await exRes.json().catch(() => ({}));
+          throw new Error(
+            exErr.error ||
+              `ไม่สามารถอัปเดตการยกเว้นค่าห้องของห้อง ${room.room_id} ได้`,
+          );
+        }
+      }
+
+      // ตรวจสอบบิลซ้ำและสร้างบิลสำหรับทุก contract ที่เลือก
       const dupRes = await fetch(
         `/api/bills/detailed?year=${form.billing_year}&month=${form.billing_month}`
       );
       const existingBills: DetailedBill[] = dupRes.ok ? await dupRes.json() : [];
 
-      const contractsToProcess = contracts.filter(c => form.contract_ids.includes(c.contract_id));
       const successCount: number[] = [];
       const errorMessages: string[] = [];
 
@@ -588,6 +634,7 @@ export default function AdminBillsClient() {
             contract_id: contract.contract_id,
           cycle_id: cycleId,
           maintenance_fee: getMaintenanceFeeForBuildingId(contract.building_id),
+          exempt_maintenance_fee: exemptMaintenanceRoomIds.has(contract.room_id),
           electric_amount: 0, // จะคำนวณจาก utility readings และ rates
           water_amount: 0, // จะคำนวณจาก utility readings และ rates
           status: form.status,
@@ -604,15 +651,23 @@ export default function AdminBillsClient() {
 
       // แสดงผลลัพธ์
       if (successCount.length > 0) {
-        alert(`สร้างบิลสำเร็จ ${successCount.length} ใบ`);
+        alert(
+          `สร้างบิลสำเร็จ ${successCount.length} ใบ${
+            exemptionChangedCount > 0
+              ? `\nและอัปเดตการยกเว้นค่าห้อง ${exemptionChangedCount} ห้อง`
+              : ''
+          }`,
+        );
       }
-      if (errorMessages.length > 0) {
+      if (successCount.length === 0 && errorMessages.length === 0 && exemptionChangedCount > 0) {
+        alert(`อัปเดตการยกเว้นค่าห้องสำเร็จ ${exemptionChangedCount} ห้อง`);
+      } else if (errorMessages.length > 0) {
         alert('เกิดข้อผิดพลาด:\n' + errorMessages.join('\n'));
       }
 
-      if (successCount.length > 0) {
-      closeCreateModal();
-      fetchBills(); // Refresh bills list
+      if (successCount.length > 0 || exemptionChangedCount > 0) {
+        closeCreateModal();
+        fetchBills(); // Refresh bills list
       }
     } catch (error: any) {
       console.error('Error creating bills:', error);
@@ -953,16 +1008,16 @@ export default function AdminBillsClient() {
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase border">
+                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase border w-[72px] whitespace-nowrap">
                   ลำดับที่
                 </th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase border">
+                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase border w-[96px] whitespace-nowrap">
                   เลขที่ห้อง
                 </th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase border">
+                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase border min-w-[240px] w-[320px]">
                   ชื่อ-สกุล ผู้เข้าพัก
                 </th>
-                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase border">
+                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase border w-[140px]">
                   ค่าดูแลบำรุงรักษาหอพักและบริเวณ
                 </th>
                 <th
@@ -1063,14 +1118,18 @@ export default function AdminBillsClient() {
 
                   return (
                     <tr key={`${row.bill.bill_id}_${row.tenant?.tenant_id || 'no-tenant'}`}>
-                      <td className="px-3 py-2 text-center border">{row.rowNumber}</td>
-                    <td className="px-3 py-2 border">{row.bill.room_number || '-'}</td>
-                      <td className="px-3 py-2 border">
+                      <td className="px-3 py-2 text-center border w-[72px] whitespace-nowrap">
+                        {row.rowNumber}
+                      </td>
+                      <td className="px-3 py-2 border w-[96px] whitespace-nowrap">
+                        {row.bill.room_number || '-'}
+                      </td>
+                      <td className="px-3 py-2 border min-w-[240px] w-[320px]">
                         {row.tenant && row.tenant.first_name && row.tenant.last_name
                           ? `${row.tenant.first_name} ${row.tenant.last_name}`
                           : '-'}
                       </td>
-                    <td className="px-3 py-2 text-right border">
+                      <td className="px-3 py-2 text-right border w-[140px] whitespace-nowrap">
                       {row.isFirstTenant
                         ? formatNumber(
                             row.bill.maintenance_fee != null
@@ -1382,11 +1441,99 @@ export default function AdminBillsClient() {
                         ),
                       ),
                     );
-                    if (fees.length === 1) {
-                      return `${formatNumber(fees[0])} บาท`;
+
+                    const allExempt =
+                      selectedContracts.length > 0 &&
+                      selectedContracts.every((c) =>
+                        exemptMaintenanceRoomIds.has(c.room_id),
+                      );
+                    const someExempt =
+                      !allExempt &&
+                      selectedContracts.some((c) =>
+                        exemptMaintenanceRoomIds.has(c.room_id),
+                      );
+
+                    if (allExempt) {
+                      return '0.00 บาท (ยกเว้นทุกห้องที่เลือกในรอบนี้)';
                     }
+
+                    if (fees.length === 1) {
+                      const baseText = `${formatNumber(fees[0])} บาท`;
+                      if (someExempt) {
+                        return `${baseText} (ยกเว้นบางห้องตามที่เลือกด้านล่าง)`;
+                      }
+                      return baseText;
+                    }
+
+                    if (someExempt) {
+                      return 'ค่าบำรุงรักษาแตกต่างตามอาคาร (และยกเว้นบางห้องตามที่เลือก)';
+                    }
+
                     return 'ค่าบำรุงรักษาแตกต่างตามอาคาร';
                   })()}
+                </div>
+              </div>
+
+              {/* ยกเว้นค่าบำรุงรักษา/ค่าห้องรายห้อง */}
+              <div className="md:col-span-2">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="block text-sm font-medium">
+                    ยกเว้นค่าห้องรายห้อง (ไม่คิดค่าบำรุงรักษา)
+                  </label>
+                  {exemptMaintenanceRoomIds.size > 0 ? (
+                    <button
+                      type="button"
+                      className="text-xs text-gray-600 hover:text-gray-900 underline"
+                      onClick={() => setExemptMaintenanceRoomIds(new Set())}
+                    >
+                      ล้างการยกเว้น
+                    </button>
+                  ) : null}
+                </div>
+                {selectedContracts.length === 0 ? (
+                  <div className="mt-2 text-xs text-gray-500">
+                    เลือกสัญญาเช่าก่อน เพื่อกำหนดการยกเว้นรายห้อง
+                  </div>
+                ) : (
+                  <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {Array.from(
+                      new Map(
+                        selectedContracts.map((c) => [
+                          c.room_id,
+                          {
+                            room_id: c.room_id,
+                            label: `${sanitizeBuildingNameForUi(c.building_name)} - ห้อง ${c.room_number}`,
+                          },
+                        ]),
+                      ).values(),
+                    ).map((room) => {
+                      const checked = exemptMaintenanceRoomIds.has(room.room_id);
+                      return (
+                        <label
+                          key={room.room_id}
+                          className={`flex items-center gap-2 border rounded-md px-3 py-2 text-sm cursor-pointer ${
+                            checked ? 'bg-amber-50 border-amber-200' : 'bg-white border-gray-200'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 text-amber-600 border-gray-300 rounded focus:ring-amber-500"
+                            checked={checked}
+                            onChange={(e) => {
+                              const next = new Set(exemptMaintenanceRoomIds);
+                              if (e.target.checked) next.add(room.room_id);
+                              else next.delete(room.room_id);
+                              setExemptMaintenanceRoomIds(next);
+                            }}
+                          />
+                          <span className="text-gray-700">{room.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="mt-2 text-xs text-gray-500">
+                  หมายเหตุ: การยกเว้นมีผลกับ “ทั้งห้อง” ในรอบบิลนี้ (ทุกผู้เช่าในห้องเดียวกัน)
                 </div>
               </div>
 

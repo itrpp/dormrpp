@@ -11,6 +11,27 @@ import {
 // บังคับให้ route นี้เป็น dynamic เพราะมีการใช้ request.url
 export const dynamic = 'force-dynamic';
 
+async function ensureBillFeeExemptionsTable() {
+  // เก็บการ “ยกเว้นค่าห้อง/ค่าบำรุงรักษา” รายห้อง-รายรอบบิล (ไม่กระทบ schema เดิม)
+  await query(
+    `
+    CREATE TABLE IF NOT EXISTS bill_fee_exemptions (
+      exemption_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      cycle_id INT NOT NULL,
+      room_id INT NOT NULL,
+      fee_code VARCHAR(32) NOT NULL,
+      is_exempt TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (exemption_id),
+      UNIQUE KEY uniq_cycle_room_fee (cycle_id, room_id, fee_code),
+      KEY idx_cycle_fee (cycle_id, fee_code),
+      KEY idx_room_fee (room_id, fee_code)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `,
+  );
+}
+
 // GET /api/bills/detailed?year=2568&month=10
 export async function GET(req: Request) {
   try {
@@ -31,6 +52,8 @@ export async function GET(req: Request) {
         { status: 400 }
       );
     }
+
+    await ensureBillFeeExemptionsTable();
 
     const sqlParams: unknown[] = [Number(year), Number(month)];
 
@@ -54,6 +77,7 @@ export async function GET(req: Request) {
         r.room_type_id,
         bu.building_id,
         bu.name_th AS building_name,
+        COALESCE(bfe.is_exempt, 0) AS maintenance_exempt,
         COALESCE(rt.max_occupants, 1) AS max_occupants,
         t.tenant_id,
         t.first_name_th AS first_name,
@@ -72,6 +96,11 @@ export async function GET(req: Request) {
       JOIN buildings bu ON r.building_id = bu.building_id
       LEFT JOIN room_types rt
         ON rt.id = r.room_type_id
+      LEFT JOIN bill_fee_exemptions bfe
+        ON bfe.cycle_id = b.cycle_id
+       AND bfe.room_id = r.room_id
+       AND bfe.fee_code = 'maintenance'
+       AND bfe.is_exempt = 1
       WHERE cy.billing_year = ? AND cy.billing_month = ?
     `;
     if (scopeWhere) {
@@ -219,7 +248,12 @@ export async function GET(req: Request) {
         // ค่าบำรุงรักษา: แยกตามอาคารของห้องพัก
         // - building_id = 1  -> 1000
         // - อื่นๆ            -> 6000
-        const baseMaintenanceFee = Number(bill.building_id) === 1 ? 1000 : 6000;
+        const baseMaintenanceFee =
+          Number(bill.maintenance_exempt) === 1
+            ? 0
+            : Number(bill.building_id) === 1
+              ? 1000
+              : 6000;
         const maxOccupants = Math.max(Number(bill.max_occupants || 1) || 1, 1);
         // ค่าบำรุงรักษาต่อคน = ค่าบำรุงรักษาตามอาคาร ÷ จำนวนคนที่ห้องรองรับ
         const maintenanceFee = baseMaintenanceFee / maxOccupants;

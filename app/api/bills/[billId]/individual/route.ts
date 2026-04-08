@@ -6,6 +6,26 @@ import { getMonthNameThai } from '@/lib/date-utils';
 
 export const dynamic = 'force-dynamic';
 
+async function ensureBillFeeExemptionsTable() {
+  await query(
+    `
+    CREATE TABLE IF NOT EXISTS bill_fee_exemptions (
+      exemption_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      cycle_id INT NOT NULL,
+      room_id INT NOT NULL,
+      fee_code VARCHAR(32) NOT NULL,
+      is_exempt TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (exemption_id),
+      UNIQUE KEY uniq_cycle_room_fee (cycle_id, room_id, fee_code),
+      KEY idx_cycle_fee (cycle_id, fee_code),
+      KEY idx_room_fee (room_id, fee_code)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `,
+  );
+}
+
 // GET /api/bills/[billId]/individual
 export async function GET(
   req: Request,
@@ -21,6 +41,8 @@ export async function GET(
       );
     }
 
+    await ensureBillFeeExemptionsTable();
+
     // ดึงข้อมูลบิลรายคน
     const sql = `
       SELECT 
@@ -29,7 +51,8 @@ export async function GET(
         b.room_id,
         b.contract_id,
         b.cycle_id,
-        (CASE WHEN bu.building_id = 1 THEN 1000 ELSE 6000 END) / COALESCE(rt.max_occupants, 1) AS maintenance_fee,
+        (CASE WHEN bfe.exemption_id IS NOT NULL THEN 0 ELSE (CASE WHEN bu.building_id = 1 THEN 1000 ELSE 6000 END) END)
+          / COALESCE(rt.max_occupants, 1) AS maintenance_fee,
         b.status,
         cy.billing_year,
         cy.billing_month,
@@ -60,6 +83,11 @@ export async function GET(
       JOIN buildings bu ON r.building_id = bu.building_id
       LEFT JOIN room_types rt
         ON rt.id = r.room_type_id
+      LEFT JOIN bill_fee_exemptions bfe
+        ON bfe.cycle_id = b.cycle_id
+       AND bfe.room_id = r.room_id
+       AND bfe.fee_code = 'maintenance'
+       AND bfe.is_exempt = 1
       WHERE b.bill_id = ?
     `;
 

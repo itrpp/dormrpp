@@ -87,6 +87,7 @@ export async function POST(req: Request) {
     const {
       contract_id,
       cycle_id,
+      exempt_maintenance_fee,
       status,
     } = body;
 
@@ -127,6 +128,45 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: 'ไม่มีสิทธิ์จัดการบิลของอาคารนี้' },
         { status: 403 },
+      );
+    }
+
+    // สร้างตารางสำหรับเก็บการ “ยกเว้นค่าบำรุงรักษา” รายห้อง-รายรอบบิล (ถ้ายังไม่มี)
+    await connection.query(
+      `
+      CREATE TABLE IF NOT EXISTS bill_fee_exemptions (
+        exemption_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        cycle_id INT NOT NULL,
+        room_id INT NOT NULL,
+        fee_code VARCHAR(32) NOT NULL,
+        is_exempt TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (exemption_id),
+        UNIQUE KEY uniq_cycle_room_fee (cycle_id, room_id, fee_code),
+        KEY idx_cycle_fee (cycle_id, fee_code),
+        KEY idx_room_fee (room_id, fee_code)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+      `,
+    );
+
+    // บันทึก/ยกเลิก “ยกเว้นค่าบำรุงรักษา” ตามห้อง (มีผลกับทุกบิลในห้องนั้นของรอบบิลเดียวกัน)
+    if (exempt_maintenance_fee === true) {
+      await connection.query(
+        `
+        INSERT INTO bill_fee_exemptions (cycle_id, room_id, fee_code, is_exempt)
+        VALUES (?, ?, 'maintenance', 1)
+        ON DUPLICATE KEY UPDATE is_exempt = 1, updated_at = CURRENT_TIMESTAMP
+        `,
+        [Number(cycle_id), Number(room_id)],
+      );
+    } else if (exempt_maintenance_fee === false) {
+      await connection.query(
+        `
+        DELETE FROM bill_fee_exemptions
+        WHERE cycle_id = ? AND room_id = ? AND fee_code = 'maintenance'
+        `,
+        [Number(cycle_id), Number(room_id)],
       );
     }
 
