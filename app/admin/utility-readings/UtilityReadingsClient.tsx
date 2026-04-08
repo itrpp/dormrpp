@@ -910,6 +910,60 @@ export default function UtilityReadingsClient({
         return;
       }
 
+      async function compressPhotoIfNeeded(file: File): Promise<File> {
+        // ลดโอกาสโดน 413 จาก proxy/เซิร์ฟเวอร์ (โดยเฉพาะเครื่องอื่นที่ถ่ายรูปความละเอียดสูง)
+        // เป้าหมาย: ลดด้านยาวสุด <= 1600px และพยายามให้ไฟล์ <= ~2MB
+        const MAX_BYTES = 2 * 1024 * 1024;
+        const MAX_DIM = 1600;
+        if (file.size <= MAX_BYTES) return file;
+        if (!('createImageBitmap' in window)) return file;
+
+        let bitmap: ImageBitmap | null = null;
+        try {
+          bitmap = await createImageBitmap(file);
+          const w = bitmap.width;
+          const h = bitmap.height;
+          const scale = Math.min(1, MAX_DIM / Math.max(w, h));
+          const tw = Math.max(1, Math.round(w * scale));
+          const th = Math.max(1, Math.round(h * scale));
+
+          const canvas = document.createElement('canvas');
+          canvas.width = tw;
+          canvas.height = th;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return file;
+          ctx.drawImage(bitmap, 0, 0, tw, th);
+
+          const tryEncode = async (quality: number): Promise<Blob | null> =>
+            new Promise((resolve) => {
+              canvas.toBlob(
+                (b) => resolve(b),
+                'image/jpeg',
+                quality,
+              );
+            });
+
+          let best: Blob | null = null;
+          for (const q of [0.85, 0.8, 0.75, 0.7, 0.65, 0.6]) {
+            const blob = await tryEncode(q);
+            if (!blob) continue;
+            best = blob;
+            if (blob.size <= MAX_BYTES) break;
+          }
+          if (!best) return file;
+          const name = file.name.replace(/\.(png|webp|jpe?g)$/i, '') + '.jpg';
+          return new File([best], name, { type: 'image/jpeg' });
+        } catch {
+          return file;
+        } finally {
+          try {
+            bitmap?.close();
+          } catch {
+            // ignore
+          }
+        }
+      }
+
       // ถ้ากำลังแก้ไขและเลือกรูปใหม่ ให้ลบรูปเก่าก่อน
       if (editingPhotoId) {
         const deleteRes = await fetch(`/api/meter-photos/${Number(editingPhotoId)}`, {
@@ -922,8 +976,9 @@ export default function UtilityReadingsClient({
       }
 
       // อัปโหลดรูปใหม่
+      const uploadFile = await compressPhotoIfNeeded(selectedPhoto);
       const formData = new FormData();
-      formData.append('photo', selectedPhoto);
+      formData.append('photo', uploadFile);
       formData.append('room_id', String(uploadingRoomId));
       formData.append('utility_type', uploadingUtilityType);
       formData.append(
@@ -944,6 +999,9 @@ export default function UtilityReadingsClient({
       });
 
       if (!res.ok) {
+        if (res.status === 413) {
+          throw new Error('ไฟล์รูปมีขนาดใหญ่เกินไป (Request Entity Too Large) กรุณาเลือกรูปที่เล็กลง');
+        }
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || 'ไม่สามารถอัปโหลดรูปได้');
       }
