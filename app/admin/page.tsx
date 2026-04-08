@@ -1,7 +1,52 @@
 // app/admin/page.tsx - Admin dashboard
 import { query } from '@/lib/db';
+import { getDashboardBuildingResolution } from '@/lib/auth/server-building-scope';
+import {
+  shouldShowDashboardBuildingPicker,
+  type AdminBuildingScope,
+} from '@/lib/auth/building-scope';
 import { getAllRoomsOccupancy } from '@/lib/repositories/room-occupancy';
 import DashboardCharts from './DashboardCharts';
+import DashboardBuildingPicker from './DashboardBuildingPicker';
+
+export const dynamic = 'force-dynamic';
+
+/** เงื่อนไขกรอง building_id บนตาราง rooms (ไม่มี alias) */
+function roomsBuildingWhere(
+  allowedBuildingIds: number[] | undefined,
+): { sql: string; params: number[] } {
+  if (allowedBuildingIds === undefined) {
+    return { sql: '', params: [] };
+  }
+  if (allowedBuildingIds.length === 0) {
+    return { sql: ' AND 1=0', params: [] };
+  }
+  if (allowedBuildingIds.length === 1) {
+    return { sql: ' AND building_id = ?', params: [allowedBuildingIds[0]!] };
+  }
+  const ph = allowedBuildingIds.map(() => '?').join(',');
+  return {
+    sql: ` AND building_id IN (${ph})`,
+    params: [...allowedBuildingIds],
+  };
+}
+
+/** เงื่อนไขกรอง r.building_id หลัง JOIN rooms r */
+function roomsAliasBuildingWhere(
+  allowedBuildingIds: number[] | undefined,
+): { sql: string; params: number[] } {
+  if (allowedBuildingIds === undefined) {
+    return { sql: '', params: [] };
+  }
+  if (allowedBuildingIds.length === 0) {
+    return { sql: ' AND 1=0', params: [] };
+  }
+  if (allowedBuildingIds.length === 1) {
+    return { sql: ' AND r.building_id = ?', params: [allowedBuildingIds[0]!] };
+  }
+  const ph = allowedBuildingIds.map(() => '?').join(',');
+  return { sql: ` AND r.building_id IN (${ph})`, params: [...allowedBuildingIds] };
+}
 
 interface DashboardStats {
   // ห้องพัก
@@ -30,13 +75,16 @@ interface DashboardStats {
   totalProfit: number;
 }
 
-async function getDashboardStats(): Promise<DashboardStats> {
+async function getDashboardStats(
+  allowedBuildingIds?: number[],
+): Promise<DashboardStats> {
   const now = new Date();
   const currentYear = now.getFullYear();
-  const buddhistYear = currentYear + 543; // แปลงเป็นปีพุทธศักราช
   const currentMonth = now.getMonth() + 1; // 1-12
 
   try {
+    const roomBf = roomsBuildingWhere(allowedBuildingIds);
+
     // 1. สถิติห้องพัก - ใช้ข้อมูล occupancy เพื่อคำนวณสถานะตามจำนวนผู้เข้าพักจริง
     let totalRooms = 0;
     let availableRooms = 0;
@@ -44,17 +92,26 @@ async function getDashboardStats(): Promise<DashboardStats> {
     let maintenanceRooms = 0;
     
     try {
-      // ดึงข้อมูลห้องทั้งหมด
+      // ดึงข้อมูลห้อง (กรองอาคารเมื่อผู้ใช้จำกัดขอบเขต)
       const allRooms = await query<{ room_id: number; status: string }>(
         `SELECT room_id, status 
        FROM rooms 
-         WHERE COALESCE(is_deleted, 0) = 0`
+         WHERE COALESCE(is_deleted, 0) = 0${roomBf.sql}`,
+        roomBf.params,
     );
     
       totalRooms = allRooms.length;
       
-      // ดึงข้อมูล occupancy ของห้องทั้งหมด
-      const occupancies = await getAllRoomsOccupancy();
+      const occFilter =
+        allowedBuildingIds === undefined
+          ? undefined
+          : allowedBuildingIds.length === 0
+            ? ([] as number[])
+            : allowedBuildingIds.length === 1
+              ? allowedBuildingIds[0]
+              : [...allowedBuildingIds];
+
+      const occupancies = await getAllRoomsOccupancy(occFilter);
       const occupancyMap = new Map<number, { current_occupants: number }>();
       occupancies.forEach((occ) => {
         if (occ && occ.room_id) {
@@ -85,14 +142,27 @@ async function getDashboardStats(): Promise<DashboardStats> {
     }
 
     // 2. สถิติผู้เช่า
-    // ผู้เช่า pending รอเข้าพัก (นับเฉพาะที่มี status = 'pending')
+    // ผู้เช่า pending รอเข้าพัก — เมื่อจำกัดอาคาร นับเฉพาะที่มีสัญญาผูกห้องในอาคารนั้น
     let totalTenants = 0;
     try {
-      const [totalTenantsResult] = await query<{ count: number }>(
-        `SELECT COUNT(*) as count 
+      const rbf = roomsAliasBuildingWhere(allowedBuildingIds);
+      const pendingSql =
+        allowedBuildingIds === undefined
+          ? `SELECT COUNT(*) as count 
          FROM tenants 
          WHERE COALESCE(status, 'inactive') = 'pending' 
          AND COALESCE(is_deleted, 0) = 0`
+          : `SELECT COUNT(DISTINCT t.tenant_id) as count 
+         FROM tenants t
+         INNER JOIN contracts c ON c.tenant_id = t.tenant_id
+         INNER JOIN rooms r ON c.room_id = r.room_id
+         WHERE COALESCE(t.status, 'inactive') = 'pending' 
+         AND COALESCE(t.is_deleted, 0) = 0${rbf.sql}`;
+      const pendingParams =
+        allowedBuildingIds === undefined ? [] : rbf.params;
+      const [totalTenantsResult] = await query<{ count: number }>(
+        pendingSql,
+        pendingParams,
       );
       totalTenants = totalTenantsResult?.count || 0;
     } catch (error: any) {
@@ -146,10 +216,19 @@ async function getDashboardStats(): Promise<DashboardStats> {
     // ผู้เช่าปัจจุบัน (contracts.status = 'active')
     let currentTenants = 0;
     try {
-      const [currentTenantsResult] = await query<{ count: number }>(
-        `SELECT COUNT(DISTINCT c.tenant_id) as count 
+      const cbf = roomsAliasBuildingWhere(allowedBuildingIds);
+      const currentSql =
+        allowedBuildingIds === undefined
+          ? `SELECT COUNT(DISTINCT c.tenant_id) as count 
          FROM contracts c 
          WHERE c.status = 'active'`
+          : `SELECT COUNT(DISTINCT c.tenant_id) as count 
+         FROM contracts c 
+         INNER JOIN rooms r ON c.room_id = r.room_id
+         WHERE c.status = 'active'${cbf.sql}`;
+      const [currentTenantsResult] = await query<{ count: number }>(
+        currentSql,
+        allowedBuildingIds === undefined ? [] : cbf.params,
       );
       currentTenants = currentTenantsResult?.count || 0;
     } catch (error: any) {
@@ -165,10 +244,14 @@ async function getDashboardStats(): Promise<DashboardStats> {
     // 3. สถิติอื่นๆ
     let totalBuildings = 0;
     try {
-      const [totalBuildingsRow] = await query<{ count: number }>(
-        'SELECT COUNT(*) as count FROM buildings'
-      );
-      totalBuildings = totalBuildingsRow?.count || 0;
+      if (allowedBuildingIds !== undefined) {
+        totalBuildings = allowedBuildingIds.length;
+      } else {
+        const [totalBuildingsRow] = await query<{ count: number }>(
+          'SELECT COUNT(*) as count FROM buildings',
+        );
+        totalBuildings = totalBuildingsRow?.count || 0;
+      }
     } catch (error: any) {
       if (error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections')) {
         // Silent fallback - ไม่ log เพื่อลด log noise
@@ -249,7 +332,7 @@ async function getDashboardStats(): Promise<DashboardStats> {
 }
 
 // ฟังก์ชันดึงข้อมูลสำหรับกราฟ (ลดจำนวน query ให้เหลือเฉพาะ aggregate สำคัญ)
-async function getChartData() {
+async function getChartData(allowedBuildingIds?: number[]) {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
@@ -296,30 +379,69 @@ async function getChartData() {
   ];
 
   try {
-    const roomStatusCounts = await query<{ status: string; count: number }>(
-      `SELECT status, COUNT(*) as count 
+    if (allowedBuildingIds === undefined) {
+      const roomStatusCounts = await query<{ status: string; count: number }>(
+        `SELECT status, COUNT(*) as count 
        FROM rooms 
        WHERE COALESCE(is_deleted, 0) = 0
-       GROUP BY status`
-    );
+       GROUP BY status`,
+      );
 
-    roomStatusData = [
-      {
-        name: 'ว่าง',
-        value: roomStatusCounts.find((r) => r.status === 'available')?.count || 0,
-        color: '#10b981',
-      },
-      {
-        name: 'มีผู้อาศัย',
-        value: roomStatusCounts.find((r) => r.status === 'occupied')?.count || 0,
-        color: '#3b82f6',
-      },
-      {
-        name: 'ซ่อมบำรุง',
-        value: roomStatusCounts.find((r) => r.status === 'maintenance')?.count || 0,
-        color: '#6b7280',
-      },
-    ];
+      roomStatusData = [
+        {
+          name: 'ว่าง',
+          value: roomStatusCounts.find((r) => r.status === 'available')?.count || 0,
+          color: '#10b981',
+        },
+        {
+          name: 'มีผู้อาศัย',
+          value: roomStatusCounts.find((r) => r.status === 'occupied')?.count || 0,
+          color: '#3b82f6',
+        },
+        {
+          name: 'ซ่อมบำรุง',
+          value: roomStatusCounts.find((r) => r.status === 'maintenance')?.count || 0,
+          color: '#6b7280',
+        },
+      ];
+    } else {
+      const roomBf = roomsBuildingWhere(allowedBuildingIds);
+      const allRooms = await query<{ room_id: number; status: string }>(
+        `SELECT room_id, status FROM rooms WHERE COALESCE(is_deleted, 0) = 0${roomBf.sql}`,
+        roomBf.params,
+      );
+      const occFilter =
+        allowedBuildingIds.length === 0
+          ? ([] as number[])
+          : allowedBuildingIds.length === 1
+            ? allowedBuildingIds[0]
+            : [...allowedBuildingIds];
+      const occupancies = await getAllRoomsOccupancy(occFilter);
+      const occupancyMap = new Map<number, number>();
+      occupancies.forEach((occ) => {
+        if (occ?.room_id) {
+          occupancyMap.set(occ.room_id, occ.current_occupants || 0);
+        }
+      });
+      let vAvail = 0;
+      let vOcc = 0;
+      let vMaint = 0;
+      for (const room of allRooms) {
+        const co = occupancyMap.get(room.room_id) || 0;
+        if (room.status === 'maintenance') {
+          vMaint++;
+        } else if (co > 0) {
+          vOcc++;
+        } else {
+          vAvail++;
+        }
+      }
+      roomStatusData = [
+        { name: 'ว่าง', value: vAvail, color: '#10b981' },
+        { name: 'มีผู้อาศัย', value: vOcc, color: '#3b82f6' },
+        { name: 'ซ่อมบำรุง', value: vMaint, color: '#6b7280' },
+      ];
+    }
   } catch (error: any) {
     if (!(error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections'))) {
       console.error('Error fetching room status data:', error);
@@ -361,12 +483,14 @@ async function getChartData() {
         0
       );
 
+      const flowBf = roomsAliasBuildingWhere(allowedBuildingIds);
       const newRows = await query<{
         y: number;
         m: number;
         count: number;
       }>(
-        `
+        allowedBuildingIds === undefined
+          ? `
         SELECT 
           YEAR(c.start_date) AS y,
           MONTH(c.start_date) AS m,
@@ -375,8 +499,21 @@ async function getChartData() {
         WHERE c.start_date IS NOT NULL
           AND c.start_date BETWEEN ? AND ?
         GROUP BY YEAR(c.start_date), MONTH(c.start_date)
+        `
+          : `
+        SELECT 
+          YEAR(c.start_date) AS y,
+          MONTH(c.start_date) AS m,
+          COUNT(DISTINCT c.tenant_id) AS count
+        FROM contracts c
+        INNER JOIN rooms r ON c.room_id = r.room_id
+        WHERE c.start_date IS NOT NULL
+          AND c.start_date BETWEEN ? AND ?${flowBf.sql}
+        GROUP BY YEAR(c.start_date), MONTH(c.start_date)
         `,
-        [rangeStart, rangeEnd]
+        allowedBuildingIds === undefined
+          ? [rangeStart, rangeEnd]
+          : [rangeStart, rangeEnd, ...flowBf.params],
       );
 
       const leftRows = await query<{
@@ -384,7 +521,8 @@ async function getChartData() {
         m: number;
         count: number;
       }>(
-        `
+        allowedBuildingIds === undefined
+          ? `
         SELECT 
           YEAR(c.end_date) AS y,
           MONTH(c.end_date) AS m,
@@ -393,8 +531,21 @@ async function getChartData() {
         WHERE c.end_date IS NOT NULL
           AND c.end_date BETWEEN ? AND ?
         GROUP BY YEAR(c.end_date), MONTH(c.end_date)
+        `
+          : `
+        SELECT 
+          YEAR(c.end_date) AS y,
+          MONTH(c.end_date) AS m,
+          COUNT(DISTINCT c.tenant_id) AS count
+        FROM contracts c
+        INNER JOIN rooms r ON c.room_id = r.room_id
+        WHERE c.end_date IS NOT NULL
+          AND c.end_date BETWEEN ? AND ?${flowBf.sql}
+        GROUP BY YEAR(c.end_date), MONTH(c.end_date)
         `,
-        [rangeStart, rangeEnd]
+        allowedBuildingIds === undefined
+          ? [rangeStart, rangeEnd]
+          : [rangeStart, rangeEnd, ...flowBf.params],
       );
 
       const newMap = new Map<string, number>();
@@ -429,18 +580,48 @@ async function getChartData() {
 
   let baseRate = 0;
   try {
-    const [totalRoomsResult, occupiedRoomsResult] = await Promise.all([
-      query<{ count: number }>(
-        'SELECT COUNT(*) as count FROM rooms WHERE COALESCE(is_deleted, 0) = 0'
-      ),
-      query<{ count: number }>(
-        "SELECT COUNT(*) as count FROM rooms WHERE status = 'occupied' AND COALESCE(is_deleted, 0) = 0"
-      ),
-    ]);
+    if (allowedBuildingIds === undefined) {
+      const [totalRoomsResult, occupiedRoomsResult] = await Promise.all([
+        query<{ count: number }>(
+          'SELECT COUNT(*) as count FROM rooms WHERE COALESCE(is_deleted, 0) = 0',
+        ),
+        query<{ count: number }>(
+          "SELECT COUNT(*) as count FROM rooms WHERE status = 'occupied' AND COALESCE(is_deleted, 0) = 0",
+        ),
+      ]);
 
-    const totalRooms = totalRoomsResult[0]?.count || 0;
-    const occupiedRooms = occupiedRoomsResult[0]?.count || 0;
-    baseRate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
+      const totalRooms = totalRoomsResult[0]?.count || 0;
+      const occupiedRooms = occupiedRoomsResult[0]?.count || 0;
+      baseRate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
+    } else {
+      const roomBf = roomsBuildingWhere(allowedBuildingIds);
+      const allRooms = await query<{ room_id: number; status: string }>(
+        `SELECT room_id, status FROM rooms WHERE COALESCE(is_deleted, 0) = 0${roomBf.sql}`,
+        roomBf.params,
+      );
+      const occFilter =
+        allowedBuildingIds.length === 0
+          ? ([] as number[])
+          : allowedBuildingIds.length === 1
+            ? allowedBuildingIds[0]
+            : [...allowedBuildingIds];
+      const occupancies = await getAllRoomsOccupancy(occFilter);
+      const occupancyMap = new Map<number, number>();
+      occupancies.forEach((occ) => {
+        if (occ?.room_id) {
+          occupancyMap.set(occ.room_id, occ.current_occupants || 0);
+        }
+      });
+      let occCount = 0;
+      const totalR = allRooms.length;
+      for (const room of allRooms) {
+        const co = occupancyMap.get(room.room_id) || 0;
+        if (room.status !== 'maintenance' && co > 0) {
+          occCount++;
+        }
+      }
+      baseRate = totalR > 0 ? (occCount / totalR) * 100 : 0;
+    }
   } catch (error: any) {
     if (!(error.code === 'ER_CON_COUNT_ERROR' || error.message?.includes('Too many connections'))) {
       console.error('Error calculating base occupancy:', error);
@@ -477,18 +658,93 @@ function formatCurrency(amount: number): string {
   }).format(amount);
 }
 
-export default async function AdminDashboard() {
-  const stats = await getDashboardStats();
-  const chartData = await getChartData();
+async function getBuildingNamesSubtitle(
+  allowedBuildingIds: number[] | undefined,
+): Promise<string | null> {
+  if (allowedBuildingIds === undefined || allowedBuildingIds.length === 0) {
+    return null;
+  }
+  const ph = allowedBuildingIds.map(() => '?').join(',');
+  const rows = await query<{ name_th: string | null }>(
+    `SELECT name_th FROM buildings WHERE building_id IN (${ph}) ORDER BY building_id`,
+    allowedBuildingIds,
+  );
+  const names = rows.map((r) => r.name_th).filter((n): n is string => Boolean(n));
+  return names.length > 0 ? names.join(' และ ') : null;
+}
+
+async function getBuildingsForDashboardPicker(scope: AdminBuildingScope) {
+  const rows = await query<{ building_id: number; name_th: string | null }>(
+    `SELECT building_id, name_th FROM buildings ORDER BY building_id`,
+  );
+  return rows
+    .map((r) => ({
+      building_id: r.building_id,
+      name_th: r.name_th?.trim() || `อาคาร #${r.building_id}`,
+    }))
+    .filter((b) =>
+      scope.kind === 'all' ? true : scope.buildingIds.includes(b.building_id),
+    );
+}
+
+export default async function AdminDashboard({
+  searchParams,
+}: {
+  searchParams: { building_id?: string };
+}) {
+  const raw = searchParams?.building_id;
+  const parsedFromUrl =
+    raw != null && raw !== '' && Number.isFinite(Number(raw))
+      ? Number(raw)
+      : null;
+
+  const { scope, effectiveIds } =
+    await getDashboardBuildingResolution(parsedFromUrl);
+
+  const buildingsRows = await getBuildingsForDashboardPicker(scope);
+  const showPicker = shouldShowDashboardBuildingPicker(scope);
+
+  const pickerSelectedId =
+    parsedFromUrl != null &&
+    buildingsRows.some((b) => b.building_id === parsedFromUrl) &&
+    effectiveIds !== undefined &&
+    effectiveIds.length > 0 &&
+    effectiveIds.includes(parsedFromUrl)
+      ? parsedFromUrl
+      : null;
+
+  const allPickerLabel = scope.kind === 'all' ? 'ทุกอาคาร' : 'ทุกอาคารในเขตที่ดูแล';
+
+  const [stats, chartData, scopedBuildingNames] = await Promise.all([
+    getDashboardStats(effectiveIds),
+    getChartData(effectiveIds),
+    getBuildingNamesSubtitle(effectiveIds),
+  ]);
+
+  const dashboardSubtitle =
+    effectiveIds !== undefined && effectiveIds.length === 0
+      ? 'ไม่พบอาคารในเขตที่คุณดูแล'
+      : scopedBuildingNames
+        ? `ภาพรวมเฉพาะอาคารที่คุณดูแล — ${scopedBuildingNames}`
+        : 'ภาพรวมระบบจัดการหอพักรวงผึ้ง โรงพยาบาลราชพิพัฒน์';
 
   return (
     <div className="space-y-3">
       {/* Header */}
-      <div className="mb-2">
-        <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-xs text-gray-500 mt-0.5">
-          ภาพรวมระบบจัดการหอพักรวงผึ้ง โรงพยาบาลราชพิพัฒน์
-        </p>
+      <div className="mb-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold text-gray-900">Dashboard</h1>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {dashboardSubtitle}
+          </p>
+        </div>
+        {showPicker ? (
+          <DashboardBuildingPicker
+            buildings={buildingsRows}
+            selectedBuildingId={pickerSelectedId}
+            allLabel={allPickerLabel}
+          />
+        ) : null}
       </div>
 
       {/* สถิติทั้งหมด */}

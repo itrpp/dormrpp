@@ -180,13 +180,36 @@ export async function checkRoomAvailability(
   }
 }
 
+function buildingFilterClause(
+  filter: number | number[] | undefined,
+): { sql: string; params: number[] } {
+  if (filter === undefined) {
+    return { sql: '', params: [] };
+  }
+  if (Array.isArray(filter)) {
+    if (filter.length === 0) {
+      return { sql: ' WHERE 1=0', params: [] };
+    }
+    if (filter.length === 1) {
+      return { sql: ' WHERE r.building_id = ?', params: [filter[0]!] };
+    }
+    const ph = filter.map(() => '?').join(',');
+    return { sql: ` WHERE r.building_id IN (${ph})`, params: [...filter] };
+  }
+  return { sql: ' WHERE r.building_id = ?', params: [filter] };
+}
+
 /**
  * ดึงข้อมูลสถานะผู้เข้าพักของห้องทั้งหมด
  * ดึง max_occupants จาก room_types (fallback เป็น 2 ถ้าไม่มี)
+ * @param buildingFilter กรองตามอาคารเดียว หลายอาคาร หรือไม่กรอง (undefined)
  */
 export async function getAllRoomsOccupancy(
-  buildingId?: number
+  buildingFilter?: number | number[],
 ): Promise<RoomOccupancyInfo[]> {
+  const { sql: whereBuilding, params: whereParams } =
+    buildingFilterClause(buildingFilter);
+
   try {
     // ใช้ subquery เพื่อดึง max_occupants จาก room_types โดยตรง (รองรับทั้ง room_type_id และ id)
     // ใช้ subquery แทน JOIN เพื่อให้แน่ใจว่าได้ค่าถูกต้องแม้ JOIN ไม่ match
@@ -226,12 +249,9 @@ export async function getAllRoomsOccupancy(
       JOIN buildings b ON r.building_id = b.building_id
       LEFT JOIN contracts c ON r.room_id = c.room_id
     `;
-    const params: any[] = [];
-
-    if (buildingId) {
-      sql += ' WHERE r.building_id = ?';
-      params.push(buildingId);
-    }
+    const params: unknown[] = [];
+    sql += whereBuilding;
+    params.push(...whereParams);
 
     sql += `
       GROUP BY r.room_id, r.room_number, r.building_id, b.name_th, r.floor_no, r.room_type_id
@@ -264,19 +284,16 @@ export async function getAllRoomsOccupancy(
         JOIN buildings b ON r.building_id = b.building_id
         LEFT JOIN contracts c ON r.room_id = c.room_id
       `;
-      const params: any[] = [];
-
-      if (buildingId) {
-        sql += ' WHERE r.building_id = ?';
-        params.push(buildingId);
-      }
+      const paramsFb: unknown[] = [];
+      sql += whereBuilding;
+      paramsFb.push(...whereParams);
 
       sql += `
         GROUP BY r.room_id, r.room_number, r.building_id, b.name_th, r.floor_no
         ORDER BY r.building_id, r.floor_no, CAST(r.room_number AS UNSIGNED), r.room_number
       `;
 
-      return query<RoomOccupancyInfo>(sql, params);
+      return query<RoomOccupancyInfo>(sql, paramsFb);
     }
     // ถ้า error ไม่ใช่เรื่อง room_types ให้ throw ต่อ
     console.error('Error in getAllRoomsOccupancy:', error);

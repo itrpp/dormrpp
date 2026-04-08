@@ -1,5 +1,6 @@
 import { getSession } from './session';
 import { getAppRolesForSessionUser } from './app-roles';
+import type { AdminBuildingScope } from './building-scope';
 import {
   getAdminBuildingScopeFromAppRoles,
   resolveAllowedBuildingIdsForListQuery,
@@ -19,4 +20,31 @@ export async function getResolvedAllowedBuildingIdsForServerUser(): Promise<
   const ids = resolveAllowedBuildingIdsForListQuery(scope, null);
   if (ids === null) return undefined;
   return ids;
+}
+
+/**
+ * Dashboard: รวมสิทธิ์กับพารามิเตอร์ ?building_id=
+ * - effectiveIds undefined = แสดงรวมทุกอาคาร (เฉพาะ ADMIN/FINANCE เมื่อไม่ระบุอาคาร)
+ * - effectiveIds เป็น array = กรองตามชุดนั้น
+ */
+export async function getDashboardBuildingResolution(
+  requestedBuildingId?: number | null,
+): Promise<{
+  scope: AdminBuildingScope;
+  effectiveIds: number[] | undefined;
+}> {
+  const session = await getSession();
+  if (!session) {
+    return { scope: { kind: 'all' }, effectiveIds: undefined };
+  }
+  const roles = await getAppRolesForSessionUser(session);
+  const scope = getAdminBuildingScopeFromAppRoles(roles);
+  const ids = resolveAllowedBuildingIdsForListQuery(
+    scope,
+    requestedBuildingId ?? null,
+  );
+  return {
+    scope,
+    effectiveIds: ids === null ? undefined : ids,
+  };
 }

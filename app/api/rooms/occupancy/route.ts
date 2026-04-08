@@ -51,26 +51,20 @@ export async function GET(req: Request) {
       return NextResponse.json(occupancy);
     }
 
-    const effectiveBuildingId =
+    const effectiveFilter =
       restrictIds === null
-        ? bid
-        : restrictIds.length === 1
-          ? restrictIds[0]
-          : undefined;
+        ? bid !== undefined && Number.isFinite(bid)
+          ? bid
+          : undefined
+        : restrictIds.length === 0
+          ? []
+          : restrictIds.length === 1
+            ? restrictIds[0]
+            : [...restrictIds];
 
-    let occupancies = await getAllRoomsOccupancy(
-      effectiveBuildingId !== undefined && Number.isFinite(effectiveBuildingId)
-        ? effectiveBuildingId
-        : undefined,
+    const occupancies = await getAllRoomsOccupancy(
+      effectiveFilter as number | number[] | undefined,
     );
-    if (
-      scope.kind === 'buildings' &&
-      restrictIds &&
-      restrictIds.length > 1
-    ) {
-      const allow = new Set(restrictIds);
-      occupancies = occupancies.filter((o) => allow.has(o.building_id));
-    }
     return NextResponse.json(occupancies || []);
   } catch (error: any) {
     console.error('Error fetching room occupancy:', error);

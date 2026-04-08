@@ -56,11 +56,27 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!room_id || !utility_type || !meter_value || !billing_year || !billing_month || !reading_date) {
+    if (!room_id || !utility_type || !billing_year || !billing_month || !reading_date) {
       return NextResponse.json(
         { error: 'ข้อมูลไม่ครบถ้วน กรุณากรอกข้อมูลให้ครบ' },
         { status: 400 }
       );
+    }
+
+    const meterRaw =
+      meter_value != null && String(meter_value).trim() !== ''
+        ? String(meter_value).trim()
+        : '';
+    let meterValueParsed: number | null = null;
+    if (meterRaw !== '') {
+      const n = Number(meterRaw);
+      if (Number.isNaN(n)) {
+        return NextResponse.json(
+          { error: 'ค่ามิเตอร์ต้องเป็นตัวเลข หรือเว้นว่าง' },
+          { status: 400 },
+        );
+      }
+      meterValueParsed = n;
     }
 
     // ตรวจสอบ file type
@@ -89,11 +105,14 @@ export async function POST(req: Request) {
 
     // แปลงค่า
     const roomId = Number(room_id);
-    const meterValue = Number(meter_value);
     const billingYear = Number(billing_year);
     const billingMonth = Number(billing_month);
 
-    if (isNaN(roomId) || isNaN(meterValue) || isNaN(billingYear) || isNaN(billingMonth)) {
+    if (
+      Number.isNaN(roomId) ||
+      Number.isNaN(billingYear) ||
+      Number.isNaN(billingMonth)
+    ) {
       return NextResponse.json(
         { error: 'ข้อมูลไม่ถูกต้อง กรุณาตรวจสอบ' },
         { status: 400 }
@@ -160,7 +179,7 @@ export async function POST(req: Request) {
         [
           roomId,
           utility_type,
-          meterValue,
+          meterValueParsed,
           relativePath,
           reading_date,
           billingYear,
@@ -179,7 +198,7 @@ export async function POST(req: Request) {
       );
 
       const cycles = cycle as any[];
-      if (cycles.length > 0) {
+      if (cycles.length > 0 && meterValueParsed !== null) {
         const cycleId = cycles[0].cycle_id;
         
         // ดึง utility_type_id
@@ -194,7 +213,11 @@ export async function POST(req: Request) {
             [roomId, cycleId, utilityTypeId]
           );
 
-          const readings = existingReading as any[];
+          const readings = existingReading as Array<{
+            reading_id: number;
+            meter_start: number;
+            meter_end: number;
+          }>;
           
           if (readings.length > 0) {
             // ถ้ามีอยู่แล้ว ให้อัปเดต meter_end
@@ -203,7 +226,7 @@ export async function POST(req: Request) {
               `UPDATE bill_utility_readings 
                SET meter_end = ? 
                WHERE reading_id = ?`,
-              [meterValue, existing.reading_id]
+              [meterValueParsed, existing.reading_id]
             );
           } else {
             // ถ้ายังไม่มี ให้ดึง meter_start จากรอบก่อนหน้า
@@ -223,17 +246,17 @@ export async function POST(req: Request) {
               [roomId, utilityTypeId, billingYear, billingYear, billingMonth]
             );
 
-            const previousReadings = previousReading as any[];
+            const previousReadings = previousReading as Array<{ meter_end: number }>;
             const meterStart = previousReadings.length > 0 
               ? previousReadings[0].meter_end 
-              : meterValue; // ถ้าไม่มีรอบก่อนหน้า ให้ใช้ meter_value เป็น meter_start
+              : meterValueParsed; // ถ้าไม่มีรอบก่อนหน้า ให้ใช้ meter_value เป็น meter_start
 
             // สร้าง bill_utility_readings ใหม่
             await connection.query(
               `INSERT INTO bill_utility_readings 
                (room_id, cycle_id, utility_type_id, meter_start, meter_end)
                VALUES (?, ?, ?, ?, ?)`,
-              [roomId, cycleId, utilityTypeId, meterStart, meterValue]
+              [roomId, cycleId, utilityTypeId, meterStart, meterValueParsed]
             );
           }
         }

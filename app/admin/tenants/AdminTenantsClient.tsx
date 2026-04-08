@@ -5,6 +5,8 @@ import type { AdminTenantRow } from '@/lib/repositories/tenants';
 
 type Props = {
   initialTenants: AdminTenantRow[];
+  /** ผู้ดูแลรายอาคาร — แท็บเฉพาะอาคารนั้น ไม่มี "ทุกอาคาร" */
+  visibleBuildingIds?: number[];
 };
 
 type TenantForm = {
@@ -20,12 +22,20 @@ type TenantForm = {
   move_in_date: string; // yyyy-mm-dd
 };
 
-export default function AdminTenantsClient({ initialTenants }: Props) {
+export default function AdminTenantsClient({
+  initialTenants,
+  visibleBuildingIds,
+}: Props) {
   const [tenants, setTenants] = useState(initialTenants);
+
+  const isScopedToBuildings =
+    Array.isArray(visibleBuildingIds) && visibleBuildingIds.length > 0;
 
   // state สำหรับ search & filter
   const [searchText, setSearchText] = useState('');
-  const [selectedBuilding, setSelectedBuilding] = useState<string>('all');
+  const [selectedBuilding, setSelectedBuilding] = useState<string>(() =>
+    visibleBuildingIds?.length ? String(visibleBuildingIds[0]) : 'all',
+  );
   const [selectedFloor, setSelectedFloor] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('active'); // Default: แสดงเฉพาะผู้เช่าที่ active
 
@@ -63,8 +73,13 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
         map.set(t.building_id, t.building_name);
       }
     });
-    return Array.from(map.entries());
-  }, [tenants]);
+    let opts = Array.from(map.entries());
+    if (isScopedToBuildings && visibleBuildingIds) {
+      const allow = new Set(visibleBuildingIds);
+      opts = opts.filter(([id]) => allow.has(id));
+    }
+    return opts;
+  }, [tenants, isScopedToBuildings, visibleBuildingIds]);
 
   const floorOptions = useMemo(() => {
     const setFloors = new Set<number>();
@@ -451,19 +466,21 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
       >
         <div className="overflow-x-auto">
           <div className="flex flex-nowrap gap-1 min-w-0 pb-0">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={selectedBuilding === 'all'}
-              onClick={() => setSelectedBuilding('all')}
-              className={`shrink-0 px-3 sm:px-4 py-2.5 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
-                selectedBuilding === 'all'
-                  ? 'border-blue-600 text-blue-800 bg-blue-50/90'
-                  : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-              }`}
-            >
-              ทุกอาคาร
-            </button>
+            {!isScopedToBuildings && (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={selectedBuilding === 'all'}
+                onClick={() => setSelectedBuilding('all')}
+                className={`shrink-0 px-3 sm:px-4 py-2.5 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+                  selectedBuilding === 'all'
+                    ? 'border-blue-600 text-blue-800 bg-blue-50/90'
+                    : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                ทุกอาคาร
+              </button>
+            )}
             {buildingOptions.map(([id, name]) => (
               <button
                 key={id}
@@ -483,13 +500,15 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
           </div>
         </div>
         <p className="text-xs text-gray-500 px-2 pb-2 pt-1 border-t border-gray-100">
-          {selectedBuilding === 'all'
-            ? 'แสดงผู้เช่าทุกอาคารตามตัวกรองชั้นและสถานะ — เลือกแท็บอาคารเพื่อโฟกัสเฉพาะหอนั้น'
-            : `กำลังดูเฉพาะอาคาร: ${
-                buildingOptions.find(
-                  ([bid]) => String(bid) === String(selectedBuilding)
-                )?.[1] ?? 'อาคารที่เลือก'
-              }`}
+          {isScopedToBuildings
+            ? `มุมมองตามสิทธิ์ผู้ดูแล: ${buildingOptions.map(([, n]) => n).join(' · ')}`
+            : selectedBuilding === 'all'
+              ? 'แสดงผู้เช่าทุกอาคารตามตัวกรองชั้นและสถานะ — เลือกแท็บอาคารเพื่อโฟกัสเฉพาะหอนั้น'
+              : `กำลังดูเฉพาะอาคาร: ${
+                  buildingOptions.find(
+                    ([bid]) => String(bid) === String(selectedBuilding)
+                  )?.[1] ?? 'อาคารที่เลือก'
+                }`}
         </p>
       </div>
 

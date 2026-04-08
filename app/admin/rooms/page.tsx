@@ -8,6 +8,11 @@ export default async function AdminRoomsPage() {
     await getResolvedAllowedBuildingIdsForServerUser();
   const rooms = await getAllRooms(undefined, allowedBuildingIds);
 
-  return <AdminRoomsClient initialRooms={rooms} />;
+  return (
+    <AdminRoomsClient
+      initialRooms={rooms}
+      visibleBuildingIds={allowedBuildingIds}
+    />
+  );
 }
 

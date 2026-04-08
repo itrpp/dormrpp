@@ -7,6 +7,8 @@ import type { RoomOccupancyInfo } from '@/lib/repositories/room-occupancy';
 
 type Props = {
   initialRooms: RoomWithDetails[];
+  /** ถ้ามี = ผู้ดูแลรายอาคาร — แสดงเฉพาะแท็บอาคารนี้ ไม่มีแท็บ "ทุกอาคาร" และเลือกอาคารนั้นเป็นค่าเริ่มต้น */
+  visibleBuildingIds?: number[];
 };
 
 type RoomForm = {
@@ -18,7 +20,10 @@ type RoomForm = {
   room_type_id?: string;
 };
 
-export default function AdminRoomsClient({ initialRooms }: Props) {
+export default function AdminRoomsClient({
+  initialRooms,
+  visibleBuildingIds,
+}: Props) {
   const [rooms, setRooms] = useState(initialRooms);
   
   // state สำหรับ buildings และ room types ที่ดึงจาก API
@@ -34,8 +39,15 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
   // state สำหรับข้อมูล contracts (เพื่อดึง end_date)
   const [roomContracts, setRoomContracts] = useState<Map<number, Array<{ contract_id: number; end_date: string | null; start_date?: string | null }>>>(new Map());
 
-  // state สำหรับ filter
-  const [selectedBuilding, setSelectedBuilding] = useState<string>('all');
+  const isScopedToBuildings =
+    Array.isArray(visibleBuildingIds) && visibleBuildingIds.length > 0;
+
+  // state สำหรับ filter — superuser รายอาคารให้เริ่มที่แท็บอาคารนั้น ไม่ใช่ "ทุกอาคาร"
+  const [selectedBuilding, setSelectedBuilding] = useState<string>(() =>
+    visibleBuildingIds?.length
+      ? String(visibleBuildingIds[0])
+      : 'all',
+  );
   const [selectedFloor, setSelectedFloor] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all'); // รวมสถานะและจำนวนผู้เข้าพัก
 
@@ -346,18 +358,24 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
   // สร้าง list อาคาร / ชั้น / ประเภทห้อง
   const buildingOptions = useMemo(() => {
     // ใช้ข้อมูลจาก API ก่อน ถ้าไม่มีให้ใช้ข้อมูลจาก rooms
+    let opts: [number, string][];
     if (buildings.length > 0) {
-      return buildings.map((b) => [b.building_id, b.name_th] as [number, string]);
+      opts = buildings.map((b) => [b.building_id, b.name_th] as [number, string]);
+    } else {
+      const map = new Map<number, string>();
+      rooms.forEach((r) => {
+        if (r.building_id && r.building_name) {
+          map.set(r.building_id, r.building_name);
+        }
+      });
+      opts = Array.from(map.entries());
     }
-    // Fallback: ใช้ข้อมูลจาก rooms
-    const map = new Map<number, string>();
-    rooms.forEach((r) => {
-      if (r.building_id && r.building_name) {
-        map.set(r.building_id, r.building_name);
-      }
-    });
-    return Array.from(map.entries());
-  }, [buildings, rooms]);
+    if (isScopedToBuildings && visibleBuildingIds) {
+      const allow = new Set(visibleBuildingIds);
+      opts = opts.filter(([id]) => allow.has(id));
+    }
+    return opts;
+  }, [buildings, rooms, isScopedToBuildings, visibleBuildingIds]);
 
   const floorOptions = useMemo(() => {
     const setFloors = new Set<number>();
@@ -1268,19 +1286,21 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
         >
           <div className="overflow-x-auto">
             <div className="flex flex-nowrap gap-1 min-w-0 pb-0">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={selectedBuilding === 'all'}
-                onClick={() => setSelectedBuilding('all')}
-                className={`shrink-0 px-3 sm:px-4 py-2.5 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
-                  selectedBuilding === 'all'
-                    ? 'border-blue-600 text-blue-800 bg-blue-50/90'
-                    : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                }`}
-              >
-                ทุกอาคาร
-              </button>
+              {!isScopedToBuildings && (
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={selectedBuilding === 'all'}
+                  onClick={() => setSelectedBuilding('all')}
+                  className={`shrink-0 px-3 sm:px-4 py-2.5 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+                    selectedBuilding === 'all'
+                      ? 'border-blue-600 text-blue-800 bg-blue-50/90'
+                      : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  ทุกอาคาร
+                </button>
+              )}
               {buildingOptions.map(([id, name]) => (
                 <button
                   key={id}
@@ -1300,9 +1320,11 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
             </div>
           </div>
           <p className="text-xs text-gray-500 px-2 pb-2 pt-1 border-t border-gray-100">
-            {selectedBuilding === 'all'
-              ? 'แสดงห้องทุกอาคารตามตัวกรองชั้นและสถานะ — เลือกแท็บอาคารเพื่อโฟกัสเฉพาะหอนั้น'
-              : `กำลังดูเฉพาะ: ${buildingOptions.find(([bid]) => String(bid) === String(selectedBuilding))?.[1] ?? 'อาคารที่เลือก'}`}
+            {isScopedToBuildings
+              ? `มุมมองตามสิทธิ์ผู้ดูแล: ${buildingOptions.map(([, n]) => n).join(' · ')}`
+              : selectedBuilding === 'all'
+                ? 'แสดงห้องทุกอาคารตามตัวกรองชั้นและสถานะ — เลือกแท็บอาคารเพื่อโฟกัสเฉพาะหอนั้น'
+                : `กำลังดูเฉพาะ: ${buildingOptions.find(([bid]) => String(bid) === String(selectedBuilding))?.[1] ?? 'อาคารที่เลือก'}`}
           </p>
         </div>
       </div>

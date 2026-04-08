@@ -45,6 +45,14 @@ export function isBuildingIdInScope(
   return scope.buildingIds.includes(buildingId);
 }
 
+/** แสดงตัวเลือกอาคารบน Dashboard เมื่อดูได้มากกว่าหนึ่งมุมมอง (ผู้ดูแลระบบ / superuser หลายอาคาร) */
+export function shouldShowDashboardBuildingPicker(
+  scope: AdminBuildingScope,
+): boolean {
+  if (scope.kind === 'all') return true;
+  return scope.buildingIds.length > 1;
+}
+
 /**
  * สำหรับลิสต์ที่มี query building_id
  * - คืน null = ไม่บังคับกรองอาคาร (เห็นทั้งหมดตามสิทธิ์)

@@ -48,7 +48,14 @@ interface BillingCycle {
   status: string;
 }
 
-export default function UtilityReadingsClient() {
+type UtilityReadingsClientProps = {
+  /** ผู้ดูแลรายอาคาร — แท็บเฉพาะอาคารนั้น ไม่มี "ทุกอาคาร" */
+  visibleBuildingIds?: number[];
+};
+
+export default function UtilityReadingsClient({
+  visibleBuildingIds,
+}: UtilityReadingsClientProps) {
   const now = new Date();
   const searchParams = useSearchParams();
   const targetRoomIdParam = searchParams.get('room_id');
@@ -75,7 +82,11 @@ export default function UtilityReadingsClient() {
   const [roomForms, setRoomForms] = useState<Map<number, RoomReadingForm>>(new Map());
   const [isSaving, setIsSaving] = useState(false);
   const [savedReadings, setSavedReadings] = useState<UtilityReading[]>([]);
-  const [selectedBuildingId, setSelectedBuildingId] = useState<number | ''>(''); // '' = ทุกอาคาร
+  const isScopedToBuildings =
+    Array.isArray(visibleBuildingIds) && visibleBuildingIds.length > 0;
+  const [selectedBuildingId, setSelectedBuildingId] = useState<number | ''>(() =>
+    visibleBuildingIds?.length ? visibleBuildingIds[0] : '',
+  ); // '' = ทุกอาคาร (เฉพาะผู้ดูแลทั้งระบบ)
   const deepLinkBuildingApplied = useRef(false);
 
   // State สำหรับ checkbox เติมค่าเริ่มต้นจากเลขเดิม
@@ -96,7 +107,7 @@ export default function UtilityReadingsClient() {
   const [photoStatus, setPhotoStatus] = useState<Map<string, {
     photo_id: number;
     bill_id: number | null;
-    meter_value: number;
+    meter_value: number | null;
   }>>(new Map());
   
   // State สำหรับตรวจสอบว่าออกบิลแล้วหรือยัง
@@ -107,10 +118,15 @@ export default function UtilityReadingsClient() {
     rooms.forEach((room) => {
       map.set(room.building_id, room.building_name || `อาคาร #${room.building_id}`);
     });
-    return Array.from(map.entries()).sort((a, b) =>
+    let opts = Array.from(map.entries()).sort((a, b) =>
       String(a[1]).localeCompare(String(b[1]), 'th'),
     );
-  }, [rooms]);
+    if (isScopedToBuildings && visibleBuildingIds) {
+      const allow = new Set(visibleBuildingIds);
+      opts = opts.filter(([id]) => allow.has(id));
+    }
+    return opts;
+  }, [rooms, isScopedToBuildings, visibleBuildingIds]);
 
   const roomsInSelectedBuilding = useMemo(() => {
     if (selectedBuildingId === '') return rooms;
@@ -258,7 +274,7 @@ export default function UtilityReadingsClient() {
         const statusMap = new Map<string, {
           photo_id: number;
           bill_id: number | null;
-          meter_value: number;
+          meter_value: number | null;
         }>();
 
         // ดึงรูปภาพไฟฟ้า
@@ -753,31 +769,44 @@ export default function UtilityReadingsClient() {
     }
   };
 
-  // เปิด modal สำหรับอัปโหลดรูปมิเตอร์
+  // เปิด modal สำหรับอัปโหลดรูปมิเตอร์ — ดึงเลขปลายทางจากตาราง (meter_end) มาเติมถ้ากรอกแล้ว
   const openUploadModal = (roomId: number, utilityType: 'electric' | 'water', photoId?: number) => {
     setUploadingRoomId(roomId);
     setUploadingUtilityType(utilityType);
     setSelectedPhoto(null);
     setPhotoPreviewUrl(null);
     setEditingPhotoId(photoId || null);
-    
+
+    const formRow = roomForms.get(roomId);
+    const endVal = formRow?.[utilityType]?.meter_end;
+    const fromTable =
+      endVal !== '' && endVal !== null && endVal !== undefined
+        ? String(endVal)
+        : '';
+
     // ถ้ากำลังแก้ไข ให้ดึงข้อมูลรูปเก่า
     if (photoId) {
       const photoKey = `${roomId}-${utilityType}`;
       const photoInfo = photoStatus.get(photoKey);
+      const fromPhoto =
+        photoInfo &&
+        photoInfo.meter_value != null &&
+        !Number.isNaN(Number(photoInfo.meter_value))
+          ? String(photoInfo.meter_value)
+          : '';
+
+      setPhotoMeterValue(fromPhoto || fromTable);
+
       if (photoInfo) {
-        setPhotoMeterValue(String(photoInfo.meter_value));
-        // สร้าง URL สำหรับแสดงรูปเก่า
         setExistingPhotoUrl(`/api/meter-photos/${photoInfo.photo_id}/download`);
       } else {
-        setPhotoMeterValue('');
         setExistingPhotoUrl(null);
       }
     } else {
-      setPhotoMeterValue('');
+      setPhotoMeterValue(fromTable);
       setExistingPhotoUrl(null);
     }
-    
+
     setUploadModalOpen(true);
   };
 
@@ -797,17 +826,22 @@ export default function UtilityReadingsClient() {
     setExistingPhotoUrl(null);
   };
 
-  // อัปโหลดหรือแก้ไขรูปมิเตอร์
+  // อัปโหลดหรือแก้ไขรูปมิเตอร์ (ค่ามิเตอร์จากรูปไม่บังคับ)
   const uploadMeterPhoto = async () => {
-    if (!uploadingRoomId || !uploadingUtilityType || !photoMeterValue || !cycleId) {
-      alert('กรุณากรอกข้อมูลให้ครบถ้วน');
+    if (!uploadingRoomId || !uploadingUtilityType || !cycleId) {
+      alert('กรุณาเลือกรอบบิลและห้องให้ครบ');
       return;
     }
 
-    const meterValue = Number(photoMeterValue);
-    if (isNaN(meterValue)) {
-      alert('กรุณากรอกค่ามิเตอร์เป็นตัวเลข');
-      return;
+    const trimmedMeter = String(photoMeterValue ?? '').trim();
+    let meterValue: number | null = null;
+    if (trimmedMeter !== '') {
+      const n = Number(trimmedMeter);
+      if (Number.isNaN(n)) {
+        alert('กรุณากรอกค่ามิเตอร์เป็นตัวเลข หรือเว้นว่าง');
+        return;
+      }
+      meterValue = n;
     }
 
     setIsUploading(true);
@@ -825,7 +859,7 @@ export default function UtilityReadingsClient() {
           throw new Error(errorData.error || 'ไม่สามารถอัปเดตค่ามิเตอร์ได้');
         }
 
-        alert('อัปเดตค่ามิเตอร์สำเร็จ');
+        alert('บันทึกสำเร็จ');
         closeUploadModal();
         
         // Refresh photo status
@@ -874,7 +908,10 @@ export default function UtilityReadingsClient() {
       formData.append('photo', selectedPhoto);
       formData.append('room_id', String(uploadingRoomId));
       formData.append('utility_type', uploadingUtilityType);
-      formData.append('meter_value', String(meterValue));
+      formData.append(
+        'meter_value',
+        meterValue !== null ? String(meterValue) : '',
+      );
       formData.append('billing_year', String(year));
       formData.append('billing_month', String(month));
       
@@ -957,22 +994,24 @@ export default function UtilityReadingsClient() {
               >
                 <div className="overflow-x-auto pb-1">
                   <div className="flex flex-nowrap gap-1 min-w-0">
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={selectedBuildingId === ''}
-                      onClick={() => {
-                        if (!cycleId || rooms.length === 0) return;
-                        setSelectedBuildingId('');
-                      }}
-                      className={`shrink-0 px-3 py-2 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
-                        selectedBuildingId === ''
-                          ? 'border-blue-600 text-blue-800 bg-blue-50/90'
-                          : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                      }`}
-                    >
-                      ทุกอาคาร
-                    </button>
+                    {!isScopedToBuildings && (
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={selectedBuildingId === ''}
+                        onClick={() => {
+                          if (!cycleId || rooms.length === 0) return;
+                          setSelectedBuildingId('');
+                        }}
+                        className={`shrink-0 px-3 py-2 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+                          selectedBuildingId === ''
+                            ? 'border-blue-600 text-blue-800 bg-blue-50/90'
+                            : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                        }`}
+                      >
+                        ทุกอาคาร
+                      </button>
+                    )}
                     {buildingOptions.map(([id, name]) => (
                       <button
                         key={id}
@@ -997,9 +1036,9 @@ export default function UtilityReadingsClient() {
               </div>
               {cycleId && rooms.length > 0 && (
                 <p className="mt-2 text-xs text-gray-500">
-                  {selectedBuildingId === ''
-                    ? `ห้อง active ทั้งหมด ${rooms.length} ห้อง — ห้องที่เลือก ${displayRooms.length} ห้อง (ดึงข้อมูลเฉพาะที่เลือก)`
-                    : `ห้อง active ในอาคารที่เลือก ${roomsInSelectedBuilding.length} ห้อง — ห้องที่เลือก ${displayRooms.length} ห้อง`}
+                  {isScopedToBuildings || selectedBuildingId !== ''
+                    ? `ห้อง active ในอาคารที่เลือก ${roomsInSelectedBuilding.length} ห้อง — ห้องที่เลือก ${displayRooms.length} ห้อง`
+                    : `ห้อง active ทั้งหมด ${rooms.length} ห้อง — ห้องที่เลือก ${displayRooms.length} ห้อง (ดึงข้อมูลเฉพาะที่เลือก)`}
                 </p>
               )}
             </div>
@@ -1501,13 +1540,13 @@ export default function UtilityReadingsClient() {
 
             <div className="mb-4">
               <label className="block text-sm font-medium mb-2">
-                ค่าที่อ่านได้จากรูป
+                ค่าที่อ่านได้จากรูป <span className="text-gray-500 font-normal">(ไม่บังคับ)</span>
               </label>
               <input
                 type="number"
                 value={photoMeterValue}
                 onChange={(e) => setPhotoMeterValue(e.target.value)}
-                placeholder="กรอกค่ามิเตอร์"
+                placeholder="กรอกค่ามิเตอร์ หรือเว้นว่าง"
                 className="w-full border rounded px-3 py-2"
               />
             </div>
@@ -1522,13 +1561,13 @@ export default function UtilityReadingsClient() {
               </button>
               <button
                 onClick={uploadMeterPhoto}
-                disabled={isUploading || !photoMeterValue || (!selectedPhoto && !editingPhotoId)}
+                disabled={isUploading || (!editingPhotoId && !selectedPhoto)}
                 className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isUploading 
                   ? 'กำลังอัปโหลด...' 
                   : editingPhotoId && !selectedPhoto
-                    ? 'อัปเดตค่ามิเตอร์'
+                    ? 'บันทึก'
                     : editingPhotoId
                       ? 'อัปเดตรูปและค่า'
                       : 'อัปโหลด'

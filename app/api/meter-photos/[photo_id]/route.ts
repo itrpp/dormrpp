@@ -39,17 +39,22 @@ export async function PATCH(
     }
 
     const body = await req.json();
-    const { meter_value } = body;
+    const { meter_value: meterRaw } = body;
 
-    if (!meter_value || isNaN(Number(meter_value))) {
-      connection.release();
-      return NextResponse.json(
-        { error: 'meter_value is required and must be a number' },
-        { status: 400 }
-      );
+    let meterValue: number | null = null;
+    if (meterRaw === null || meterRaw === undefined || meterRaw === '') {
+      meterValue = null;
+    } else {
+      const n = Number(meterRaw);
+      if (Number.isNaN(n)) {
+        connection.release();
+        return NextResponse.json(
+          { error: 'meter_value ต้องเป็นตัวเลข หรือ null/ว่าง' },
+          { status: 400 },
+        );
+      }
+      meterValue = n;
     }
-
-    const meterValue = Number(meter_value);
 
     await connection.beginTransaction();
 
@@ -98,8 +103,8 @@ export async function PATCH(
       [photoData.billing_year, photoData.billing_month]
     );
 
-    const cycles = cycle as any[];
-    if (cycles.length > 0) {
+    const cycles = cycle as Array<{ cycle_id: number }>;
+    if (cycles.length > 0 && meterValue !== null) {
       const cycleId = cycles[0].cycle_id;
       
       // ดึง utility_type_id
@@ -114,7 +119,11 @@ export async function PATCH(
           [photoData.room_id, cycleId, utilityTypeId]
         );
 
-        const readings = existingReading as any[];
+        const readings = existingReading as Array<{
+          reading_id: number;
+          meter_start: number;
+          meter_end: number;
+        }>;
         
         if (readings.length > 0) {
           // ถ้ามีอยู่แล้ว ให้อัปเดต meter_end
@@ -143,7 +152,7 @@ export async function PATCH(
             [photoData.room_id, utilityTypeId, photoData.billing_year, photoData.billing_year, photoData.billing_month]
           );
 
-          const previousReadings = previousReading as any[];
+          const previousReadings = previousReading as Array<{ meter_end: number }>;
           const meterStart = previousReadings.length > 0 
             ? previousReadings[0].meter_end 
             : meterValue; // ถ้าไม่มีรอบก่อนหน้า ให้ใช้ meter_value เป็น meter_start
