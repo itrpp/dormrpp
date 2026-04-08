@@ -24,7 +24,7 @@ const ALLOWED_TYPES = [
   'image/webp',
 ];
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
 // POST /api/meter-photos - อัปโหลดรูปมิเตอร์ (Admin only)
 export async function POST(req: Request) {

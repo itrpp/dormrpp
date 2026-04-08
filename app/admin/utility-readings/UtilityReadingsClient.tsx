@@ -913,7 +913,7 @@ export default function UtilityReadingsClient({
       async function compressPhotoIfNeeded(file: File): Promise<File> {
         // ลดโอกาสโดน 413 จาก proxy/เซิร์ฟเวอร์ (โดยเฉพาะเครื่องอื่นที่ถ่ายรูปความละเอียดสูง)
         // เป้าหมาย: ลดด้านยาวสุด <= 1600px และพยายามให้ไฟล์ <= ~2MB
-        const MAX_BYTES = 2 * 1024 * 1024;
+        const MAX_BYTES = 5 * 1024 * 1024;
         const MAX_DIM = 1600;
         if (file.size <= MAX_BYTES) return file;
         if (!('createImageBitmap' in window)) return file;
