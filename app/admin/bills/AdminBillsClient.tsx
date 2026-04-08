@@ -95,7 +95,13 @@ interface BillForm {
   status: string;
 }
 
-export default function AdminBillsClient() {
+type AdminBillsClientProps = {
+  canManageBills?: boolean;
+};
+
+export default function AdminBillsClient({
+  canManageBills = false,
+}: AdminBillsClientProps) {
   const now = new Date();
 
   // กันข้อมูล debug/SQL ที่อาจหลุดเข้ามาในฟิลด์ชื่ออาคาร (เช่นมี backticks หรือข้อความแนวเงื่อนไข SQL)
@@ -246,6 +252,7 @@ export default function AdminBillsClient() {
 
   // เปลี่ยนสถานะบิล (รายการเดียว)
   const handleBillStatusChange = async (billId: number, newStatus: string) => {
+    if (!canManageBills) return;
     try {
       const res = await fetch(`/api/bills/${billId}`, {
         method: 'PATCH',
@@ -271,6 +278,7 @@ export default function AdminBillsClient() {
 
   // ปรับสถานะบิลทั้งหมดในหน้านี้ (รอบบิลที่เลือก)
   const handleBulkStatusChange = async () => {
+    if (!canManageBills) return;
     if (filteredBills.length === 0) return;
     const statusLabel =
       bulkStatus === 'draft' ? 'ร่าง' : bulkStatus === 'sent' ? 'ส่งแล้ว' : 'ชำระแล้ว';
@@ -552,6 +560,10 @@ export default function AdminBillsClient() {
 
   // สร้างบิล (ตามโครงสร้างใหม่) - รองรับหลายสัญญาเช่า
   const handleCreateBill = async () => {
+    if (!canManageBills) {
+      alert('บัญชีนี้มีสิทธิ์ดูบิลอย่างเดียว ไม่สามารถแก้ไขได้');
+      return;
+    }
     if (form.contract_ids.length === 0 || !form.billing_year || !form.billing_month) {
       alert('กรุณาเลือกสัญญาเช่าและรอบบิล');
         return;
@@ -677,6 +689,10 @@ export default function AdminBillsClient() {
 
   // ออกบิลทั้งเดือน
   const handleRunBilling = async () => {
+    if (!canManageBills) {
+      alert('บัญชีนี้มีสิทธิ์ดูบิลอย่างเดียว ไม่สามารถแก้ไขได้');
+      return;
+    }
     if (!confirm(`ยืนยันการออกบิลทั้งเดือนสำหรับ ${getMonthNameThai(month)} ${year}?`)) {
       return;
     }
@@ -896,7 +912,14 @@ export default function AdminBillsClient() {
     <div>
       <div className="admin-bills-main">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-gray-800">จัดการบิลค่าใช้จ่าย</h1>
+        <div>
+          <h1 className="text-3xl font-bold text-gray-800">จัดการบิลค่าใช้จ่าย</h1>
+          {!canManageBills && (
+            <p className="text-xs text-amber-700 mt-1">
+              โหมดอ่านอย่างเดียว: บัญชีผู้ดูแลรายอาคารไม่สามารถแก้ไขบิลได้
+            </p>
+          )}
+        </div>
         <div className="flex gap-2 items-end">
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">
@@ -918,13 +941,14 @@ export default function AdminBillsClient() {
           </button>
           <button
             onClick={openCreateModal}
-            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
+            disabled={!canManageBills}
+            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
             สร้างบิลใหม่
           </button>
           <button
             onClick={handleRunBilling}
-            disabled={isRunningBilling}
+            disabled={isRunningBilling || !canManageBills}
             className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
           >
             {isRunningBilling ? 'กำลังออกบิล...' : 'ออกบิลทั้งเดือน'}
@@ -1042,7 +1066,7 @@ export default function AdminBillsClient() {
                       className="border rounded px-1.5 py-0.5 text-xs bg-white w-full max-w-[90px]"
                       value={bulkStatus}
                       onChange={(e) => setBulkStatus(e.target.value)}
-                      disabled={isBulkUpdating}
+                      disabled={isBulkUpdating || !canManageBills}
                     >
                       <option value="draft">ร่าง</option>
                       <option value="sent">ส่งแล้ว</option>
@@ -1051,7 +1075,7 @@ export default function AdminBillsClient() {
                     <button
                       type="button"
                       onClick={handleBulkStatusChange}
-                      disabled={isBulkUpdating || filteredBills.length === 0}
+                      disabled={isBulkUpdating || filteredBills.length === 0 || !canManageBills}
                       className="px-2 py-1 text-[11px] rounded border bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
                       {isBulkUpdating ? 'กำลังอัปเดต...' : 'ปรับสถานะทั้งหมด'}
@@ -1249,6 +1273,7 @@ export default function AdminBillsClient() {
                         onChange={(e) =>
                           handleBillStatusChange(row.bill.bill_id, e.target.value)
                         }
+                        disabled={!canManageBills}
                       >
                         <option value="draft">ร่าง</option>
                         <option value="sent">ส่งแล้ว</option>

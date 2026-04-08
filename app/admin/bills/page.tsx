@@ -24,6 +24,9 @@ export default async function AdminBillsPage() {
     return null;
   }
 
-  return <AdminBillsClient />;
+  const appRoles = authResult.appRoles ?? [];
+  const canManageBills = appRoles.includes('ADMIN') || appRoles.includes('FINANCE');
+
+  return <AdminBillsClient canManageBills={canManageBills} />;
 }
 

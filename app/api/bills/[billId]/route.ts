@@ -1,6 +1,16 @@
 // app/api/bills/[billId]/route.ts
 import { NextResponse } from 'next/server';
 import { getBillById, updateBill, deleteBill } from '@/lib/repositories/bills';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import type { AppRoleCode } from '@/lib/auth/app-roles';
+
+const BILL_ACCESS_ROLES: AppRoleCode[] = [
+  'ADMIN',
+  'FINANCE',
+  'SUPERUSER_RP',
+  'SUPERUSER_MED',
+];
+const BILL_MANAGE_ROLES: AppRoleCode[] = ['ADMIN', 'FINANCE'];
 
 // GET /api/bills/[billId]
 export async function GET(
@@ -8,6 +18,10 @@ export async function GET(
   { params }: { params: { billId: string } }
 ) {
   try {
+    const authResult = await requireAppRoles(BILL_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     const billId = Number(params.billId);
     const bill = await getBillById(billId);
 
@@ -34,6 +48,10 @@ export async function PATCH(
   { params }: { params: { billId: string } }
 ) {
   try {
+    const authResult = await requireAppRoles(BILL_MANAGE_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     const billId = Number(params.billId);
     const body = await req.json();
 
@@ -61,6 +79,10 @@ export async function DELETE(
   { params }: { params: { billId: string } }
 ) {
   try {
+    const authResult = await requireAppRoles(BILL_MANAGE_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     const billId = Number(params.billId);
     await deleteBill(billId);
 

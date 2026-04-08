@@ -2,8 +2,16 @@
 import { NextResponse } from 'next/server';
 import { query, pool } from '@/lib/db';
 import { getOrCreateBillingCycle, getUtilityTypeId, getCurrentUtilityRate } from '@/lib/repositories/bills';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import type { AppRoleCode } from '@/lib/auth/app-roles';
+
+const BILL_MANAGE_ROLES: AppRoleCode[] = ['ADMIN', 'FINANCE'];
 
 export async function POST(req: Request) {
+  const authResult = await requireAppRoles(BILL_MANAGE_ROLES);
+  if (!authResult.authorized) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
   const connection = await pool.getConnection();
   
   try {

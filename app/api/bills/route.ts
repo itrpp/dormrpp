@@ -16,6 +16,7 @@ const BILL_ACCESS_ROLES: AppRoleCode[] = [
   'SUPERUSER_RP', // Superuser หอพักรวงผึ้ง
   'SUPERUSER_MED' // Superuser หอพักแพทยศาสตร์
 ];
+const BILL_MANAGE_ROLES: AppRoleCode[] = ['ADMIN', 'FINANCE'];
 
 // GET /api/bills?year=2568&month=10&room_id=1
 export async function GET(req: Request) {
@@ -71,7 +72,7 @@ export async function GET(req: Request) {
 // endpoint นี้ยังคงไว้สำหรับกรณีพิเศษที่ต้องสร้างบิลแบบ manual
 // body: { contract_id, cycle_id, maintenance_fee, electric_amount, water_amount, status }
 export async function POST(req: Request) {
-  const authResult = await requireAppRoles(BILL_ACCESS_ROLES);
+  const authResult = await requireAppRoles(BILL_MANAGE_ROLES);
   if (!authResult.authorized) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }

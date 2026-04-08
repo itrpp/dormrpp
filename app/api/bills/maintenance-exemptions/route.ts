@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { requireAppRoles } from '@/lib/auth/middleware';
+import type { AppRoleCode } from '@/lib/auth/app-roles';
 import {
-  ADMIN_BUILDING_DATA_ACCESS_ROLES,
   getAdminBuildingScopeFromAppRoles,
   isBuildingIdInScope,
 } from '@/lib/auth/building-scope';
 
 export const dynamic = 'force-dynamic';
+const BILL_MANAGE_ROLES: AppRoleCode[] = ['ADMIN', 'FINANCE'];
 
 async function ensureBillFeeExemptionsTable() {
   await query(
@@ -33,7 +34,7 @@ async function ensureBillFeeExemptionsTable() {
 // body: { cycle_id: number, room_id: number, is_exempt: boolean }
 export async function POST(req: Request) {
   try {
-    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    const authResult = await requireAppRoles(BILL_MANAGE_ROLES);
     if (!authResult.authorized) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
