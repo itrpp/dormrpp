@@ -969,7 +969,8 @@ export default function UtilityReadingsClient({
         const deleteRes = await fetch(`/api/meter-photos/${Number(editingPhotoId)}`, {
           method: 'DELETE',
         });
-        if (!deleteRes.ok) {
+        // กรณี 404 = รูปเก่าถูกลบไปแล้ว (id ค้าง) ให้ข้ามได้
+        if (!deleteRes.ok && deleteRes.status !== 404) {
           const errorData = await deleteRes.json().catch(() => ({}));
           throw new Error(errorData.error || 'ไม่สามารถลบรูปเก่าได้');
         }
