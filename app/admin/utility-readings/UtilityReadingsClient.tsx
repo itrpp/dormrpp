@@ -109,6 +109,8 @@ export default function UtilityReadingsClient({
     bill_id: number | null;
     meter_value: number | null;
   }>>(new Map());
+  /** บังคับดึงสถานะรูปจากเซิร์ฟเวอร์ใหม่หลังอัปโหลด/แก้ไข (กันค่า photo_id ค้างหรือไม่ตรง DB) */
+  const [photoStatusRefreshKey, setPhotoStatusRefreshKey] = useState(0);
   
   // State สำหรับตรวจสอบว่าออกบิลแล้วหรือยัง
   const [hasBills, setHasBills] = useState(false);
@@ -285,11 +287,18 @@ export default function UtilityReadingsClient({
           if (electricRes.ok) {
             const electricPhotos = await electricRes.json();
             electricPhotos.forEach((photo: any) => {
+              const pid = Number(photo.photo_id);
+              if (!Number.isFinite(pid)) return;
               const key = `${photo.room_id}-electric`;
+              const mvRaw =
+                photo.meter_value != null && photo.meter_value !== ''
+                  ? Number(photo.meter_value)
+                  : null;
               statusMap.set(key, {
-                photo_id: photo.photo_id,
-                bill_id: photo.bill_id,
-                meter_value: photo.meter_value,
+                photo_id: pid,
+                bill_id: photo.bill_id ?? null,
+                meter_value:
+                  mvRaw !== null && Number.isFinite(mvRaw) ? mvRaw : null,
               });
             });
           }
@@ -305,11 +314,18 @@ export default function UtilityReadingsClient({
           if (waterRes.ok) {
             const waterPhotos = await waterRes.json();
             waterPhotos.forEach((photo: any) => {
+              const pid = Number(photo.photo_id);
+              if (!Number.isFinite(pid)) return;
               const key = `${photo.room_id}-water`;
+              const mvRaw =
+                photo.meter_value != null && photo.meter_value !== ''
+                  ? Number(photo.meter_value)
+                  : null;
               statusMap.set(key, {
-                photo_id: photo.photo_id,
-                bill_id: photo.bill_id,
-                meter_value: photo.meter_value,
+                photo_id: pid,
+                bill_id: photo.bill_id ?? null,
+                meter_value:
+                  mvRaw !== null && Number.isFinite(mvRaw) ? mvRaw : null,
               });
             });
           }
@@ -326,7 +342,7 @@ export default function UtilityReadingsClient({
     };
 
     fetchPhotoStatusAndBills();
-  }, [cycleId, year, month, displayRoomIdsKey]);
+  }, [cycleId, year, month, displayRoomIdsKey, photoStatusRefreshKey]);
 
   useEffect(() => {
     deepLinkBuildingApplied.current = false;
@@ -775,7 +791,8 @@ export default function UtilityReadingsClient({
     setUploadingUtilityType(utilityType);
     setSelectedPhoto(null);
     setPhotoPreviewUrl(null);
-    setEditingPhotoId(photoId || null);
+    const idNum = photoId != null ? Number(photoId) : NaN;
+    setEditingPhotoId(Number.isFinite(idNum) ? idNum : null);
 
     const formRow = roomForms.get(roomId);
     const endVal = formRow?.[utilityType]?.meter_end;
@@ -848,7 +865,7 @@ export default function UtilityReadingsClient({
     try {
       // ถ้ากำลังแก้ไขและไม่เลือกรูปใหม่ ให้อัปเดตแค่ค่า meter_value
       if (editingPhotoId && !selectedPhoto) {
-        const res = await fetch(`/api/meter-photos/${editingPhotoId}`, {
+        const res = await fetch(`/api/meter-photos/${Number(editingPhotoId)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ meter_value: meterValue }),
@@ -882,7 +899,8 @@ export default function UtilityReadingsClient({
           const data = await readingsRes.json();
           setSavedReadings(data);
         }
-        
+
+        setPhotoStatusRefreshKey((k) => k + 1);
         return;
       }
 
@@ -894,7 +912,7 @@ export default function UtilityReadingsClient({
 
       // ถ้ากำลังแก้ไขและเลือกรูปใหม่ ให้ลบรูปเก่าก่อน
       if (editingPhotoId) {
-        const deleteRes = await fetch(`/api/meter-photos/${editingPhotoId}`, {
+        const deleteRes = await fetch(`/api/meter-photos/${Number(editingPhotoId)}`, {
           method: 'DELETE',
         });
         if (!deleteRes.ok) {
@@ -930,19 +948,22 @@ export default function UtilityReadingsClient({
         throw new Error(errorData.error || 'ไม่สามารถอัปโหลดรูปได้');
       }
 
+      const result = await res.json();
+      const newPid = Number(result.photo_id);
+
       alert(editingPhotoId ? 'แก้ไขรูปมิเตอร์สำเร็จ' : 'อัปโหลดรูปมิเตอร์สำเร็จ');
       closeUploadModal();
-      
-      // Refresh photo status
-      const statusMap = new Map(photoStatus);
-      const key = `${uploadingRoomId}-${uploadingUtilityType}`;
-      const result = await res.json();
-      statusMap.set(key, {
-        photo_id: result.photo_id,
-        bill_id: null,
-        meter_value: meterValue,
-      });
-      setPhotoStatus(statusMap);
+
+      if (Number.isFinite(newPid)) {
+        const statusMap = new Map(photoStatus);
+        const key = `${uploadingRoomId}-${uploadingUtilityType}`;
+        statusMap.set(key, {
+          photo_id: newPid,
+          bill_id: null,
+          meter_value: meterValue,
+        });
+        setPhotoStatus(statusMap);
+      }
       
       // Refresh saved readings
       const readingsRes = await fetch(
@@ -952,6 +973,8 @@ export default function UtilityReadingsClient({
         const data = await readingsRes.json();
         setSavedReadings(data);
       }
+
+      setPhotoStatusRefreshKey((k) => k + 1);
     } catch (error: any) {
       console.error('Error uploading meter photo:', error);
       alert(`ไม่สามารถอัปโหลดรูปได้: ${error.message || 'Unknown error'}`);

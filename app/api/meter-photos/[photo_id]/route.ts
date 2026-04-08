@@ -1,8 +1,13 @@
 // app/api/meter-photos/[photo_id]/route.ts
 import { NextResponse } from 'next/server';
 import { query, pool } from '@/lib/db';
-import { getSession } from '@/lib/auth/session';
 import { getUtilityTypeId } from '@/lib/repositories/bills';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import {
+  ADMIN_BUILDING_DATA_ACCESS_ROLES,
+  getAdminBuildingScopeFromAppRoles,
+  isBuildingIdInScope,
+} from '@/lib/auth/building-scope';
 import { unlink } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
@@ -10,34 +15,34 @@ import { existsSync } from 'fs';
 // บังคับให้ route นี้เป็น dynamic
 export const dynamic = 'force-dynamic';
 
-// PATCH /api/meter-photos/[photo_id] - อัปเดตค่ามิเตอร์ (Admin only)
+type PhotoIdParams = { photo_id: string };
+
+async function resolveParams(
+  params: PhotoIdParams | Promise<PhotoIdParams>,
+): Promise<PhotoIdParams> {
+  return Promise.resolve(params);
+}
+
+// PATCH /api/meter-photos/[photo_id] - อัปเดตค่ามิเตอร์ (สิทธิ์เดียวกับ POST /api/meter-photos)
 export async function PATCH(
   req: Request,
-  { params }: { params: { photo_id: string } }
+  ctx: { params: PhotoIdParams | Promise<PhotoIdParams> },
 ) {
+  const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+  if (!authResult.authorized) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+  const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
+  const params = await resolveParams(ctx.params);
+  const photoId = parseInt(params.photo_id, 10);
+  if (isNaN(photoId)) {
+    return NextResponse.json({ error: 'Invalid photo ID' }, { status: 400 });
+  }
+
   const connection = await pool.getConnection();
-  
+
   try {
-    const session = await getSession();
-    
-    if (!session || (session.role !== 'admin' && session.role !== 'superUser')) {
-      connection.release();
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 403 }
-      );
-    }
-
-    const photoId = parseInt(params.photo_id, 10);
-    
-    if (isNaN(photoId)) {
-      connection.release();
-      return NextResponse.json(
-        { error: 'Invalid photo ID' },
-        { status: 400 }
-      );
-    }
-
     const body = await req.json();
     const { meter_value: meterRaw } = body;
 
@@ -58,25 +63,41 @@ export async function PATCH(
 
     await connection.beginTransaction();
 
-    // ดึงข้อมูลรูปจากฐานข้อมูล
+    // ดึงข้อมูลรูป + อาคาร (สำหรับตรวจขอบเขต)
     const [photoRows] = await connection.query(
-      `SELECT photo_id, room_id, utility_type, billing_year, billing_month, bill_id 
-       FROM meter_photos 
-       WHERE photo_id = ?`,
-      [photoId]
+      `SELECT mp.photo_id, mp.room_id, mp.utility_type, mp.billing_year, mp.billing_month, mp.bill_id,
+              r.building_id
+       FROM meter_photos mp
+       INNER JOIN rooms r ON mp.room_id = r.room_id
+       WHERE mp.photo_id = ?`,
+      [photoId],
     );
 
-    const photos = photoRows as any[];
+    const photos = photoRows as Array<{
+      photo_id: number;
+      room_id: number;
+      utility_type: string;
+      billing_year: number;
+      billing_month: number;
+      bill_id: number | null;
+      building_id: number;
+    }>;
     if (photos.length === 0) {
       await connection.rollback();
       connection.release();
       return NextResponse.json(
         { error: 'ไม่พบรูปมิเตอร์ที่ระบุ' },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
-    const photoData = photos[0];
+    const photoData = photos[0]!;
+
+    if (!isBuildingIdInScope(photoData.building_id, scope)) {
+      await connection.rollback();
+      connection.release();
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
 
     // ตรวจสอบว่ามีบิลผูกอยู่หรือไม่ (ถ้ามีบิลแล้วห้ามแก้ไข)
     if (photoData.bill_id) {
@@ -187,31 +208,33 @@ export async function PATCH(
   }
 }
 
-// DELETE /api/meter-photos/[photo_id] - ลบรูปมิเตอร์ (Admin only)
+// PUT — บาง client/proxy ใช้ PUT แทน PATCH
+export async function PUT(
+  req: Request,
+  ctx: { params: PhotoIdParams | Promise<PhotoIdParams> },
+) {
+  return PATCH(req, ctx);
+}
+
+// DELETE /api/meter-photos/[photo_id] - ลบรูปมิเตอร์ (สิทธิ์เดียวกับ POST)
 export async function DELETE(
   req: Request,
-  { params }: { params: { photo_id: string } }
+  ctx: { params: PhotoIdParams | Promise<PhotoIdParams> },
 ) {
   try {
-    const session = await getSession();
-    
-    if (!session || (session.role !== 'admin' && session.role !== 'superUser')) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 403 }
-      );
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
 
+    const params = await resolveParams(ctx.params);
     const photoId = parseInt(params.photo_id, 10);
-    
+
     if (isNaN(photoId)) {
-      return NextResponse.json(
-        { error: 'Invalid photo ID' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid photo ID' }, { status: 400 });
     }
 
-    // ดึงข้อมูลรูปจากฐานข้อมูล
     const [photo] = await query<{
       photo_id: number;
       photo_path: string;
@@ -219,18 +242,25 @@ export async function DELETE(
       room_id: number;
       billing_year: number;
       billing_month: number;
+      building_id: number;
     }>(
-      `SELECT photo_id, photo_path, bill_id, room_id, billing_year, billing_month 
-       FROM meter_photos 
-       WHERE photo_id = ?`,
-      [photoId]
+      `SELECT mp.photo_id, mp.photo_path, mp.bill_id, mp.room_id, mp.billing_year, mp.billing_month,
+              r.building_id
+       FROM meter_photos mp
+       INNER JOIN rooms r ON mp.room_id = r.room_id
+       WHERE mp.photo_id = ?`,
+      [photoId],
     );
 
     if (!photo) {
       return NextResponse.json(
         { error: 'ไม่พบรูปมิเตอร์ที่ระบุ' },
-        { status: 404 }
+        { status: 404 },
       );
+    }
+
+    if (!isBuildingIdInScope(photo.building_id, scope)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // ตรวจสอบว่ามีบิลผูกอยู่หรือไม่ (ถ้ามีบิลแล้วห้ามลบ)
