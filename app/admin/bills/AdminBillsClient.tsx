@@ -151,6 +151,7 @@ export default function AdminBillsClient({
   const [previewBillId, setPreviewBillId] = useState<number | null>(null);
   const [previewBillData, setPreviewBillData] = useState<BillPreviewData | null>(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+  const [zoomImage, setZoomImage] = useState<{ url: string; title: string } | null>(null);
   
   // สำหรับ modal form
   const formBeYear = now.getFullYear() + 543;
@@ -393,6 +394,7 @@ export default function AdminBillsClient({
     setIsPreviewModalOpen(false);
     setPreviewBillId(null);
     setPreviewBillData(null);
+    setZoomImage(null);
   };
 
   // Export Excel จาก modal
@@ -2114,7 +2116,13 @@ export default function AdminBillsClient({
                             <img
                               src={previewBillData.meter_photos.electric.photo_url}
                               alt="รูปภาพมิเตอร์ไฟฟ้า"
-                              className="max-w-full h-auto max-h-[300px] object-contain rounded"
+                              className="max-w-full h-auto max-h-[300px] object-contain rounded cursor-zoom-in"
+                              onClick={() =>
+                                setZoomImage({
+                                  url: previewBillData.meter_photos!.electric!.photo_url,
+                                  title: 'รูปมิเตอร์ไฟฟ้า',
+                                })
+                              }
                               onError={(e) => {
                                 (e.target as HTMLImageElement).style.display = 'none';
                                 const parent = (e.target as HTMLImageElement).parentElement;
@@ -2144,7 +2152,13 @@ export default function AdminBillsClient({
                             <img
                               src={previewBillData.meter_photos.water.photo_url}
                               alt="รูปภาพมิเตอร์น้ำ"
-                              className="max-w-full h-auto max-h-[300px] object-contain rounded"
+                              className="max-w-full h-auto max-h-[300px] object-contain rounded cursor-zoom-in"
+                              onClick={() =>
+                                setZoomImage({
+                                  url: previewBillData.meter_photos!.water!.photo_url,
+                                  title: 'รูปมิเตอร์น้ำ',
+                                })
+                              }
                               onError={(e) => {
                                 (e.target as HTMLImageElement).style.display = 'none';
                                 const parent = (e.target as HTMLImageElement).parentElement;
@@ -2171,6 +2185,37 @@ export default function AdminBillsClient({
                   <p className="text-red-600">ไม่พบข้อมูลบิล</p>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Zoom Overlay */}
+      {zoomImage && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/85 p-4 flex items-center justify-center"
+          onClick={() => setZoomImage(null)}
+        >
+          <div
+            className="relative max-w-6xl w-full max-h-[92vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between text-white mb-2">
+              <p className="text-sm">{zoomImage.title}</p>
+              <button
+                type="button"
+                className="px-3 py-1 rounded bg-white/15 hover:bg-white/25"
+                onClick={() => setZoomImage(null)}
+              >
+                ปิด
+              </button>
+            </div>
+            <div className="bg-black/40 rounded-lg p-2 flex items-center justify-center overflow-auto">
+              <img
+                src={zoomImage.url}
+                alt={zoomImage.title}
+                className="max-w-full max-h-[84vh] object-contain rounded"
+              />
             </div>
           </div>
         </div>
