@@ -1,8 +1,14 @@
 // app/api/meter-photos/route.ts
 import { NextResponse } from 'next/server';
 import { query, pool } from '@/lib/db';
-import { getSession } from '@/lib/auth/session';
 import { getUtilityTypeId } from '@/lib/repositories/bills';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import {
+  ADMIN_BUILDING_DATA_ACCESS_ROLES,
+  appendBuildingScopeWhere,
+  getAdminBuildingScopeFromAppRoles,
+  isBuildingIdInScope,
+} from '@/lib/auth/building-scope';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
@@ -23,14 +29,15 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 // POST /api/meter-photos - อัปโหลดรูปมิเตอร์ (Admin only)
 export async function POST(req: Request) {
   try {
-    const session = await getSession();
-    
-    if (!session || (session.role !== 'admin' && session.role !== 'superUser')) {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized || !authResult.user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 403 }
       );
     }
+    const session = authResult.user;
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
 
     const formData = await req.formData();
     const photo = formData.get('photo') as File | null;
@@ -94,8 +101,8 @@ export async function POST(req: Request) {
     }
 
     // ตรวจสอบว่า room มีอยู่จริง
-    const [room] = await query<{ room_id: number }>(
-      `SELECT room_id FROM rooms WHERE room_id = ?`,
+    const [room] = await query<{ room_id: number; building_id: number }>(
+      `SELECT room_id, building_id FROM rooms WHERE room_id = ?`,
       [roomId]
     );
 
@@ -103,6 +110,13 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: 'ไม่พบห้องที่ระบุ' },
         { status: 404 }
+      );
+    }
+
+    if (!isBuildingIdInScope(room.building_id, scope)) {
+      return NextResponse.json(
+        { error: 'ไม่มีสิทธิ์อัปโหลดรูปมิเตอร์ของห้องหรืออาคารนี้' },
+        { status: 403 },
       );
     }
 
@@ -264,8 +278,16 @@ export async function POST(req: Request) {
 // ดึงรูปมิเตอร์ตาม room_id, year, month
 export async function GET(req: Request) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+    const scopeWhere = appendBuildingScopeWhere(scope, 'b.building_id');
+
     const { searchParams } = new URL(req.url);
     const room_id = searchParams.get('room_id');
+    const room_ids_param = searchParams.get('room_ids'); // comma-separated batch
     const year = searchParams.get('year');
     const month = searchParams.get('month');
     const utility_type = searchParams.get('utility_type'); // optional filter
@@ -291,9 +313,25 @@ export async function GET(req: Request) {
       JOIN buildings b ON r.building_id = b.building_id
       WHERE 1=1
     `;
-    const params: any[] = [];
+    const params: unknown[] = [];
 
-    if (room_id) {
+    if (scopeWhere) {
+      sql += scopeWhere.clause;
+      params.push(...scopeWhere.params);
+    }
+
+    const roomIdArray: number[] = room_ids_param
+      ? room_ids_param
+          .split(',')
+          .map((id) => Number(id.trim()))
+          .filter((n) => Number.isFinite(n))
+      : [];
+
+    if (roomIdArray.length > 0) {
+      const placeholders = roomIdArray.map(() => '?').join(',');
+      sql += ` AND mp.room_id IN (${placeholders})`;
+      params.push(...roomIdArray);
+    } else if (room_id) {
       sql += ' AND mp.room_id = ?';
       params.push(Number(room_id));
     }

@@ -12,6 +12,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const year = searchParams.get('year');
     const month = searchParams.get('month');
+    const buildingIdParam = searchParams.get('building_id');
 
     if (!year || !month) {
       return NextResponse.json(
@@ -19,6 +20,13 @@ export async function GET(req: Request) {
         { status: 400 }
       );
     }
+
+    const buildingId =
+      buildingIdParam && Number.isFinite(Number(buildingIdParam))
+        ? Number(buildingIdParam)
+        : null;
+
+    const params: any[] = [Number(year), Number(month)];
 
     // ดึงข้อมูลบิล
     const sql = `
@@ -36,8 +44,10 @@ export async function GET(req: Request) {
         cy.due_date,
         r.room_number,
         r.floor_no,
+        r.room_type_id,
         bu.building_id,
         bu.name_th AS building_name,
+        COALESCE(rt.max_occupants, 1) AS max_occupants,
         t.tenant_id,
         t.first_name_th AS first_name,
         t.last_name_th AS last_name,
@@ -53,11 +63,18 @@ export async function GET(req: Request) {
       JOIN tenants t ON c.tenant_id = t.tenant_id
       JOIN rooms r ON c.room_id = r.room_id
       JOIN buildings bu ON r.building_id = bu.building_id
+      LEFT JOIN room_types rt
+        ON rt.id = r.room_type_id
       WHERE cy.billing_year = ? AND cy.billing_month = ?
+      ${buildingId != null ? ' AND bu.building_id = ?' : ''}
       ORDER BY r.room_number, t.tenant_id
     `;
 
-    const bills = await query<any>(sql, [Number(year), Number(month)]);
+    if (buildingId != null) {
+      params.push(buildingId);
+    }
+
+    const bills = await query<any>(sql, params);
 
     if (!bills || bills.length === 0) {
       return NextResponse.json(
@@ -167,8 +184,12 @@ export async function GET(req: Request) {
         const calculatedElectricAmount = totalElectricAmountForRoom / tenantCount;
         const calculatedWaterAmount = totalWaterAmountForRoom / tenantCount;
 
-        // ค่าบำรุงรักษา: แต่ละคนจ่ายเต็มจำนวน (ไม่ต้องหาร)
-        const maintenanceFee = 1000;
+        // ค่าบำรุงรักษา: แยกตามอาคารของห้องพัก
+        // - building_id = 1 -> 1000
+        // - อื่นๆ         -> 6000
+        const baseMaintenanceFee = Number(bill.building_id) === 1 ? 1000 : 6000;
+        const maxOccupants = Math.max(Number(bill.max_occupants || 1) || 1, 1);
+        const maintenanceFee = baseMaintenanceFee / maxOccupants;
         // ยอดรวมทั้งสิ้นต่อคน = (ค่าไฟต่อคน) + (ค่าน้ำต่อคน) + ค่าบำรุงรักษา
         const calculatedTotalAmount = calculatedElectricAmount + calculatedWaterAmount + maintenanceFee;
 

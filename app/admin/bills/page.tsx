@@ -12,6 +12,8 @@ const BILL_ACCESS_ROLES: AppRoleCode[] = [
   'SUPERUSER_MED' // Superuser หอพักแพทยศาสตร์ (ถ้าต้องการให้เห็น)
 ];
 
+export const dynamic = 'force-dynamic';
+
 export default async function AdminBillsPage() {
   const authResult = await requireAppRoles(BILL_ACCESS_ROLES);
 

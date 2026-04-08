@@ -1,6 +1,12 @@
 // app/api/bills/detailed/route.ts
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import {
+  ADMIN_BUILDING_DATA_ACCESS_ROLES,
+  appendBuildingScopeWhere,
+  getAdminBuildingScopeFromAppRoles,
+} from '@/lib/auth/building-scope';
 
 // บังคับให้ route นี้เป็น dynamic เพราะมีการใช้ request.url
 export const dynamic = 'force-dynamic';
@@ -8,6 +14,13 @@ export const dynamic = 'force-dynamic';
 // GET /api/bills/detailed?year=2568&month=10
 export async function GET(req: Request) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+    const scopeWhere = appendBuildingScopeWhere(scope, 'bu.building_id');
+
     const { searchParams } = new URL(req.url);
     const year = searchParams.get('year');
     const month = searchParams.get('month');
@@ -19,9 +32,11 @@ export async function GET(req: Request) {
       );
     }
 
+    const sqlParams: unknown[] = [Number(year), Number(month)];
+
     // ดึงข้อมูลบิลพร้อมผู้เช่าในห้อง
     // ใช้โครงสร้างใหม่: bills -> billing_cycles -> contracts -> tenants
-    const sql = `
+    let sql = `
       SELECT 
         b.bill_id,
         b.tenant_id,
@@ -36,8 +51,10 @@ export async function GET(req: Request) {
         cy.due_date,
         r.room_number,
         r.floor_no,
+        r.room_type_id,
         bu.building_id,
         bu.name_th AS building_name,
+        COALESCE(rt.max_occupants, 1) AS max_occupants,
         t.tenant_id,
         t.first_name_th AS first_name,
         t.last_name_th AS last_name,
@@ -53,13 +70,21 @@ export async function GET(req: Request) {
       JOIN tenants t ON c.tenant_id = t.tenant_id
       JOIN rooms r ON c.room_id = r.room_id
       JOIN buildings bu ON r.building_id = bu.building_id
+      LEFT JOIN room_types rt
+        ON rt.id = r.room_type_id
       WHERE cy.billing_year = ? AND cy.billing_month = ?
+    `;
+    if (scopeWhere) {
+      sql += scopeWhere.clause;
+      sqlParams.push(...scopeWhere.params);
+    }
+    sql += `
       ORDER BY r.room_number, t.tenant_id
     `;
 
     let bills: any[] = [];
     try {
-      bills = await query<any>(sql, [Number(year), Number(month)]);
+      bills = await query<any>(sql, sqlParams);
     } catch (error: any) {
       console.error('Error fetching bills:', error);
       return NextResponse.json(
@@ -191,8 +216,13 @@ export async function GET(req: Request) {
         const calculatedElectricAmount = totalElectricAmountForRoom / actualTenantCount;
         const calculatedWaterAmount = totalWaterAmountForRoom / actualTenantCount;
 
-        // ค่าบำรุงรักษา: แต่ละคนจ่ายเต็มจำนวน (ไม่ต้องหาร)
-        const maintenanceFee = 1000;
+        // ค่าบำรุงรักษา: แยกตามอาคารของห้องพัก
+        // - building_id = 1  -> 1000
+        // - อื่นๆ            -> 6000
+        const baseMaintenanceFee = Number(bill.building_id) === 1 ? 1000 : 6000;
+        const maxOccupants = Math.max(Number(bill.max_occupants || 1) || 1, 1);
+        // ค่าบำรุงรักษาต่อคน = ค่าบำรุงรักษาตามอาคาร ÷ จำนวนคนที่ห้องรองรับ
+        const maintenanceFee = baseMaintenanceFee / maxOccupants;
         // ยอดรวมทั้งสิ้นต่อคน = (ค่าไฟต่อคน) + (ค่าน้ำต่อคน) + ค่าบำรุงรักษา
         const calculatedTotalAmount = calculatedElectricAmount + calculatedWaterAmount + maintenanceFee;
 
@@ -203,6 +233,7 @@ export async function GET(req: Request) {
           contract_id: bill.contract_id,
           cycle_id: bill.cycle_id,
           room_number: bill.room_number || '',
+          building_id: bill.building_id,
           building_name: bill.building_name || '',
           billing_year: bill.billing_year,
           billing_month: bill.billing_month,
@@ -212,7 +243,7 @@ export async function GET(req: Request) {
           // ใช้จำนวนเงินที่คำนวณใหม่จาก usage × rate_per_unit (รองรับ rollover)
           electric_amount: calculatedElectricAmount,
           water_amount: calculatedWaterAmount,
-          subtotal_amount: bill.subtotal_amount || 0,
+          subtotal_amount: calculatedElectricAmount + calculatedWaterAmount,
           total_amount: calculatedTotalAmount, // คำนวณใหม่จาก electric_amount + water_amount + maintenance_fee
           status: bill.status || 'draft',
           tenant_count: tenantCount, // เพิ่มจำนวนผู้เช่าในห้อง

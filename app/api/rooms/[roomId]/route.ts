@@ -1,8 +1,13 @@
 // app/api/rooms/[roomId]/route.ts
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { updateRoom, getRoomById, deleteRoom, toggleRoomActive } from '@/lib/repositories/rooms';
-import type { RoomWithDetails } from '@/lib/repositories/rooms';
+import { updateRoom, getRoomById, toggleRoomActive } from '@/lib/repositories/rooms';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import {
+  ADMIN_BUILDING_DATA_ACCESS_ROLES,
+  getAdminBuildingScopeFromAppRoles,
+  isBuildingIdInScope,
+} from '@/lib/auth/building-scope';
 
 type Params = { params: { roomId: string } };
 
@@ -10,14 +15,35 @@ type Params = { params: { roomId: string } };
 // body: { building_id, room_number, floor_no, status }
 export async function PUT(req: Request, { params }: Params) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
     const roomId = Number(params.roomId);
     const body = await req.json();
     const { building_id, room_number, floor_no, status, room_type_id } = body;
+
+    const existingRoom = await getRoomById(roomId);
+    if (!existingRoom || !isBuildingIdInScope(existingRoom.building_id, scope)) {
+      return NextResponse.json(
+        { error: 'ไม่มีสิทธิ์แก้ไขห้องนี้' },
+        { status: 403 },
+      );
+    }
 
     if (!building_id || !room_number) {
       return NextResponse.json(
         { error: 'building_id, room_number are required' },
         { status: 400 }
+      );
+    }
+
+    if (!isBuildingIdInScope(Number(building_id), scope)) {
+      return NextResponse.json(
+        { error: 'ไม่มีสิทธิ์ย้ายห้องไปอาคารนี้' },
+        { status: 403 },
       );
     }
 
@@ -106,9 +132,23 @@ export async function PUT(req: Request, { params }: Params) {
 // PATCH /api/rooms/[roomId]/toggle-active - เปิดใช้งาน/ปิดใช้งานห้องพัก
 export async function PATCH(req: Request, { params }: Params) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
     const roomId = Number(params.roomId);
     const body = await req.json();
     const { is_deleted } = body;
+
+    const existingRoom = await getRoomById(roomId);
+    if (!existingRoom || !isBuildingIdInScope(existingRoom.building_id, scope)) {
+      return NextResponse.json(
+        { error: 'ไม่มีสิทธิ์แก้ไขห้องนี้' },
+        { status: 403 },
+      );
+    }
 
     if (typeof is_deleted !== 'boolean') {
       return NextResponse.json(
@@ -144,7 +184,21 @@ export async function PATCH(req: Request, { params }: Params) {
 // DELETE /api/rooms/[roomId] - ยังคงไว้สำหรับ backward compatibility แต่จะใช้ soft delete
 export async function DELETE(req: Request, { params }: Params) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
     const roomId = Number(params.roomId);
+
+    const existingRoom = await getRoomById(roomId);
+    if (!existingRoom || !isBuildingIdInScope(existingRoom.building_id, scope)) {
+      return NextResponse.json(
+        { error: 'ไม่มีสิทธิ์แก้ไขห้องนี้' },
+        { status: 403 },
+      );
+    }
 
     // ใช้ soft delete แทน hard delete
     await toggleRoomActive(roomId, true);

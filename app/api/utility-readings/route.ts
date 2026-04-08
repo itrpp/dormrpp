@@ -2,10 +2,24 @@
 import { NextResponse } from 'next/server';
 import { query, pool } from '@/lib/db';
 import { getUtilityTypeId, getCurrentUtilityRate } from '@/lib/repositories/bills';
+import { getRoomById } from '@/lib/repositories/rooms';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import {
+  ADMIN_BUILDING_DATA_ACCESS_ROLES,
+  appendBuildingScopeWhere,
+  getAdminBuildingScopeFromAppRoles,
+  isBuildingIdInScope,
+} from '@/lib/auth/building-scope';
 
 // POST /api/utility-readings
 // บันทึกเลขมิเตอร์สำหรับห้องและรอบบิล
 export async function POST(req: Request) {
+  const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+  if (!authResult.authorized) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+  const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
   const connection = await pool.getConnection();
   
   try {
@@ -19,6 +33,16 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: 'cycle_id and room_id are required' },
         { status: 400 }
+      );
+    }
+
+    const roomRow = await getRoomById(Number(room_id));
+    if (!roomRow || !isBuildingIdInScope(roomRow.building_id, scope)) {
+      await connection.rollback();
+      connection.release();
+      return NextResponse.json(
+        { error: 'ไม่มีสิทธิ์บันทึกมิเตอร์ของห้องหรืออาคารนี้' },
+        { status: 403 },
       );
     }
 
@@ -136,9 +160,24 @@ export async function POST(req: Request) {
 // ดึงข้อมูลเลขมิเตอร์
 export async function GET(req: Request) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+    const scopeWhere = appendBuildingScopeWhere(scope, 'b.building_id');
+
     const { searchParams } = new URL(req.url);
     const cycleId = searchParams.get('cycle_id');
     const roomId = searchParams.get('room_id');
+    const roomIdsParam = searchParams.get('room_ids'); // comma-separated batch
+
+    const roomIdArray: number[] = roomIdsParam
+      ? roomIdsParam
+          .split(',')
+          .map((id) => Number(id.trim()))
+          .filter((n) => Number.isFinite(n))
+      : [];
 
     let sql = `
       SELECT 
@@ -159,7 +198,12 @@ export async function GET(req: Request) {
       JOIN buildings b ON r.building_id = b.building_id
       WHERE 1=1
     `;
-    const params: any[] = [];
+    const params: unknown[] = [];
+
+    if (scopeWhere) {
+      sql += scopeWhere.clause;
+      params.push(...scopeWhere.params);
+    }
 
     if (cycleId) {
       sql += ' AND bur.cycle_id = ?';
@@ -171,11 +215,17 @@ export async function GET(req: Request) {
       params.push(Number(roomId));
     }
 
+    if (roomIdArray.length > 0) {
+      const placeholders = roomIdArray.map(() => '?').join(',');
+      sql += ` AND bur.room_id IN (${placeholders})`;
+      params.push(...roomIdArray);
+    }
+
     sql += ' ORDER BY r.room_number, ut.code';
 
     const readings = await query(sql, params);
     return NextResponse.json(readings);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error fetching utility readings:', error);
     return NextResponse.json(
       { error: 'Failed to fetch utility readings' },

@@ -3,6 +3,11 @@ import { NextResponse } from 'next/server';
 import { getBillsByMonth, createBill } from '@/lib/repositories/bills';
 import { requireAppRoles } from '@/lib/auth/middleware';
 import type { AppRoleCode } from '@/lib/auth/app-roles';
+import {
+  getAdminBuildingScopeFromAppRoles,
+  isBuildingIdInScope,
+  resolveAllowedBuildingIdsForListQuery,
+} from '@/lib/auth/building-scope';
 
 // สิทธิ์ที่อนุญาตให้เข้าถึงข้อมูลบิล (ระดับระบบ)
 const BILL_ACCESS_ROLES: AppRoleCode[] = [
@@ -36,14 +41,19 @@ export async function GET(req: Request) {
       );
     }
 
-    // หมายเหตุ: ปัจจุบันยังไม่ได้กรองตามอาคารจาก role
-    // (เช่น SUPERUSER_RP เห็นเฉพาะหอรวงผึ้ง) เพราะยังไม่มี mapping building code ใน DB
-    // แต่โครงสร้างนี้พร้อมให้เพิ่มเงื่อนไข WHERE ตาม role ได้ในอนาคต
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+    const allowedIds = resolveAllowedBuildingIdsForListQuery(scope, null);
+    const allowedBuildingIds =
+      allowedIds === null ? undefined : allowedIds;
+    if (allowedBuildingIds && allowedBuildingIds.length === 0) {
+      return NextResponse.json([]);
+    }
 
     const bills = await getBillsByMonth(
       Number(year),
       Number(month),
-      roomId ? Number(roomId) : undefined
+      roomId ? Number(roomId) : undefined,
+      allowedBuildingIds,
     );
 
     return NextResponse.json(bills);
@@ -61,6 +71,12 @@ export async function GET(req: Request) {
 // endpoint นี้ยังคงไว้สำหรับกรณีพิเศษที่ต้องสร้างบิลแบบ manual
 // body: { contract_id, cycle_id, maintenance_fee, electric_amount, water_amount, status }
 export async function POST(req: Request) {
+  const authResult = await requireAppRoles(BILL_ACCESS_ROLES);
+  if (!authResult.authorized) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+  const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
   const { pool } = await import('@/lib/db');
   const connection = await pool.getConnection();
   
@@ -71,9 +87,6 @@ export async function POST(req: Request) {
     const {
       contract_id,
       cycle_id,
-      maintenance_fee,
-      electric_amount = 0,
-      water_amount = 0,
       status,
     } = body;
 
@@ -87,8 +100,15 @@ export async function POST(req: Request) {
 
     // ดึงข้อมูล contract เพื่อหา tenant_id และ room_id
     const { query } = await import('@/lib/db');
-    const contract = await query(
-      `SELECT tenant_id, room_id FROM contracts WHERE contract_id = ?`,
+    const contract = await query<{
+      tenant_id: number;
+      room_id: number;
+      building_id: number;
+    }>(
+      `SELECT c.tenant_id, c.room_id, r.building_id
+       FROM contracts c
+       JOIN rooms r ON c.room_id = r.room_id
+       WHERE c.contract_id = ?`,
       [contract_id]
     );
 
@@ -100,93 +120,22 @@ export async function POST(req: Request) {
       );
     }
 
-    const { tenant_id, room_id } = contract[0];
-
-    // ดึงข้อมูล billing cycle เพื่อใช้วันที่ในการดึงอัตรา
-    const cycleInfo = await query(
-      `SELECT end_date FROM billing_cycles WHERE cycle_id = ?`,
-      [cycle_id]
-    );
-    const cycleDate = cycleInfo && cycleInfo.length > 0 
-      ? new Date(cycleInfo[0].end_date) 
-      : new Date();
-
-    // ดึง utility readings และคำนวณ amounts
-    const { getUtilityTypeId, getCurrentUtilityRate } = await import('@/lib/repositories/bills');
-    
-    let calculatedElectricAmount = 0;
-    let calculatedWaterAmount = 0;
-
-    // ดึง utility readings สำหรับห้องนี้และรอบบิลนี้
-    const utilityReadings = await query(
-      `SELECT bur.utility_type_id, bur.meter_start, bur.meter_end, ut.code
-       FROM bill_utility_readings bur
-       JOIN utility_types ut ON bur.utility_type_id = ut.utility_type_id
-       WHERE bur.room_id = ? AND bur.cycle_id = ?`,
-      [room_id, cycle_id]
-    );
-
-    // นับจำนวนผู้เช่าในห้อง (active contracts)
-    const tenantCountResult = await query(
-      `SELECT COUNT(*) as count FROM contracts WHERE room_id = ? AND status = 'active'`,
-      [room_id]
-    );
-    const tenantCount = tenantCountResult && tenantCountResult.length > 0 
-      ? Math.max(Number(tenantCountResult[0].count) || 1, 1) // อย่างน้อย 1 คน
-      : 1;
-
-    // คำนวณ electric_amount จากมิเตอร์ + rate (รองรับ rollover สำหรับมิเตอร์ไฟฟ้า 4 หลัก)
-    const electricReading = utilityReadings.find((r: any) => r.code === 'electric');
-    if (electricReading) {
-      const electricTypeId = await getUtilityTypeId('electric');
-      if (electricTypeId) {
-        const rate = await getCurrentUtilityRate(electricTypeId, cycleDate);
-        const start = Number(electricReading.meter_start || 0);
-        const end = Number(electricReading.meter_end || 0);
-        const MOD = 10000; // มิเตอร์ไฟฟ้า 4 หลัก
-        const usage = end >= start ? end - start : (MOD - start) + end;
-        // หารด้วยจำนวนผู้เช่าในห้อง
-        calculatedElectricAmount = (usage * rate) / tenantCount;
-      }
+    const { tenant_id, room_id, building_id } = contract[0];
+    if (!isBuildingIdInScope(building_id, scope)) {
+      await connection.rollback();
+      connection.release();
+      return NextResponse.json(
+        { error: 'ไม่มีสิทธิ์จัดการบิลของอาคารนี้' },
+        { status: 403 },
+      );
     }
 
-    // คำนวณ water_amount จากมิเตอร์ + rate (ไม่ต้อง rollover)
-    const waterReading = utilityReadings.find((r: any) => r.code === 'water');
-    if (waterReading) {
-      const waterTypeId = await getUtilityTypeId('water');
-      if (waterTypeId) {
-        const rate = await getCurrentUtilityRate(waterTypeId, cycleDate);
-        const usage =
-          Number(waterReading.meter_end || 0) - Number(waterReading.meter_start || 0);
-        // หารด้วยจำนวนผู้เช่าในห้อง
-        calculatedWaterAmount = (usage * rate) / tenantCount;
-      }
-    }
-
-    // ใช้ค่าที่คำนวณได้ หรือค่าที่ส่งมา (ถ้ามี)
-    // ถ้ามีค่าส่งมาแล้วก็ต้องหารด้วยจำนวนผู้เช่าด้วย
-    const finalElectricAmount = electric_amount !== undefined && electric_amount !== 0 
-      ? Number(electric_amount) / tenantCount
-      : calculatedElectricAmount;
-    const finalWaterAmount = water_amount !== undefined && water_amount !== 0
-      ? Number(water_amount) / tenantCount
-      : calculatedWaterAmount;
-
-    // คำนวณ subtotal และ total
-    const subtotalAmount = Number(maintenance_fee || 0) + finalElectricAmount + finalWaterAmount;
-    const totalAmount = subtotalAmount;
-
-    // สร้างบิล
+    // สร้างบิลแบบ minimal ตาม schema ตาราง `bills` ในฐานข้อมูล
     const billId = await createBill({
       tenant_id: Number(tenant_id),
       room_id: Number(room_id),
       contract_id: Number(contract_id),
       cycle_id: Number(cycle_id),
-      maintenance_fee: Number(maintenance_fee || 0),
-      electric_amount: finalElectricAmount,
-      water_amount: finalWaterAmount,
-      subtotal_amount: subtotalAmount,
-      total_amount: totalAmount,
       status: status || 'draft',
     }, connection);
 

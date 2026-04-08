@@ -38,7 +38,6 @@ export async function PATCH(
     const body = await req.json();
 
     await updateBill(billId, {
-      maintenance_fee: body.maintenance_fee !== undefined ? Number(body.maintenance_fee) : undefined,
       electric_amount: body.electric_amount !== undefined ? Number(body.electric_amount) : undefined,
       water_amount: body.water_amount !== undefined ? Number(body.water_amount) : undefined,
       subtotal_amount: body.subtotal_amount !== undefined ? Number(body.subtotal_amount) : undefined,

@@ -46,6 +46,15 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
   // state สำหรับเลือกมุมมอง
   const [viewMode, setViewMode] = useState<'table' | 'floorplan'>('floorplan');
 
+  // จัดการประเภทห้องพัก (CRUD)
+  const [isRoomTypesModalOpen, setIsRoomTypesModalOpen] = useState(false);
+  const [newRoomTypeName, setNewRoomTypeName] = useState('');
+  const [newRoomTypeMax, setNewRoomTypeMax] = useState('2');
+  const [editingRoomTypeId, setEditingRoomTypeId] = useState<number | null>(null);
+  const [editRoomTypeName, setEditRoomTypeName] = useState('');
+  const [editRoomTypeMax, setEditRoomTypeMax] = useState('');
+  const [isSavingRoomType, setIsSavingRoomType] = useState(false);
+
   // state สำหรับ modal
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
@@ -188,6 +197,152 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
     fetchData();
   }, []);
 
+  const refreshRoomTypesAndOccupancy = async () => {
+    const [rtRes, occRes] = await Promise.all([
+      fetch('/api/room-types'),
+      fetch('/api/rooms/occupancy'),
+    ]);
+    if (rtRes.ok) {
+      const data = await rtRes.json();
+      setRoomTypes(Array.isArray(data) ? data : []);
+    }
+    if (occRes.ok) {
+      const occupancyData: RoomOccupancyInfo[] = await occRes.json();
+      const occupancyMap = new Map<number, RoomOccupancyInfo>();
+      occupancyData.forEach((occ) => {
+        if (occ && occ.room_id) {
+          occupancyMap.set(occ.room_id, occ);
+        }
+      });
+      setRoomOccupancies(occupancyMap);
+    }
+  };
+
+  const getRoomTypeLabel = (rt: RoomType) =>
+    (rt as { name_type?: string }).name_type || rt.name_th || `ประเภท #${rt.room_type_id}`;
+
+  const openRoomTypesModal = () => {
+    setNewRoomTypeName('');
+    setNewRoomTypeMax('2');
+    setEditingRoomTypeId(null);
+    setEditRoomTypeName('');
+    setEditRoomTypeMax('');
+    setIsRoomTypesModalOpen(true);
+    void refreshRoomTypesAndOccupancy();
+  };
+
+  const closeRoomTypesModal = () => {
+    setIsRoomTypesModalOpen(false);
+    setEditingRoomTypeId(null);
+  };
+
+  const handleAddRoomType = async () => {
+    if (!newRoomTypeName.trim()) {
+      alert('กรุณากรอกชื่อประเภทห้อง');
+      return;
+    }
+    setIsSavingRoomType(true);
+    try {
+      const res = await fetch('/api/room-types', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name_th: newRoomTypeName.trim(),
+          max_occupants: Number(newRoomTypeMax) || 2,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'ไม่สามารถเพิ่มประเภทห้องได้');
+      }
+      setNewRoomTypeName('');
+      setNewRoomTypeMax('2');
+      await refreshRoomTypesAndOccupancy();
+      alert('เพิ่มประเภทห้องสำเร็จ');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      alert(msg);
+    } finally {
+      setIsSavingRoomType(false);
+    }
+  };
+
+  const startEditRoomType = (rt: RoomType) => {
+    setEditingRoomTypeId(rt.room_type_id);
+    setEditRoomTypeName(getRoomTypeLabel(rt));
+    setEditRoomTypeMax(
+      String(rt.max_occupants != null && rt.max_occupants !== undefined ? rt.max_occupants : 2),
+    );
+  };
+
+  const cancelEditRoomType = () => {
+    setEditingRoomTypeId(null);
+    setEditRoomTypeName('');
+    setEditRoomTypeMax('');
+  };
+
+  const handleSaveEditRoomType = async () => {
+    if (editingRoomTypeId == null) return;
+    if (!editRoomTypeName.trim()) {
+      alert('กรุณากรอกชื่อประเภทห้อง');
+      return;
+    }
+    setIsSavingRoomType(true);
+    try {
+      const res = await fetch(`/api/room-types/${editingRoomTypeId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name_th: editRoomTypeName.trim(),
+          max_occupants: Number(editRoomTypeMax) || 2,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'ไม่สามารถบันทึกได้');
+      }
+      cancelEditRoomType();
+      await refreshRoomTypesAndOccupancy();
+      alert('บันทึกประเภทห้องสำเร็จ');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      alert(msg);
+    } finally {
+      setIsSavingRoomType(false);
+    }
+  };
+
+  const handleDeleteRoomType = async (rt: RoomType) => {
+    const label = getRoomTypeLabel(rt);
+    if (
+      !confirm(
+        `ลบประเภทห้อง "${label}"?\nถ้ามีห้องพักใช้ประเภทนี้อยู่ ระบบจะไม่อนุญาตให้ลบ`,
+      )
+    ) {
+      return;
+    }
+    setIsSavingRoomType(true);
+    try {
+      const res = await fetch(`/api/room-types/${rt.room_type_id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'ไม่สามารถลบได้');
+      }
+      if (form.room_type_id === String(rt.room_type_id)) {
+        setForm((f) => ({ ...f, room_type_id: '' }));
+      }
+      await refreshRoomTypesAndOccupancy();
+      alert('ลบประเภทห้องสำเร็จ');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
+      alert(msg);
+    } finally {
+      setIsSavingRoomType(false);
+    }
+  };
+
   // สร้าง list อาคาร / ชั้น / ประเภทห้อง
   const buildingOptions = useMemo(() => {
     // ใช้ข้อมูลจาก API ก่อน ถ้าไม่มีให้ใช้ข้อมูลจาก rooms
@@ -207,10 +362,17 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
   const floorOptions = useMemo(() => {
     const setFloors = new Set<number>();
     rooms.forEach((r) => {
-      if (r.floor_no != null) setFloors.add(r.floor_no);
+      if (r.floor_no == null) return;
+      if (
+        selectedBuilding !== 'all' &&
+        String(r.building_id) !== String(selectedBuilding)
+      ) {
+        return;
+      }
+      setFloors.add(r.floor_no);
     });
     return Array.from(setFloors.values()).sort((a, b) => a - b);
-  }, [rooms]);
+  }, [rooms, selectedBuilding]);
 
   const roomTypeOptions = useMemo(() => {
     // ใช้ข้อมูลจาก API ก่อน ถ้าไม่มีให้ใช้ข้อมูลจาก rooms
@@ -280,6 +442,11 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
   useEffect(() => {
     setCurrentPage(1);
   }, [selectedBuilding, selectedFloor, selectedStatus]);
+
+  // เปลี่ยนอาคารแล้วรีเซ็ตชั้น (กันค้างชั้นที่ไม่มีในอาคารใหม่)
+  useEffect(() => {
+    setSelectedFloor('all');
+  }, [selectedBuilding]);
 
   // คำนวณ pagination
   const totalPages = Math.ceil(filteredRooms.length / itemsPerPage);
@@ -355,11 +522,15 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
     return target ? String(target.building_id) : '';
   }, [buildings]);
 
-  // เปิด modal เพิ่ม
+  // เปิด modal เพิ่ม — ถ้าเลือกแท็บอาคารอยู่ ให้ตั้งอาคารในฟอร์มตามแท็บ
   const openCreateModal = () => {
     setModalMode('create');
+    const buildingForForm =
+      selectedBuilding !== 'all'
+        ? String(selectedBuilding)
+        : defaultBuildingId;
     setForm({
-      building_id: defaultBuildingId,
+      building_id: buildingForForm,
       room_number: '',
       floor_no: '',
       status: 'available',
@@ -1044,60 +1215,100 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-gray-800">จัดการห้องพัก</h1>
-        <div className="flex gap-2">
-          <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-300 p-1">
+      <div className="mb-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-start mb-4">
+          <h1 className="text-3xl font-bold text-gray-800">จัดการห้องพัก</h1>
+          <div className="flex flex-wrap gap-2">
+            <div className="flex items-center gap-2 bg-white rounded-lg border border-gray-300 p-1">
+              <button
+                type="button"
+                onClick={() => setViewMode('table')}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                  viewMode === 'table'
+                    ? 'bg-blue-600 text-white'
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                📋 ตาราง
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('floorplan')}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                  viewMode === 'floorplan'
+                    ? 'bg-blue-600 text-white'
+                    : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                🏢 แผนผัง
+              </button>
+            </div>
             <button
-              onClick={() => setViewMode('table')}
-              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                viewMode === 'table'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
+              type="button"
+              onClick={openRoomTypesModal}
+              className="bg-white border border-gray-300 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-50"
             >
-              📋 ตาราง
+              จัดการประเภทห้องพัก
             </button>
             <button
-              onClick={() => setViewMode('floorplan')}
-              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                viewMode === 'floorplan'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-gray-700 hover:bg-gray-100'
-              }`}
+              type="button"
+              onClick={openCreateModal}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
             >
-              🏢 แผนผัง
+              เพิ่มห้องพัก
             </button>
           </div>
-          <button
-            onClick={openCreateModal}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-          >
-            เพิ่มห้องพัก
-          </button>
+        </div>
+
+        {/* แท็บเลือกอาคาร — แยกมุมมองชัดเจน */}
+        <div
+          className="bg-white rounded-lg border border-gray-200 shadow-sm px-2 sm:px-3 pt-2"
+          role="tablist"
+          aria-label="เลือกอาคาร"
+        >
+          <div className="overflow-x-auto">
+            <div className="flex flex-nowrap gap-1 min-w-0 pb-0">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={selectedBuilding === 'all'}
+                onClick={() => setSelectedBuilding('all')}
+                className={`shrink-0 px-3 sm:px-4 py-2.5 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+                  selectedBuilding === 'all'
+                    ? 'border-blue-600 text-blue-800 bg-blue-50/90'
+                    : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                ทุกอาคาร
+              </button>
+              {buildingOptions.map(([id, name]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={String(selectedBuilding) === String(id)}
+                  onClick={() => setSelectedBuilding(String(id))}
+                  className={`shrink-0 px-3 sm:px-4 py-2.5 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+                    String(selectedBuilding) === String(id)
+                      ? 'border-slate-700 text-slate-900 bg-slate-100'
+                      : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="text-xs text-gray-500 px-2 pb-2 pt-1 border-t border-gray-100">
+            {selectedBuilding === 'all'
+              ? 'แสดงห้องทุกอาคารตามตัวกรองชั้นและสถานะ — เลือกแท็บอาคารเพื่อโฟกัสเฉพาะหอนั้น'
+              : `กำลังดูเฉพาะ: ${buildingOptions.find(([bid]) => String(bid) === String(selectedBuilding))?.[1] ?? 'อาคารที่เลือก'}`}
+          </p>
         </div>
       </div>
 
-      {/* แถว filter */}
+      {/* แถว filter (ชั้น + สถานะ) */}
       <div className="bg-white shadow rounded-lg p-4 mb-4 flex flex-col lg:flex-row gap-4 lg:items-end">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            อาคาร
-          </label>
-          <select
-            className="border rounded-md px-3 py-2 text-sm"
-            value={selectedBuilding}
-            onChange={(e) => setSelectedBuilding(e.target.value)}
-          >
-            <option value="all">ทุกอาคาร</option>
-            {buildingOptions.map(([id, name]) => (
-              <option key={id} value={id}>
-                {name}
-              </option>
-            ))}
-          </select>
-        </div>
-
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             ชั้น
@@ -1721,6 +1932,173 @@ export default function AdminRoomsClient({ initialRooms }: Props) {
                   <p className="text-[10px] text-gray-500">เลยกำหนดย้ายออก</p>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal จัดการประเภทห้องพัก */}
+      {isRoomTypesModalOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6">
+            <div className="flex justify-between items-start gap-4 mb-4">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">
+                  จัดการประเภทห้องพัก
+                </h2>
+                <p className="text-xs text-gray-500 mt-1">
+                  เพิ่ม แก้ไข หรือลบประเภทห้อง (ใช้กำหนดจำนวนผู้เข้าพักสูงสุดต่อห้อง)
+                </p>
+              </div>
+              <button
+                type="button"
+                className="text-gray-500 hover:text-gray-800 text-2xl leading-none"
+                onClick={closeRoomTypesModal}
+                aria-label="ปิด"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="border rounded-lg p-3 mb-4 bg-gray-50">
+              <p className="text-sm font-medium text-gray-700 mb-2">เพิ่มประเภทใหม่</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+                <input
+                  type="text"
+                  className="border rounded-md px-3 py-2 text-sm"
+                  placeholder="ชื่อประเภทห้อง (เช่น ห้องปกติ, VIP)"
+                  value={newRoomTypeName}
+                  onChange={(e) => setNewRoomTypeName(e.target.value)}
+                  disabled={isSavingRoomType}
+                />
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  className="border rounded-md px-3 py-2 text-sm"
+                  placeholder="จำนวนผู้เข้าพักสูงสุด"
+                  value={newRoomTypeMax}
+                  onChange={(e) => setNewRoomTypeMax(e.target.value)}
+                  disabled={isSavingRoomType}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleAddRoomType()}
+                disabled={isSavingRoomType}
+                className="w-full sm:w-auto px-4 py-2 rounded-md bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {isSavingRoomType ? 'กำลังบันทึก...' : 'เพิ่มประเภท'}
+              </button>
+            </div>
+
+            <div className="border rounded-lg overflow-hidden">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-100 text-left text-xs text-gray-600 uppercase">
+                  <tr>
+                    <th className="px-3 py-2 w-12">#</th>
+                    <th className="px-3 py-2">ชื่อประเภท</th>
+                    <th className="px-3 py-2 w-24 text-center">สูงสุด (คน)</th>
+                    <th className="px-3 py-2 text-right w-36">จัดการ</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {roomTypes.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-gray-500">
+                        ไม่มีข้อมูลประเภทห้อง
+                      </td>
+                    </tr>
+                  ) : (
+                    roomTypes.map((rt, idx) => (
+                      <tr key={rt.room_type_id} className="hover:bg-gray-50">
+                        <td className="px-3 py-2 text-gray-500">{idx + 1}</td>
+                        <td className="px-3 py-2">
+                          {editingRoomTypeId === rt.room_type_id ? (
+                            <input
+                              type="text"
+                              className="w-full border rounded px-2 py-1 text-sm"
+                              value={editRoomTypeName}
+                              onChange={(e) => setEditRoomTypeName(e.target.value)}
+                              disabled={isSavingRoomType}
+                            />
+                          ) : (
+                            <span className="font-medium text-gray-900">
+                              {getRoomTypeLabel(rt)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          {editingRoomTypeId === rt.room_type_id ? (
+                            <input
+                              type="number"
+                              min={1}
+                              max={20}
+                              className="w-16 border rounded px-1 py-1 text-sm text-center mx-auto"
+                              value={editRoomTypeMax}
+                              onChange={(e) => setEditRoomTypeMax(e.target.value)}
+                              disabled={isSavingRoomType}
+                            />
+                          ) : (
+                            <span>{rt.max_occupants ?? '-'}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right whitespace-nowrap">
+                          {editingRoomTypeId === rt.room_type_id ? (
+                            <span className="inline-flex gap-1">
+                              <button
+                                type="button"
+                                onClick={() => void handleSaveEditRoomType()}
+                                disabled={isSavingRoomType}
+                                className="px-2 py-1 rounded bg-blue-600 text-white text-xs hover:bg-blue-700 disabled:opacity-50"
+                              >
+                                บันทึก
+                              </button>
+                              <button
+                                type="button"
+                                onClick={cancelEditRoomType}
+                                disabled={isSavingRoomType}
+                                className="px-2 py-1 rounded border text-xs hover:bg-gray-50"
+                              >
+                                ยกเลิก
+                              </button>
+                            </span>
+                          ) : (
+                            <span className="inline-flex gap-1">
+                              <button
+                                type="button"
+                                onClick={() => startEditRoomType(rt)}
+                                disabled={isSavingRoomType}
+                                className="px-2 py-1 rounded text-amber-700 bg-amber-50 text-xs hover:bg-amber-100"
+                              >
+                                แก้ไข
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteRoomType(rt)}
+                                disabled={isSavingRoomType}
+                                className="px-2 py-1 rounded text-red-700 bg-red-50 text-xs hover:bg-red-100"
+                              >
+                                ลบ
+                              </button>
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex justify-end mt-4">
+              <button
+                type="button"
+                onClick={closeRoomTypesModal}
+                className="px-4 py-2 rounded-md border border-gray-300 text-sm hover:bg-gray-50"
+              >
+                ปิด
+              </button>
             </div>
           </div>
         </div>

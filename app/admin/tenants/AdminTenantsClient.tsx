@@ -69,10 +69,18 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
   const floorOptions = useMemo(() => {
     const setFloors = new Set<number>();
     tenants.forEach((t) => {
-      if (t.floor_no != null) setFloors.add(t.floor_no);
+      if (t.floor_no == null) return;
+      if (
+        selectedBuilding !== 'all' &&
+        (!t.building_id || String(t.building_id) !== String(selectedBuilding))
+      ) {
+        return;
+      }
+
+      setFloors.add(t.floor_no);
     });
     return Array.from(setFloors.values()).sort((a, b) => a - b);
-  }, [tenants]);
+  }, [tenants, selectedBuilding]);
 
   // ฟิลเตอร์ + ค้นหา
   const filteredTenants = useMemo(() => {
@@ -124,6 +132,11 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
   useEffect(() => {
     setCurrentPage(1);
   }, [selectedStatus, selectedBuilding, selectedFloor, searchText, itemsPerPage]);
+
+  // เปลี่ยนอาคารแล้วรีเซ็ตชั้น (กันค้างชั้นที่ไม่มีในอาคารใหม่)
+  useEffect(() => {
+    setSelectedFloor('all');
+  }, [selectedBuilding]);
 
   // คำนวณ pagination
   const totalPages = Math.ceil(filteredTenants.length / itemsPerPage);
@@ -418,12 +431,66 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
         <h1 className="text-3xl font-bold text-gray-800">จัดการผู้เช่า</h1>
         <div className="flex gap-2">
           <a
-            href="/admin/tenants/add"
+            href={
+              selectedBuilding !== 'all'
+                ? `/admin/tenants/add?building_id=${selectedBuilding}`
+                : '/admin/tenants/add'
+            }
             className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
         >
             เพิ่มผู้เช่า
           </a>
         </div>
+      </div>
+
+      {/* แท็บเลือกอาคาร — แยกมุมมองชัดเจน */}
+      <div
+        className="bg-white rounded-lg border border-gray-200 shadow-sm px-2 sm:px-3 pt-2 mb-4"
+        role="tablist"
+        aria-label="เลือกอาคาร"
+      >
+        <div className="overflow-x-auto">
+          <div className="flex flex-nowrap gap-1 min-w-0 pb-0">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={selectedBuilding === 'all'}
+              onClick={() => setSelectedBuilding('all')}
+              className={`shrink-0 px-3 sm:px-4 py-2.5 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+                selectedBuilding === 'all'
+                  ? 'border-blue-600 text-blue-800 bg-blue-50/90'
+                  : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              ทุกอาคาร
+            </button>
+            {buildingOptions.map(([id, name]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={String(selectedBuilding) === String(id)}
+                onClick={() => setSelectedBuilding(String(id))}
+                className={`shrink-0 px-3 sm:px-4 py-2.5 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+                  String(selectedBuilding) === String(id)
+                    ? 'border-slate-700 text-slate-900 bg-slate-100'
+                    : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 px-2 pb-2 pt-1 border-t border-gray-100">
+          {selectedBuilding === 'all'
+            ? 'แสดงผู้เช่าทุกอาคารตามตัวกรองชั้นและสถานะ — เลือกแท็บอาคารเพื่อโฟกัสเฉพาะหอนั้น'
+            : `กำลังดูเฉพาะอาคาร: ${
+                buildingOptions.find(
+                  ([bid]) => String(bid) === String(selectedBuilding)
+                )?.[1] ?? 'อาคารที่เลือก'
+              }`}
+        </p>
       </div>
 
       {/* แถว search + filter */}
@@ -439,24 +506,6 @@ export default function AdminTenantsClient({ initialTenants }: Props) {
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
           />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            อาคาร
-          </label>
-          <select
-            className="border rounded-md px-3 py-2 text-sm"
-            value={selectedBuilding}
-            onChange={(e) => setSelectedBuilding(e.target.value)}
-          >
-            <option value="all">ทุกอาคาร</option>
-            {buildingOptions.map(([id, name]) => (
-              <option key={id} value={id}>
-                {name}
-              </option>
-            ))}
-          </select>
         </div>
 
         <div>

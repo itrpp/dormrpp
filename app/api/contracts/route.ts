@@ -3,12 +3,27 @@ import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { checkRoomAvailability } from '@/lib/repositories/room-occupancy';
 import { updateTenantStatusByStartDate } from '@/lib/db-helpers';
+import { getRoomById } from '@/lib/repositories/rooms';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import {
+  ADMIN_BUILDING_DATA_ACCESS_ROLES,
+  appendBuildingScopeWhere,
+  getAdminBuildingScopeFromAppRoles,
+  isBuildingIdInScope,
+} from '@/lib/auth/building-scope';
 
 // GET /api/contracts?room_id=1&status=active
 export async function GET(req: Request) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
     const { searchParams } = new URL(req.url);
     const roomId = searchParams.get('room_id');
+    const roomIdsParam = searchParams.get('room_ids'); // comma-separated batch
     const status = searchParams.get('status') || 'active';
 
     let sql = `
@@ -32,9 +47,26 @@ export async function GET(req: Request) {
       JOIN buildings b ON r.building_id = b.building_id
       WHERE c.status = ?
     `;
-    const params: any[] = [status];
+    const params: unknown[] = [status];
 
-    if (roomId) {
+    const scopeWhere = appendBuildingScopeWhere(scope, 'r.building_id');
+    if (scopeWhere) {
+      sql += scopeWhere.clause;
+      params.push(...scopeWhere.params);
+    }
+
+    const roomIdArray: number[] = roomIdsParam
+      ? roomIdsParam
+          .split(',')
+          .map((id) => Number(id.trim()))
+          .filter((n) => Number.isFinite(n))
+      : [];
+
+    if (roomIdArray.length > 0) {
+      const placeholders = roomIdArray.map(() => '?').join(',');
+      sql += ` AND c.room_id IN (${placeholders})`;
+      params.push(...roomIdArray);
+    } else if (roomId) {
       sql += ' AND c.room_id = ?';
       params.push(Number(roomId));
     }
@@ -56,6 +88,12 @@ export async function GET(req: Request) {
 // body: { tenant_id, room_id, start_date, status }
 export async function POST(req: Request) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
     const body = await req.json();
     const { tenant_id, room_id, start_date, status = 'active' } = body;
 
@@ -63,6 +101,14 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: 'tenant_id และ room_id จำเป็นต้องกรอก' },
         { status: 400 }
+      );
+    }
+
+    const roomRow = await getRoomById(Number(room_id));
+    if (!roomRow || !isBuildingIdInScope(roomRow.building_id, scope)) {
+      return NextResponse.json(
+        { error: 'ไม่มีสิทธิ์จัดการห้องหรืออาคารนี้' },
+        { status: 403 },
       );
     }
 

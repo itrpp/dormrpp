@@ -1,21 +1,51 @@
 // app/api/tenants/route.ts
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { getAllTenants } from '@/lib/repositories/tenants';
-import type { AdminTenantRow } from '@/lib/repositories/tenants';
+import { getAllTenants, type AdminTenantRow } from '@/lib/repositories/tenants';
 import { checkRoomAvailability } from '@/lib/repositories/room-occupancy';
+import { getRoomById } from '@/lib/repositories/rooms';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import {
+  ADMIN_BUILDING_DATA_ACCESS_ROLES,
+  getAdminBuildingScopeFromAppRoles,
+  isBuildingIdInScope,
+  resolveAllowedBuildingIdsForListQuery,
+  tenantSearchBuildingClause,
+} from '@/lib/auth/building-scope';
 
 // GET /api/tenants?room_id=1
 // GET /api/tenants?q=keyword   (ค้นหาผู้เช่า)
 export async function GET(req: Request) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
     const { searchParams } = new URL(req.url);
     const roomId = searchParams.get('room_id');
     const q = searchParams.get('q');
 
+    const resolvedListIds = resolveAllowedBuildingIdsForListQuery(scope, null);
+    const allowedForTenants =
+      resolvedListIds === null ? undefined : resolvedListIds;
+
     // โหมดค้นหาผู้เช่าเก่า
     if (q && !roomId) {
       const keyword = `%${q}%`;
+      const tbc = tenantSearchBuildingClause(scope);
+      const scopeTail = tbc ? tbc.clause : '';
+      const scopeParams = tbc ? tbc.params : [];
+      const searchBind = [
+        keyword,
+        keyword,
+        keyword,
+        keyword,
+        keyword,
+        keyword,
+        ...scopeParams,
+      ];
       try {
         // พยายามใช้ first_name_th / last_name_th ก่อน
         const rows = await query(
@@ -58,10 +88,11 @@ export async function GET(req: Request) {
               OR t.email LIKE ?
               OR r_last.room_number LIKE ?
             )
+            ${scopeTail}
           ORDER BY t.tenant_id DESC
           LIMIT 20
         `,
-          [keyword, keyword, keyword, keyword, keyword, keyword]
+          searchBind
         );
         return NextResponse.json(rows);
       } catch (err: any) {
@@ -109,10 +140,11 @@ export async function GET(req: Request) {
                 OR t.email LIKE ?
                 OR r_last.room_number LIKE ?
               )
+              ${scopeTail}
             ORDER BY t.tenant_id DESC
             LIMIT 20
           `,
-            [keyword, keyword, keyword, keyword, keyword, keyword]
+            searchBind
           );
           return NextResponse.json(rows);
         }
@@ -121,7 +153,10 @@ export async function GET(req: Request) {
     }
 
     // โหมดเดิม: ดึงผู้เช่าตาม room_id หรือทั้งหมด
-    const tenants = await getAllTenants(roomId ? Number(roomId) : undefined);
+    const tenants = await getAllTenants(
+      roomId ? Number(roomId) : undefined,
+      allowedForTenants,
+    );
     return NextResponse.json(tenants);
   } catch (error) {
     console.error('Error fetching tenants:', error);
@@ -136,72 +171,158 @@ export async function GET(req: Request) {
 // body: { first_name, last_name, email, phone, room_number, status, move_in_date }
 export async function POST(req: Request) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
     const body = await req.json();
     const {
       first_name,
       last_name,
       email,
       phone,
+      department,
       room_number,
+      room_id: bodyRoomId,
+      building_id: bodyBuildingId,
       status,
       move_in_date,
     } = body;
 
-    if (!first_name || !last_name) {
+    const fn = typeof first_name === 'string' ? first_name.trim() : '';
+    const ln = typeof last_name === 'string' ? last_name.trim() : '';
+    if (!fn || !ln) {
       return NextResponse.json(
         { error: 'first_name และ last_name จำเป็นต้องกรอก' },
         { status: 400 }
       );
     }
 
-    // ถ้ามี room_number ให้หา room_id
+    // หา room_id: ใช้ room_id จาก client เป็นหลัก (กันห้องเลขซ้ำคนละอาคาร)
     let room_id: number | null = null;
-    if (room_number) {
-      const room = await query<{ room_id: number; building_id: number }>(
-        'SELECT room_id, building_id FROM rooms WHERE room_number = ? LIMIT 1',
-        [room_number]
+
+    const rid =
+      bodyRoomId !== undefined && bodyRoomId !== null && bodyRoomId !== ''
+        ? Number(bodyRoomId)
+        : NaN;
+    if (Number.isFinite(rid) && rid > 0) {
+      const byId = await query<{ room_id: number; room_number: string }>(
+        'SELECT room_id, room_number FROM rooms WHERE room_id = ? LIMIT 1',
+        [rid],
       );
+      if (byId.length === 0) {
+        return NextResponse.json(
+          { error: 'ไม่พบห้องที่เลือก (room_id ไม่ถูกต้อง)' },
+          { status: 400 },
+        );
+      }
+      room_id = byId[0].room_id;
+    } else if (room_number !== undefined && room_number !== null && room_number !== '') {
+      const rn = String(room_number).trim();
+      const bid =
+        bodyBuildingId !== undefined &&
+        bodyBuildingId !== null &&
+        bodyBuildingId !== ''
+          ? Number(bodyBuildingId)
+          : NaN;
+      let room: { room_id: number; room_number: string }[];
+      if (Number.isFinite(bid) && bid > 0) {
+        room = await query<{ room_id: number; room_number: string }>(
+          'SELECT room_id, room_number FROM rooms WHERE room_number = ? AND building_id = ? LIMIT 1',
+          [rn, bid],
+        );
+      } else {
+        room = await query<{ room_id: number; room_number: string }>(
+          'SELECT room_id, room_number FROM rooms WHERE room_number = ? LIMIT 1',
+          [rn],
+        );
+      }
       if (room.length === 0) {
         return NextResponse.json(
           { error: 'ไม่พบหมายเลขห้องในระบบ' },
-          { status: 400 }
+          { status: 400 },
         );
       }
       room_id = room[0].room_id;
     }
 
-    // กำหนด status: ถ้าไม่มี room_number ให้เป็น 'pending' (รอเข้าพัก)
-    const tenantStatus = room_number ? (status || 'active') : 'pending';
-
-    // insert tenant
-    let tenant_id: number;
-    try {
-    const result = await query<{ insertId: number }>(
-      `
-      INSERT INTO tenants (first_name_th, last_name_th, email, phone, status, is_deleted)
-      VALUES (?, ?, ?, ?, ?, 0)
-    `,
-      [first_name, last_name, email || null, phone || null, tenantStatus]
-    );
-      tenant_id = (result as any).insertId;
-    } catch (insertErr: any) {
-      // ถ้าไม่มี is_deleted column ให้ลอง insert แบบไม่ใช้คอลัมน์นี้
-      if (insertErr.message?.includes("Unknown column 'is_deleted'")) {
-        const fallbackResult = await query<{ insertId: number }>(
-          `
-          INSERT INTO tenants (first_name_th, last_name_th, email, phone, status)
-          VALUES (?, ?, ?, ?, ?)
-        `,
-          [first_name, last_name, email || null, phone || null, tenantStatus]
+    if (room_id != null) {
+      const roomRow = await getRoomById(room_id);
+      if (!roomRow || !isBuildingIdInScope(roomRow.building_id, scope)) {
+        return NextResponse.json(
+          { error: 'ไม่มีสิทธิ์จัดการห้องหรืออาคารนี้' },
+          { status: 403 },
         );
-        tenant_id = (fallbackResult as any).insertId;
-      } else {
-        throw insertErr;
       }
     }
 
-    // สร้าง contract active ใหม่ (เฉพาะเมื่อมี room_number)
-    if (room_number && room_id && tenantStatus === 'active') {
+    const hasRoom = room_id != null;
+    // กำหนด status: ถ้าไม่มีห้อง ให้เป็น 'pending' (รอเข้าพัก)
+    const tenantStatus = hasRoom ? status || 'active' : 'pending';
+
+    // ฐานข้อมูลบางชุดกำหนด department เป็น NOT NULL — ใช้ '' แทน null เมื่อไม่กรอก
+    const deptForInsert =
+      typeof department === 'string' ? department.trim() : '';
+
+    // insert tenant — ลองหลายรูปแบบตามคอลัมน์ที่มี (department / is_deleted)
+    let tenant_id: number | undefined;
+    const insertAttempts: Array<{ sql: string; params: unknown[] }> = [
+      {
+        sql: `INSERT INTO tenants (first_name_th, last_name_th, email, phone, department, status, is_deleted)
+              VALUES (?, ?, ?, ?, ?, ?, 0)`,
+        params: [fn, ln, email || null, phone || null, deptForInsert, tenantStatus],
+      },
+      {
+        sql: `INSERT INTO tenants (first_name_th, last_name_th, email, phone, status, is_deleted)
+              VALUES (?, ?, ?, ?, ?, 0)`,
+        params: [fn, ln, email || null, phone || null, tenantStatus],
+      },
+      {
+        sql: `INSERT INTO tenants (first_name_th, last_name_th, email, phone, department, status)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+        params: [fn, ln, email || null, phone || null, deptForInsert, tenantStatus],
+      },
+      {
+        sql: `INSERT INTO tenants (first_name_th, last_name_th, email, phone, status)
+              VALUES (?, ?, ?, ?, ?)`,
+        params: [fn, ln, email || null, phone || null, tenantStatus],
+      },
+    ];
+
+    let insertError: unknown;
+    for (const attempt of insertAttempts) {
+      try {
+        const result = await query(attempt.sql, attempt.params);
+        const header = result as unknown as { insertId?: number };
+        const insId = Number(header?.insertId);
+        if (Number.isFinite(insId) && insId > 0) {
+          tenant_id = insId;
+          insertError = undefined;
+          break;
+        }
+      } catch (e: unknown) {
+        insertError = e;
+        const err = e as { code?: string; errno?: number; message?: string };
+        const isBadColumn =
+          err?.code === 'ER_BAD_FIELD_ERROR' ||
+          err?.errno === 1054 ||
+          err?.message?.includes('Unknown column');
+        if (isBadColumn) {
+          continue;
+        }
+        throw e;
+      }
+    }
+    if (tenant_id == null) {
+      throw insertError instanceof Error
+        ? insertError
+        : new Error('ไม่สามารถบันทึกผู้เช่าได้');
+    }
+
+    // สร้าง contract active ใหม่ (เฉพาะเมื่อมีห้องและสถานะ active)
+    if (hasRoom && room_id && tenantStatus === 'active') {
       try {
         // ตรวจสอบว่าห้องสามารถเพิ่มผู้เข้าพักได้หรือไม่
         const availability = await checkRoomAvailability(room_id);

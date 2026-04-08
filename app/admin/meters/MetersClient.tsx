@@ -90,6 +90,7 @@ export default function MetersClient({
   
   const [monthValue, setMonthValue] = useState<string>(initialMonthValue); // Format: "YYYY-MM" (ค.ศ.) - เริ่มต้นด้วยเดือนปัจจุบัน
   const [selectedCycleId, setSelectedCycleId] = useState<number | ''>('');
+  const [selectedBuildingId, setSelectedBuildingId] = useState<number | ''>(''); // '' = ทุกอาคาร
   const [selectedFloor, setSelectedFloor] = useState<number | ''>(''); // เปลี่ยนจาก selectedRoomId เป็น selectedFloor
   const [showRoomsWithZeroUsageWater, setShowRoomsWithZeroUsageWater] = useState<boolean>(false); // แสดงห้องที่มีหน่วยใช้งานน้ำ = 0
   const [showRoomsWithZeroUsageElectric, setShowRoomsWithZeroUsageElectric] = useState<boolean>(false); // แสดงห้องที่มีหน่วยใช้งานไฟฟ้า = 0
@@ -210,16 +211,48 @@ export default function MetersClient({
     });
   };
 
-  // สร้างรายการชั้นจาก rooms
+  // รายการอาคาร (จากห้องที่โหลดมา)
+  const buildingOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    initialRooms.forEach((room) => {
+      if (room.building_id != null) {
+        map.set(room.building_id, room.building_name || `อาคาร #${room.building_id}`);
+      }
+    });
+    return Array.from(map.entries()).sort((a, b) =>
+      String(a[1]).localeCompare(String(b[1]), 'th'),
+    );
+  }, [initialRooms]);
+
+  // room_id ที่อยู่ในอาคารที่เลือก (ใช้กรอง readings)
+  const roomIdsInSelectedBuilding = useMemo(() => {
+    if (selectedBuildingId === '') {
+      return null;
+    }
+    const set = new Set<number>();
+    initialRooms.forEach((room) => {
+      if (room.building_id === selectedBuildingId) {
+        set.add(room.room_id);
+      }
+    });
+    return set;
+  }, [initialRooms, selectedBuildingId]);
+
+  // สร้างรายการชั้นจาก rooms (ถ้าเลือกอาคารแล้ว ให้ชั้นเฉพาะในอาคารนั้น)
   const floorOptions = useMemo(() => {
     const floors = new Set<number>();
     initialRooms.forEach((room) => {
-      if (room.floor_no != null) {
-        floors.add(room.floor_no);
+      if (room.floor_no == null) return;
+      if (
+        selectedBuildingId !== '' &&
+        room.building_id !== selectedBuildingId
+      ) {
+        return;
       }
+      floors.add(room.floor_no);
     });
     return Array.from(floors).sort((a, b) => a - b);
-  }, [initialRooms]);
+  }, [initialRooms, selectedBuildingId]);
 
   // Filter readings ตามที่เลือก
   const filteredReadings = useMemo(() => {
@@ -237,13 +270,28 @@ export default function MetersClient({
       filtered = [];
     }
 
+    // Filter ตามอาคาร (จาก room_id)
+    if (roomIdsInSelectedBuilding) {
+      filtered = filtered.filter((r) =>
+        roomIdsInSelectedBuilding.has(r.room_id),
+      );
+    }
+
     // Filter ตามชั้น (แทนที่จะเป็นห้อง)
     if (selectedFloor !== '') {
       filtered = filtered.filter((r) => r.floor_no === selectedFloor);
     }
 
     return filtered;
-  }, [initialReadings, selectedCycleId, selectedFloor, showRoomsWithZeroUsageWater, showRoomsWithZeroUsageElectric]);
+  }, [
+    initialReadings,
+    selectedCycleId,
+    selectedFloor,
+    selectedBuildingId,
+    roomIdsInSelectedBuilding,
+    showRoomsWithZeroUsageWater,
+    showRoomsWithZeroUsageElectric,
+  ]);
 
   // จัดกลุ่มตามห้องและรอบบิล
   const groupedReadings = useMemo(() => {
@@ -423,7 +471,7 @@ export default function MetersClient({
           <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-4">
             🔍 กรองข้อมูล
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 📅 เลือกรอบบิล (เดือน/ปี)
@@ -459,6 +507,57 @@ export default function MetersClient({
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
+                อาคาร
+              </label>
+              <div
+                className="bg-white rounded-lg border border-gray-200 shadow-sm px-2 pt-2"
+                role="tablist"
+                aria-label="เลือกอาคาร"
+              >
+                <div className="overflow-x-auto pb-2">
+                  <div className="flex flex-nowrap gap-1 min-w-0">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={selectedBuildingId === ''}
+                      onClick={() => {
+                        if (selectedBuildingId === '') return;
+                        setSelectedBuildingId('');
+                        setSelectedFloor('');
+                      }}
+                      className={`shrink-0 px-3 py-2 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+                        selectedBuildingId === ''
+                          ? 'border-blue-600 text-blue-800 bg-blue-50/90'
+                          : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                      }`}
+                    >
+                      ทุกอาคาร
+                    </button>
+                    {buildingOptions.map(([id, name]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        role="tab"
+                        aria-selected={String(selectedBuildingId) === String(id)}
+                        onClick={() => {
+                          setSelectedBuildingId(id);
+                          setSelectedFloor('');
+                        }}
+                        className={`shrink-0 px-3 py-2 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+                          String(selectedBuildingId) === String(id)
+                            ? 'border-slate-700 text-slate-900 bg-slate-100'
+                            : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                        }`}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
                 ชั้น
               </label>
               <select
@@ -474,7 +573,7 @@ export default function MetersClient({
                 ))}
               </select>
             </div>
-            <div className="space-y-2">
+            <div className="flex flex-col gap-3 sm:col-span-2 xl:col-span-2">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"

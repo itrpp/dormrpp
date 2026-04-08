@@ -1,13 +1,48 @@
 // app/api/tenants/[tenantId]/route.ts
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { query, queryOne } from '@/lib/db';
 import type { AdminTenantRow } from '@/lib/repositories/tenants';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import {
+  ADMIN_BUILDING_DATA_ACCESS_ROLES,
+  getAdminBuildingScopeFromAppRoles,
+  type AdminBuildingScope,
+} from '@/lib/auth/building-scope';
 
 type Params = { params: { tenantId: string } };
 
+async function assertTenantInAppBuildingScope(
+  tenantId: number,
+  scope: AdminBuildingScope,
+): Promise<boolean> {
+  if (scope.kind === 'all') return true;
+  const active = await queryOne<{ building_id: number }>(
+    `SELECT r.building_id FROM contracts c
+     JOIN rooms r ON c.room_id = r.room_id
+     WHERE c.tenant_id = ? AND c.status = 'active'
+     LIMIT 1`,
+    [tenantId],
+  );
+  if (!active) return true;
+  return scope.buildingIds.includes(active.building_id);
+}
+
 export async function PUT(req: Request, { params }: Params) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
     const tenantId = Number(params.tenantId);
+
+    if (!(await assertTenantInAppBuildingScope(tenantId, scope))) {
+      return NextResponse.json(
+        { error: 'ไม่มีสิทธิ์แก้ไขผู้เช่าของอาคารนี้' },
+        { status: 403 },
+      );
+    }
     const body = await req.json();
     const {
       first_name,
@@ -158,7 +193,20 @@ export async function PUT(req: Request, { params }: Params) {
 
 export async function DELETE(req: Request, { params }: Params) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
     const tenantId = Number(params.tenantId);
+
+    if (!(await assertTenantInAppBuildingScope(tenantId, scope))) {
+      return NextResponse.json(
+        { error: 'ไม่มีสิทธิ์ลบผู้เช่าของอาคารนี้' },
+        { status: 403 },
+      );
+    }
 
     // soft delete
     try {

@@ -32,6 +32,7 @@ type TenantForm = {
   last_name: string;
   email: string;
   phone: string;
+  department: string;
   start_date: string; // yyyy-mm-dd
   notes: string;
 };
@@ -68,6 +69,7 @@ export default function AddTenantClient() {
 
   const initialRoomIdParam = searchParams.get('room_id');
   const initialRoomId = initialRoomIdParam ? Number(initialRoomIdParam) : null;
+  const initialBuildingIdParam = searchParams.get('building_id');
   const [initializedFromRoom, setInitializedFromRoom] = useState(false);
   const [buildings, setBuildings] = useState<Building[]>([]);
   const [selectedBuildingId, setSelectedBuildingId] = useState<string>('all');
@@ -92,6 +94,7 @@ export default function AddTenantClient() {
     last_name: '',
     email: '',
     phone: '',
+    department: '',
     start_date: new Date().toISOString().slice(0, 10),
     notes: '',
   });
@@ -135,6 +138,27 @@ export default function AddTenantClient() {
 
     initFromRoom();
   }, [initialRoomId, initializedFromRoom]);
+
+  // ถ้าไม่มี room_id แต่มี building_id จาก query ให้ตั้งค่าอาคาร/ชั้นเริ่มต้น
+  useEffect(() => {
+    if (initialRoomId) return;
+    if (!initialBuildingIdParam) return;
+
+    const raw = String(initialBuildingIdParam);
+    if (raw === 'all') {
+      setSelectedBuildingId('all');
+      setSelectedFloor('all');
+      setSelectedRoomId(null);
+      return;
+    }
+
+    const buildingIdNum = Number(raw);
+    if (!Number.isFinite(buildingIdNum)) return;
+
+    setSelectedBuildingId(String(buildingIdNum));
+    setSelectedFloor('all');
+    setSelectedRoomId(null);
+  }, [initialRoomId, initialBuildingIdParam]);
 
   // ดึงข้อมูลห้องตามอาคารและชั้น
   useEffect(() => {
@@ -376,11 +400,15 @@ export default function AddTenantClient() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            first_name: form.first_name,
-            last_name: form.last_name,
+            first_name: form.first_name.trim(),
+            last_name: form.last_name.trim(),
             email: form.email || null,
             phone: form.phone || null,
-            room_number: selectedRoom?.room_number || null, // null ถ้าไม่เลือกห้อง
+            department: form.department.trim() || null,
+            // ส่ง room_id เป็นหลัก เพื่อกันกรณีเลขห้องซ้ำกันคนละอาคาร
+            room_id: selectedRoom?.room_id ?? null,
+            room_number: selectedRoom?.room_number ?? null,
+            building_id: selectedRoom?.building_id ?? null,
             status: selectedRoom ? 'active' : 'pending', // 'pending' ถ้าไม่เลือกห้อง
             move_in_date: form.start_date || new Date().toISOString().slice(0, 10),
           }),
@@ -832,6 +860,20 @@ export default function AddTenantClient() {
                     className="w-full border rounded-md px-3 py-2 text-sm"
                     value={mode === 'new' ? form.email : selectedTenant?.email || ''}
                     onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    disabled={mode === 'existing'}
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    หน่วยงาน
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    placeholder="เช่น การพยาบาล ,คณะแพทยศาสตร์"
+                    value={mode === 'new' ? form.department : ''}
+                    onChange={(e) => setForm({ ...form, department: e.target.value })}
                     disabled={mode === 'existing'}
                   />
                 </div>

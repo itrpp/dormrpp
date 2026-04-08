@@ -86,10 +86,21 @@ export interface RoomWithDetails {
   is_deleted?: number | null; // 0 = เปิดใช้งาน, 1 = ปิดใช้งาน
 }
 
-export async function getAllRooms(buildingId?: number): Promise<RoomWithDetails[]> {
+/**
+ * @param buildingId กรองห้องตามอาคารเดียว (จาก query)
+ * @param restrictToBuildingIds จำกัดสิทธิ์ superuser รายอาคาร — ต้องอยู่ในชุดนี้
+ */
+export async function getAllRooms(
+  buildingId?: number,
+  restrictToBuildingIds?: number[],
+): Promise<RoomWithDetails[]> {
   // ตรวจสอบและสร้างคอลัมน์ is_deleted ถ้ายังไม่มี
   await ensureIsDeletedColumn();
-  
+
+  if (restrictToBuildingIds && restrictToBuildingIds.length === 0) {
+    return [];
+  }
+
   let sql = `
     SELECT r.room_id, r.room_number, r.floor_no, r.status,
            r.building_id,
@@ -100,11 +111,23 @@ export async function getAllRooms(buildingId?: number): Promise<RoomWithDetails[
     JOIN buildings b ON r.building_id = b.building_id
     WHERE COALESCE(r.is_deleted, 0) = 0
   `;
-  const params: any[] = [];
+  const params: unknown[] = [];
 
-  if (buildingId) {
+  if (restrictToBuildingIds && restrictToBuildingIds.length > 0) {
+    if (buildingId != null && Number.isFinite(buildingId)) {
+      if (!restrictToBuildingIds.includes(Number(buildingId))) {
+        return [];
+      }
+      sql += ' AND r.building_id = ?';
+      params.push(Number(buildingId));
+    } else {
+      const ph = restrictToBuildingIds.map(() => '?').join(',');
+      sql += ` AND r.building_id IN (${ph})`;
+      params.push(...restrictToBuildingIds);
+    }
+  } else if (buildingId != null && Number.isFinite(buildingId)) {
     sql += ' AND r.building_id = ?';
-    params.push(buildingId);
+    params.push(Number(buildingId));
   }
 
   sql += ' ORDER BY b.building_id, r.floor_no, r.room_number';

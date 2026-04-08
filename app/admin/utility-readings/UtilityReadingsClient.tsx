@@ -68,11 +68,15 @@ export default function UtilityReadingsClient() {
   const [month, setMonth] = useState(beMonth); // เดือน (1-12)
   const [cycleId, setCycleId] = useState<number | null>(null);
   const [rooms, setRooms] = useState<Room[]>([]);
+  // ห้องที่ผู้ใช้เลือกเพื่อ "บันทึก/จำ" (จะใช้ดึงเลขเดิม/เลขที่บันทึกแล้วเฉพาะห้องนี้)
+  const [rememberedRoomIds, setRememberedRoomIds] = useState<number[]>([]);
   const [isLoadingRooms, setIsLoadingRooms] = useState(false);
   const [isLoadingCycle, setIsLoadingCycle] = useState(false);
   const [roomForms, setRoomForms] = useState<Map<number, RoomReadingForm>>(new Map());
   const [isSaving, setIsSaving] = useState(false);
   const [savedReadings, setSavedReadings] = useState<UtilityReading[]>([]);
+  const [selectedBuildingId, setSelectedBuildingId] = useState<number | ''>(''); // '' = ทุกอาคาร
+  const deepLinkBuildingApplied = useRef(false);
 
   // State สำหรับ checkbox เติมค่าเริ่มต้นจากเลขเดิม
   const [autoFillFromPrevious, setAutoFillFromPrevious] = useState(false);
@@ -97,6 +101,73 @@ export default function UtilityReadingsClient() {
   
   // State สำหรับตรวจสอบว่าออกบิลแล้วหรือยัง
   const [hasBills, setHasBills] = useState(false);
+
+  const buildingOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    rooms.forEach((room) => {
+      map.set(room.building_id, room.building_name || `อาคาร #${room.building_id}`);
+    });
+    return Array.from(map.entries()).sort((a, b) =>
+      String(a[1]).localeCompare(String(b[1]), 'th'),
+    );
+  }, [rooms]);
+
+  const roomsInSelectedBuilding = useMemo(() => {
+    if (selectedBuildingId === '') return rooms;
+    return rooms.filter((r) => r.building_id === selectedBuildingId);
+  }, [rooms, selectedBuildingId]);
+
+  const displayRooms = useMemo(() => {
+    // ถ้ายังไม่ได้เลือกห้อง ระบบจะไม่ดึงข้อมูลเลขเดิม/เลขที่บันทึกแล้วให้ (ลดความช้า)
+    if (rememberedRoomIds.length === 0) return [];
+    const selectedSet = new Set(rememberedRoomIds);
+    return roomsInSelectedBuilding.filter((r) => selectedSet.has(r.room_id));
+  }, [roomsInSelectedBuilding, rememberedRoomIds]);
+
+  const displayRoomIdsKey = useMemo(() => {
+    return displayRooms.map((r) => r.room_id).sort((a, b) => a - b).join(',');
+  }, [displayRooms]);
+
+  // โหลดค่าที่ "จำไว้" (เฉพาะห้องในอาคารที่เลือก) จาก localStorage
+  useEffect(() => {
+    if (!cycleId) return;
+    if (rooms.length === 0) return;
+
+    const storageKey = `utilityReadings.rememberedRoomIds.v1.${selectedBuildingId === '' ? 'all' : String(selectedBuildingId)}`;
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      if (!raw) {
+        setRememberedRoomIds([]);
+        return;
+      }
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) {
+        setRememberedRoomIds([]);
+        return;
+      }
+      const allowedIds = new Set(roomsInSelectedBuilding.map((r) => r.room_id));
+      const next = parsed
+        .map((v) => Number(v))
+        .filter((n) => Number.isFinite(n) && allowedIds.has(n));
+      setRememberedRoomIds(Array.from(new Set(next)));
+    } catch {
+      setRememberedRoomIds([]);
+    }
+  }, [cycleId, selectedBuildingId, rooms.length, roomsInSelectedBuilding]);
+
+  // บันทึกค่าที่ผู้ใช้เลือกไว้
+  useEffect(() => {
+    if (!cycleId) return;
+    const storageKey = `utilityReadings.rememberedRoomIds.v1.${selectedBuildingId === '' ? 'all' : String(selectedBuildingId)}`;
+    try {
+      window.localStorage.setItem(
+        storageKey,
+        JSON.stringify(Array.from(new Set(rememberedRoomIds)).sort((a, b) => a - b))
+      );
+    } catch {
+      // ignore write errors
+    }
+  }, [rememberedRoomIds, selectedBuildingId, cycleId]);
 
   // แปลง month value (ค.ศ.) เป็น year และ month (พ.ศ.)
   useEffect(() => {
@@ -155,99 +226,7 @@ export default function UtilityReadingsClient() {
     }
   }, [year, month]);
 
-  // ดึงข้อมูลห้องที่มี active contracts
-  useEffect(() => {
-    const fetchRooms = async () => {
-      setIsLoadingRooms(true);
-      try {
-        const res = await fetch('/api/rooms');
-        if (res.ok) {
-          const data = await res.json();
-          // กรองเฉพาะห้องที่มี active contracts
-          const roomsWithContracts = await Promise.all(
-            data.map(async (room: Room) => {
-              const contractsRes = await fetch(`/api/contracts?room_id=${room.room_id}&status=active`);
-              if (contractsRes.ok) {
-                const contracts = await contractsRes.json();
-                return contracts.length > 0 ? room : null;
-              }
-              return null;
-            })
-          );
-          const filteredRooms = roomsWithContracts.filter((r: Room | null) => r !== null);
-          setRooms(filteredRooms);
-
-          // สร้าง form สำหรับแต่ละห้อง
-          const forms = new Map<number, RoomReadingForm>();
-          
-          // ดึงข้อมูลเลขเก่าทั้งหมดในครั้งเดียว (batch query)
-          const roomIds = filteredRooms.map(r => r.room_id);
-          const allPreviousReadings = await fetchPreviousReadingsBatch(roomIds, cycleId);
-          
-          for (const room of filteredRooms) {
-            const previousReadings = allPreviousReadings[room.room_id] || { electric: null, water: null };
-            forms.set(room.room_id, {
-              room_id: room.room_id,
-              electric: {
-                meter_start: '',
-                meter_end: '',
-                previous_end: previousReadings.electric,
-              },
-              water: {
-                meter_start: '',
-                meter_end: '',
-                previous_end: previousReadings.water,
-              },
-            });
-          }
-          setRoomForms(forms);
-        }
-      } catch (error) {
-        console.error('Error fetching rooms:', error);
-      } finally {
-        setIsLoadingRooms(false);
-      }
-    };
-    if (cycleId) {
-      fetchRooms();
-    }
-  }, [cycleId]);
-
-  // ดึงข้อมูล readings ที่บันทึกแล้วสำหรับรอบบิลนี้
-  useEffect(() => {
-    const fetchSavedReadings = async () => {
-      if (!cycleId) return;
-      try {
-        const res = await fetch(`/api/utility-readings?cycle_id=${cycleId}`);
-        if (res.ok) {
-          const data = await res.json();
-          setSavedReadings(data);
-
-          // อัปเดต form ด้วยข้อมูลที่บันทึกแล้ว
-          const forms = new Map(roomForms);
-          data.forEach((reading: UtilityReading) => {
-            const form = forms.get(reading.room_id);
-            if (form) {
-              if (reading.utility_code === 'electric') {
-                form.electric.meter_start = reading.meter_start;
-                form.electric.meter_end = reading.meter_end;
-              } else if (reading.utility_code === 'water') {
-                form.water.meter_start = reading.meter_start;
-                form.water.meter_end = reading.meter_end;
-              }
-              forms.set(reading.room_id, form);
-            }
-          });
-          setRoomForms(forms);
-        }
-      } catch (error) {
-        console.error('Error fetching saved readings:', error);
-      }
-    };
-    if (cycleId && rooms.length > 0) {
-      fetchSavedReadings();
-    }
-  }, [cycleId, rooms.length]);
+  // หมายเหตุ: ดึงเลขเดิม/เลขที่บันทึกแล้ว จะถูกทำใน effect ที่อ้างอิง "ห้องที่ผู้ใช้เลือก" เท่านั้น
 
   // ดึงสถานะรูปภาพและตรวจสอบว่าออกบิลแล้วหรือยัง
   useEffect(() => {
@@ -259,6 +238,9 @@ export default function UtilityReadingsClient() {
       }
 
       try {
+        const roomIdsParam =
+          displayRooms.length > 0 ? displayRooms.map((r) => r.room_id).join(',') : '';
+
         // ตรวจสอบว่ามีบิลในรอบบิลนี้หรือไม่
         const billsRes = await fetch(`/api/bills/detailed?year=${year}&month=${month}`);
         if (billsRes.ok) {
@@ -266,7 +248,13 @@ export default function UtilityReadingsClient() {
           setHasBills(bills && bills.length > 0);
         }
 
-        // ดึงรูปภาพทั้งหมดในรอบบิลนี้
+        // ถ้าไม่มีห้องที่ผู้ใช้เลือก ให้ไม่ต้องดึงรูปภาพ
+        if (!roomIdsParam) {
+          setPhotoStatus(new Map());
+          return;
+        }
+
+        // ดึงรูปภาพเฉพาะห้องที่ผู้ใช้เลือกในรอบบิลนี้
         const statusMap = new Map<string, {
           photo_id: number;
           bill_id: number | null;
@@ -276,7 +264,7 @@ export default function UtilityReadingsClient() {
         // ดึงรูปภาพไฟฟ้า
         try {
           const electricRes = await fetch(
-            `/api/meter-photos?year=${year}&month=${month}&utility_type=electric`
+            `/api/meter-photos?year=${year}&month=${month}&utility_type=electric&room_ids=${roomIdsParam}`
           );
           if (electricRes.ok) {
             const electricPhotos = await electricRes.json();
@@ -296,7 +284,7 @@ export default function UtilityReadingsClient() {
         // ดึงรูปภาพน้ำ
         try {
           const waterRes = await fetch(
-            `/api/meter-photos?year=${year}&month=${month}&utility_type=water`
+            `/api/meter-photos?year=${year}&month=${month}&utility_type=water&room_ids=${roomIdsParam}`
           );
           if (waterRes.ok) {
             const waterPhotos = await waterRes.json();
@@ -322,13 +310,43 @@ export default function UtilityReadingsClient() {
     };
 
     fetchPhotoStatusAndBills();
-  }, [cycleId, year, month]);
+  }, [cycleId, year, month, displayRoomIdsKey]);
+
+  useEffect(() => {
+    deepLinkBuildingApplied.current = false;
+  }, [targetRoomIdParam]);
+
+  useEffect(() => {
+    deepLinkBuildingApplied.current = false;
+    hasAutoFocused.current = false;
+  }, [year, month]);
+
+  // ถ้าเปิดจากลิงก์ ?room_id= ให้เลือกอาคารของห้องนั้นเพื่อให้แถวปรากฏในตาราง
+  useEffect(() => {
+    if (!targetRoomId || rooms.length === 0 || deepLinkBuildingApplied.current) {
+      return;
+    }
+    const room = rooms.find((r) => r.room_id === targetRoomId);
+    if (room) {
+      setSelectedBuildingId(room.building_id);
+      // ทำให้ผู้ใช้เปิดจากลิงก์ ?room_id= แล้วห้องนั้นถูกติ๊กเลือกทันที
+      const storageKey = `utilityReadings.rememberedRoomIds.v1.${String(room.building_id)}`;
+      try {
+        window.localStorage.setItem(storageKey, JSON.stringify([room.room_id]));
+      } catch {
+        // ignore
+      }
+      setRememberedRoomIds([room.room_id]);
+      deepLinkBuildingApplied.current = true;
+    }
+  }, [targetRoomId, rooms]);
 
   // โฟกัสและเลื่อนจอไปยังห้องที่ส่งมาจาก query string (room_id)
   useEffect(() => {
     if (hasAutoFocused.current) return;
     if (!targetRoomId) return;
-    if (rooms.length === 0) return;
+    if (displayRooms.length === 0) return;
+    if (!displayRooms.some((r) => r.room_id === targetRoomId)) return;
 
     // รอให้ DOM เรนเดอร์ก่อนโฟกัส
     const timer = setTimeout(() => {
@@ -347,7 +365,7 @@ export default function UtilityReadingsClient() {
     }, 200);
 
     return () => clearTimeout(timer);
-  }, [rooms.length, targetRoomId]);
+  }, [displayRooms, targetRoomId]);
 
   // ดึงเลขมิเตอร์ล่าสุดจากรอบก่อนหน้ารอบบิลปัจจุบัน (สำหรับห้องเดียว - backward compatible)
   const fetchPreviousReadings = async (roomId: number, currentCycleId: number | null): Promise<{ electric: number | null; water: number | null }> => {
@@ -398,6 +416,80 @@ export default function UtilityReadingsClient() {
     }
   };
 
+  // ดึงเลขมิเตอร์ก่อนหน้า + เลขที่บันทึกแล้ว เฉพาะ "ห้องที่ผู้ใช้เลือก" (displayRooms)
+  useEffect(() => {
+    const loadRoomFormsForSelection = async () => {
+      if (!cycleId) return;
+
+      if (displayRooms.length === 0) {
+        setRoomForms(new Map());
+        setSavedReadings([]);
+        return;
+      }
+
+      setIsLoadingRooms(true);
+      try {
+        const roomIds = displayRooms.map((r) => r.room_id);
+
+        const allPreviousReadings = await fetchPreviousReadingsBatch(roomIds, cycleId);
+
+        const forms = new Map<number, RoomReadingForm>();
+        for (const room of displayRooms) {
+          const previousReadings =
+            allPreviousReadings[room.room_id] || { electric: null, water: null };
+
+          forms.set(room.room_id, {
+            room_id: room.room_id,
+            electric: {
+              meter_start: '',
+              meter_end: '',
+              previous_end: previousReadings.electric,
+            },
+            water: {
+              meter_start: '',
+              meter_end: '',
+              previous_end: previousReadings.water,
+            },
+          });
+        }
+
+        // ดึงเลขที่บันทึกแล้วเฉพาะห้องที่เลือก
+        const roomIdsParam = roomIds.join(',');
+        const readingsRes = await fetch(
+          `/api/utility-readings?cycle_id=${cycleId}&room_ids=${roomIdsParam}`
+        );
+        const readingsData: UtilityReading[] = readingsRes.ok
+          ? await readingsRes.json()
+          : [];
+        setSavedReadings(readingsData);
+
+        readingsData.forEach((reading) => {
+          const form = forms.get(reading.room_id);
+          if (!form) return;
+
+          if (reading.utility_code === 'electric') {
+            form.electric.meter_start = reading.meter_start;
+            form.electric.meter_end = reading.meter_end;
+          } else if (reading.utility_code === 'water') {
+            form.water.meter_start = reading.meter_start;
+            form.water.meter_end = reading.meter_end;
+          }
+        });
+
+        setRoomForms(forms);
+      } catch (error) {
+        console.error('Error loading room forms:', error);
+        setRoomForms(new Map());
+        setSavedReadings([]);
+      } finally {
+        setIsLoadingRooms(false);
+      }
+    };
+
+    loadRoomFormsForSelection();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cycleId, displayRoomIdsKey]);
+
   // อัปเดต form
   const updateForm = (roomId: number, field: 'electric' | 'water', subField: 'meter_start' | 'meter_end', value: number | '') => {
     const forms = new Map(roomForms);
@@ -409,10 +501,12 @@ export default function UtilityReadingsClient() {
     }
   };
 
-  // เติมค่าเริ่มต้นจากเลขเดิมทั้งหมด
+  // เติมค่าเริ่มต้นจากเลขเดิม — เฉพาะห้องที่แสดง (ตามฟิลเตอร์อาคาร)
   const fillAllFromPrevious = () => {
     const forms = new Map(roomForms);
-    forms.forEach((form, roomId) => {
+    displayRooms.forEach((room) => {
+      const form = forms.get(room.room_id);
+      if (!form) return;
       // เติมค่าไฟฟ้า (เฉพาะที่ยังว่างอยู่)
       if (form.electric.previous_end !== null && form.electric.meter_start === '') {
         form.electric.meter_start = form.electric.previous_end;
@@ -421,7 +515,7 @@ export default function UtilityReadingsClient() {
       if (form.water.previous_end !== null && form.water.meter_start === '') {
         form.water.meter_start = form.water.previous_end;
       }
-      forms.set(roomId, form);
+      forms.set(room.room_id, form);
     });
     setRoomForms(forms);
   };
@@ -494,7 +588,9 @@ export default function UtilityReadingsClient() {
 
       alert('บันทึกเลขมิเตอร์สำเร็จ');
       // Refresh saved readings
-      const readingsRes = await fetch(`/api/utility-readings?cycle_id=${cycleId}`);
+      const readingsRes = await fetch(
+        `/api/utility-readings?cycle_id=${cycleId}&room_ids=${roomId}`
+      );
       if (readingsRes.ok) {
         const data = await readingsRes.json();
         setSavedReadings(data);
@@ -512,10 +608,13 @@ export default function UtilityReadingsClient() {
       return;
     }
 
-    // ตรวจสอบ validation ก่อนบันทึกทั้งหมด
+    const visibleRoomIds = new Set(displayRooms.map((r) => r.room_id));
+
+    // ตรวจสอบ validation ก่อนบันทึกทั้งหมด (เฉพาะห้องที่แสดง)
     const errors: string[] = [];
     roomForms.forEach((form, roomId) => {
-      const room = rooms.find(r => r.room_id === roomId);
+      if (!visibleRoomIds.has(roomId)) return;
+      const room = rooms.find((r) => r.room_id === roomId);
       const roomLabel = room ? `${room.building_name} - ห้อง ${room.room_number}` : `ห้อง ${roomId}`;
 
       // ค่าไฟฟ้า: อนุญาตให้ end < start ได้ (กรณี rollover) จึงไม่ตรวจ error ที่นี่
@@ -539,6 +638,7 @@ export default function UtilityReadingsClient() {
       const promises: Promise<any>[] = [];
       
       roomForms.forEach((form, roomId) => {
+        if (!visibleRoomIds.has(roomId)) return;
         const payload: any = {
           cycle_id: cycleId,
           room_id: roomId,
@@ -573,7 +673,10 @@ export default function UtilityReadingsClient() {
       alert('บันทึกเลขมิเตอร์ทั้งหมดสำเร็จ');
       
       // Refresh saved readings
-      const readingsRes = await fetch(`/api/utility-readings?cycle_id=${cycleId}`);
+      const visibleRoomIdsParam = Array.from(visibleRoomIds).join(',');
+      const readingsRes = await fetch(
+        `/api/utility-readings?cycle_id=${cycleId}&room_ids=${visibleRoomIdsParam}`
+      );
       if (readingsRes.ok) {
         const data = await readingsRes.json();
         setSavedReadings(data);
@@ -615,131 +718,27 @@ export default function UtilityReadingsClient() {
         if (cycleData.cycle_id) {
           setCycleId(cycleData.cycle_id);
           
-          // ดึง rooms ใหม่
+          // ดึง rooms ใหม่ (เฉพาะห้องที่มี active contracts เท่านั้น)
           const roomsRes = await fetch('/api/rooms');
           if (roomsRes.ok) {
-            const roomsData = await roomsRes.json();
-            
-            // จำกัดจำนวน concurrent requests เพื่อป้องกัน "Too many connections"
-            // ใช้ sequential requests แทน Promise.all สำหรับ contracts
-            const roomsWithContracts: (Room | null)[] = [];
-            for (const room of roomsData) {
-              try {
-                const contractsRes = await fetch(`/api/contracts?room_id=${room.room_id}&status=active`);
-                if (contractsRes.ok) {
-                  const contracts = await contractsRes.json();
-                  roomsWithContracts.push(contracts.length > 0 ? room : null);
-                } else {
-                  roomsWithContracts.push(null);
-                }
-              } catch (error) {
-                // Silent fallback
-                roomsWithContracts.push(null);
-              }
-            }
-            
-            const filteredRooms = roomsWithContracts.filter((r: Room | null) => r !== null);
-            setRooms(filteredRooms);
+            const roomsData = (await roomsRes.json()) as Room[];
+            const candidateRoomIds = roomsData.map((r) => r.room_id);
 
-            // สร้าง form สำหรับแต่ละห้อง
-            const forms = new Map<number, RoomReadingForm>();
-            const roomIds = filteredRooms.map(r => r.room_id);
-            const allPreviousReadings = await fetchPreviousReadingsBatch(roomIds, cycleData.cycle_id);
-            
-            for (const room of filteredRooms) {
-              const previousReadings = allPreviousReadings[room.room_id] || { electric: null, water: null };
-              forms.set(room.room_id, {
-                room_id: room.room_id,
-                electric: {
-                  meter_start: '',
-                  meter_end: '',
-                  previous_end: previousReadings.electric,
-                },
-                water: {
-                  meter_start: '',
-                  meter_end: '',
-                  previous_end: previousReadings.water,
-                },
-              });
-            }
-            setRoomForms(forms);
-
-            // ดึง readings ที่บันทึกแล้ว
-            const readingsRes = await fetch(`/api/utility-readings?cycle_id=${cycleData.cycle_id}`);
-            if (readingsRes.ok) {
-              const readingsData = await readingsRes.json();
-              setSavedReadings(readingsData);
-
-              // อัปเดต form ด้วยข้อมูลที่บันทึกแล้ว
-              readingsData.forEach((reading: UtilityReading) => {
-                const form = forms.get(reading.room_id);
-                if (form) {
-                  if (reading.utility_code === 'electric') {
-                    form.electric.meter_start = reading.meter_start;
-                    form.electric.meter_end = reading.meter_end;
-                  } else if (reading.utility_code === 'water') {
-                    form.water.meter_start = reading.meter_start;
-                    form.water.meter_end = reading.meter_end;
-                  }
-                  forms.set(reading.room_id, form);
-                }
-              });
-              setRoomForms(forms);
-            }
-
-            // ดึงสถานะรูปภาพและตรวจสอบบิล
-            const billsRes = await fetch(`/api/bills/detailed?year=${year}&month=${month}`);
-            if (billsRes.ok) {
-              const bills = await billsRes.json();
-              setHasBills(bills && bills.length > 0);
-            }
-
-            // ดึงรูปภาพทั้งหมด
-            const statusMap = new Map<string, {
-              photo_id: number;
-              bill_id: number | null;
-              meter_value: number;
-            }>();
-
-            try {
-              const electricRes = await fetch(
-                `/api/meter-photos?year=${year}&month=${month}&utility_type=electric`
+            if (candidateRoomIds.length > 0) {
+              const roomIdsParam = candidateRoomIds.join(',');
+              const contractsRes = await fetch(
+                `/api/contracts?status=active&room_ids=${roomIdsParam}`
               );
-              if (electricRes.ok) {
-                const electricPhotos = await electricRes.json();
-                electricPhotos.forEach((photo: any) => {
-                  const key = `${photo.room_id}-electric`;
-                  statusMap.set(key, {
-                    photo_id: photo.photo_id,
-                    bill_id: photo.bill_id,
-                    meter_value: photo.meter_value,
-                  });
-                });
-              }
-            } catch (error) {
-              console.error('Error fetching electric photos:', error);
-            }
-
-            try {
-              const waterRes = await fetch(
-                `/api/meter-photos?year=${year}&month=${month}&utility_type=water`
+              const contracts = contractsRes.ok ? await contractsRes.json() : [];
+              const activeRoomIds = new Set<number>(
+                contracts.map((c: any) => Number(c.room_id)).filter((n: number) => Number.isFinite(n))
               );
-              if (waterRes.ok) {
-                const waterPhotos = await waterRes.json();
-                waterPhotos.forEach((photo: any) => {
-                  const key = `${photo.room_id}-water`;
-                  statusMap.set(key, {
-                    photo_id: photo.photo_id,
-                    bill_id: photo.bill_id,
-                    meter_value: photo.meter_value,
-                  });
-                });
-              }
-            } catch (error) {
-              console.error('Error fetching water photos:', error);
-            }
 
-            setPhotoStatus(statusMap);
+              const activeRooms = roomsData.filter((r) => activeRoomIds.has(r.room_id));
+              setRooms(activeRooms);
+            } else {
+              setRooms([]);
+            }
           }
         }
       }
@@ -842,7 +841,9 @@ export default function UtilityReadingsClient() {
         }
         
         // Refresh saved readings
-        const readingsRes = await fetch(`/api/utility-readings?cycle_id=${cycleId}`);
+        const readingsRes = await fetch(
+          `/api/utility-readings?cycle_id=${cycleId}&room_ids=${uploadingRoomId}`
+        );
         if (readingsRes.ok) {
           const data = await readingsRes.json();
           setSavedReadings(data);
@@ -907,7 +908,9 @@ export default function UtilityReadingsClient() {
       setPhotoStatus(statusMap);
       
       // Refresh saved readings
-      const readingsRes = await fetch(`/api/utility-readings?cycle_id=${cycleId}`);
+      const readingsRes = await fetch(
+        `/api/utility-readings?cycle_id=${cycleId}&room_ids=${uploadingRoomId}`
+      );
       if (readingsRes.ok) {
         const data = await readingsRes.json();
         setSavedReadings(data);
@@ -927,7 +930,7 @@ export default function UtilityReadingsClient() {
         
         {/* เลือกรอบบิล */}
         <div className="bg-white shadow rounded-lg p-4 mb-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium mb-2 text-gray-700">
                 📅 เลือกรอบบิล (เดือน/ปี)
@@ -942,6 +945,63 @@ export default function UtilityReadingsClient() {
               <p className="mt-2 text-xs text-gray-500">
                 รอบบิล: {getMonthNameThai(month)} {year} 
               </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2 text-gray-700">
+                อาคาร
+              </label>
+              <div
+                className="bg-white rounded-lg border border-gray-200 shadow-sm px-2 pt-2"
+                role="tablist"
+                aria-label="เลือกอาคาร"
+              >
+                <div className="overflow-x-auto pb-1">
+                  <div className="flex flex-nowrap gap-1 min-w-0">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={selectedBuildingId === ''}
+                      onClick={() => {
+                        if (!cycleId || rooms.length === 0) return;
+                        setSelectedBuildingId('');
+                      }}
+                      className={`shrink-0 px-3 py-2 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+                        selectedBuildingId === ''
+                          ? 'border-blue-600 text-blue-800 bg-blue-50/90'
+                          : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                      }`}
+                    >
+                      ทุกอาคาร
+                    </button>
+                    {buildingOptions.map(([id, name]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        role="tab"
+                        aria-selected={String(selectedBuildingId) === String(id)}
+                        onClick={() => {
+                          if (!cycleId || rooms.length === 0) return;
+                          setSelectedBuildingId(id);
+                        }}
+                        className={`shrink-0 px-3 py-2 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+                          String(selectedBuildingId) === String(id)
+                            ? 'border-slate-700 text-slate-900 bg-slate-100'
+                            : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                        }`}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {cycleId && rooms.length > 0 && (
+                <p className="mt-2 text-xs text-gray-500">
+                  {selectedBuildingId === ''
+                    ? `ห้อง active ทั้งหมด ${rooms.length} ห้อง — ห้องที่เลือก ${displayRooms.length} ห้อง (ดึงข้อมูลเฉพาะที่เลือก)`
+                    : `ห้อง active ในอาคารที่เลือก ${roomsInSelectedBuilding.length} ห้อง — ห้องที่เลือก ${displayRooms.length} ห้อง`}
+                </p>
+              )}
             </div>
             <div className="flex items-end">
               <div className="w-full">
@@ -975,12 +1035,85 @@ export default function UtilityReadingsClient() {
           </div>
         </div>
 
+      {/* เลือกห้องที่จะบันทึก (จำไว้) */}
+      {cycleId && roomsInSelectedBuilding.length > 0 && (
+        <div className="bg-white shadow rounded-lg p-4 mb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
+            <div>
+              <div className="text-sm font-semibold text-gray-800">
+                ห้องที่ต้องการบันทึก (ระบบจำไว้)
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                เพื่อหลีกเลี่ยงความช้า ระบบจะดึงเลขเดิม/เลขที่บันทึกแล้วเฉพาะห้องที่คุณเลือก
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  setRememberedRoomIds(roomsInSelectedBuilding.map((r) => r.room_id))
+                }
+                className="bg-blue-600 text-white px-3 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+              >
+                เลือกทั้งหมด
+              </button>
+              <button
+                type="button"
+                onClick={() => setRememberedRoomIds([])}
+                className="bg-white border border-gray-300 text-gray-800 px-3 py-2 rounded-lg hover:bg-gray-50"
+              >
+                ล้างการเลือก
+              </button>
+            </div>
+          </div>
+
+          <div className="max-h-56 overflow-y-auto pr-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {roomsInSelectedBuilding.map((room) => {
+                const checked = rememberedRoomIds.includes(room.room_id);
+                return (
+                  <label
+                    key={room.room_id}
+                    className="flex items-center gap-2 text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => {
+                        const nextChecked = e.target.checked;
+                        setRememberedRoomIds((prev) => {
+                          if (nextChecked) {
+                            return Array.from(new Set([...prev, room.room_id]));
+                          }
+                          return prev.filter((id) => id !== room.room_id);
+                        });
+                      }}
+                    />
+                    <span className="whitespace-nowrap">
+                      {room.building_name} - ห้อง {room.room_number}
+                      {room.floor_no ? ` (ชั้น ${room.floor_no})` : ''}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cycleId && roomsInSelectedBuilding.length === 0 && (
+        <div className="bg-white shadow rounded-lg p-4 mb-4 text-sm text-gray-600">
+          ไม่พบห้องที่มีสัญญา active ในอาคารที่เลือก
+        </div>
+      )}
+
         {/* Checkbox และปุ่มบันทึกทั้งหมด */}
         <div className="mb-4 flex items-center gap-4">
           <label className="flex items-center gap-2 cursor-pointer select-none">
             <input
               type="checkbox"
               checked={autoFillFromPrevious}
+              disabled={displayRooms.length === 0}
               onChange={(e) => {
                 setAutoFillFromPrevious(e.target.checked);
                 if (e.target.checked) {
@@ -990,12 +1123,12 @@ export default function UtilityReadingsClient() {
               className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
             />
             <span className="text-sm font-medium text-gray-700">
-              เติมค่าเริ่มต้นจากเลขเดิมทั้งหมด
+              เติมค่าเริ่มต้นจากเลขเดิม (เฉพาะห้องที่แสดง)
             </span>
           </label>
           <button
             onClick={saveAll}
-            disabled={isSaving || !cycleId}
+            disabled={isSaving || !cycleId || displayRooms.length === 0}
             className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {isSaving ? (
@@ -1058,7 +1191,7 @@ export default function UtilityReadingsClient() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {rooms.map((room) => {
+                {displayRooms.map((room) => {
                   const form = roomForms.get(room.room_id);
                   const isSaved = isRoomSaved(room.room_id);
                   

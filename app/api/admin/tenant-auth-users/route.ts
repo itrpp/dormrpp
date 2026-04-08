@@ -3,6 +3,8 @@ import { query } from '@/lib/db';
 import { requireAppRoles } from '@/lib/auth/middleware';
 import type { AppRoleCode } from '@/lib/auth/app-roles';
 
+export const dynamic = 'force-dynamic';
+
 const TENANT_MAPPING_ACCESS: AppRoleCode[] = ['ADMIN', 'SUPERUSER_RP', 'SUPERUSER_MED'];
 
 interface TenantAuthUserRow {

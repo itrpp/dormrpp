@@ -3,6 +3,8 @@ import { requireAppRoles } from '@/lib/auth/middleware';
 import type { AppRoleCode } from '@/lib/auth/app-roles';
 import { getAllAuthUsersWithRoles } from '@/lib/repositories/auth-users';
 
+export const dynamic = 'force-dynamic';
+
 const ADMIN_ONLY: AppRoleCode[] = ['ADMIN'];
 
 // GET /api/admin/auth-users - รายชื่อผู้ใช้ + สิทธิ์ (สำหรับหน้าจัดการสิทธิ์)

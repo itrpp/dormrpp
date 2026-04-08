@@ -29,7 +29,7 @@ export async function GET(
         b.room_id,
         b.contract_id,
         b.cycle_id,
-        1000 AS maintenance_fee,
+        (CASE WHEN bu.building_id = 1 THEN 1000 ELSE 6000 END) / COALESCE(rt.max_occupants, 1) AS maintenance_fee,
         b.status,
         cy.billing_year,
         cy.billing_month,
@@ -38,8 +38,10 @@ export async function GET(
         cy.due_date,
         r.room_number,
         r.floor_no,
+        r.room_type_id,
         bu.building_id,
         bu.name_th AS building_name,
+        COALESCE(rt.max_occupants, 1) AS max_occupants,
         t.tenant_id,
         t.first_name_th AS first_name,
         t.last_name_th AS last_name,
@@ -56,6 +58,8 @@ export async function GET(
       JOIN tenants t ON c.tenant_id = t.tenant_id
       JOIN rooms r ON c.room_id = r.room_id
       JOIN buildings bu ON r.building_id = bu.building_id
+      LEFT JOIN room_types rt
+        ON rt.id = r.room_type_id
       WHERE b.bill_id = ?
     `;
 

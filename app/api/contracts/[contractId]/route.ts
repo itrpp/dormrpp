@@ -3,6 +3,12 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { updateTenantStatusByStartDate } from '@/lib/db-helpers';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import {
+  ADMIN_BUILDING_DATA_ACCESS_ROLES,
+  getAdminBuildingScopeFromAppRoles,
+  isBuildingIdInScope,
+} from '@/lib/auth/building-scope';
 
 type Params = {
   params: {
@@ -14,6 +20,12 @@ type Params = {
 // body: { end_date, status, start_date }
 export async function PUT(req: Request, { params }: Params) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
     const contractId = Number(params.contractId);
     const body = await req.json();
     const { end_date, status, start_date } = body;
@@ -31,8 +43,12 @@ export async function PUT(req: Request, { params }: Params) {
       status: string;
       tenant_id: number;
       start_date: string | Date | null;
+      building_id: number;
     }>(
-      'SELECT contract_id, status, tenant_id, start_date FROM contracts WHERE contract_id = ?',
+      `SELECT c.contract_id, c.status, c.tenant_id, c.start_date, r.building_id
+       FROM contracts c
+       JOIN rooms r ON c.room_id = r.room_id
+       WHERE c.contract_id = ?`,
       [contractId]
     );
 
@@ -40,6 +56,13 @@ export async function PUT(req: Request, { params }: Params) {
       return NextResponse.json(
         { error: 'Contract not found' },
         { status: 404 }
+      );
+    }
+
+    if (!isBuildingIdInScope(existingContract[0].building_id, scope)) {
+      return NextResponse.json(
+        { error: 'ไม่มีสิทธิ์จัดการสัญญาของอาคารนี้' },
+        { status: 403 },
       );
     }
 
@@ -147,12 +170,34 @@ export async function PUT(req: Request, { params }: Params) {
 // DELETE /api/contracts/[contractId] - Soft delete (ไม่แนะนำ แต่รองรับ)
 export async function DELETE(req: Request, { params }: Params) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
     const contractId = Number(params.contractId);
 
     if (isNaN(contractId)) {
       return NextResponse.json(
         { error: 'Invalid contract ID' },
         { status: 400 }
+      );
+    }
+
+    const row = await query<{ building_id: number }>(
+      `SELECT r.building_id FROM contracts c
+       JOIN rooms r ON c.room_id = r.room_id
+       WHERE c.contract_id = ?`,
+      [contractId],
+    );
+    if (!row || row.length === 0) {
+      return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
+    }
+    if (!isBuildingIdInScope(row[0].building_id, scope)) {
+      return NextResponse.json(
+        { error: 'ไม่มีสิทธิ์จัดการสัญญาของอาคารนี้' },
+        { status: 403 },
       );
     }
 

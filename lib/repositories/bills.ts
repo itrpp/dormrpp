@@ -118,8 +118,13 @@ export async function getUtilityTypeId(code: string): Promise<number | null> {
 export async function getBillsByMonth(
   year: number,
   month: number,
-  roomId?: number
+  roomId?: number,
+  allowedBuildingIds?: number[],
 ): Promise<BillWithDetails[]> {
+  if (allowedBuildingIds && allowedBuildingIds.length === 0) {
+    return [];
+  }
+
   let sql = `
     SELECT
       b.bill_id,
@@ -144,7 +149,13 @@ export async function getBillsByMonth(
     JOIN buildings bu ON r.building_id = bu.building_id
     WHERE cy.billing_year = ? AND cy.billing_month = ?
   `;
-  const params: any[] = [year, month];
+  const params: unknown[] = [year, month];
+
+  if (allowedBuildingIds && allowedBuildingIds.length > 0) {
+    const ph = allowedBuildingIds.map(() => '?').join(',');
+    sql += ` AND bu.building_id IN (${ph})`;
+    params.push(...allowedBuildingIds);
+  }
 
   if (roomId) {
     sql += ' AND r.room_id = ?';
@@ -231,11 +242,6 @@ export async function createBill(
     room_id: number;
     contract_id: number | null;
     cycle_id: number;
-    maintenance_fee: number;
-    electric_amount: number;
-    water_amount: number;
-    subtotal_amount: number;
-    total_amount: number;
     status?: string;
   },
   connection?: any
@@ -246,18 +252,13 @@ export async function createBill(
   try {
     const [result] = await conn.query(
       `INSERT INTO bills 
-       (tenant_id, room_id, contract_id, cycle_id, maintenance_fee, electric_amount, water_amount, subtotal_amount, total_amount, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (tenant_id, room_id, contract_id, cycle_id, status)
+       VALUES (?, ?, ?, ?, ?)`,
       [
         data.tenant_id,
         data.room_id,
         data.contract_id,
         data.cycle_id,
-        data.maintenance_fee,
-        data.electric_amount,
-        data.water_amount,
-        data.subtotal_amount,
-        data.total_amount,
         data.status || 'draft',
       ]
     );
@@ -381,15 +382,16 @@ export async function createUtilityReading(
 
 export async function updateBill(
   billId: number,
-  updates: Partial<Pick<Bill, 'maintenance_fee' | 'electric_amount' | 'water_amount' | 'subtotal_amount' | 'total_amount' | 'status'>>
+  updates: Partial<
+    Pick<
+      Bill,
+      'electric_amount' | 'water_amount' | 'subtotal_amount' | 'total_amount' | 'status'
+    >
+  >
 ): Promise<void> {
   const fields: string[] = [];
   const values: any[] = [];
 
-  if (updates.maintenance_fee !== undefined) {
-    fields.push('maintenance_fee = ?');
-    values.push(updates.maintenance_fee);
-  }
   if (updates.electric_amount !== undefined) {
     fields.push('electric_amount = ?');
     values.push(updates.electric_amount);

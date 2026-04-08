@@ -36,13 +36,28 @@ export type AdminTenantRow = {
   ad_mapping_display_name: string | null;
 };
 
-export async function getAllTenantsForAdmin(): Promise<AdminTenantRow[]> {
+/** @param allowedBuildingIds ถ้ากำหนด จำกัดเฉพาะผู้เช่าที่มีห้องในอาคารเหล่านั้น (หรือยังไม่มีห้อง) */
+export async function getAllTenantsForAdmin(
+  allowedBuildingIds?: number[],
+): Promise<AdminTenantRow[]> {
   let retryCount = 0;
   const maxRetries = 3;
   const baseRetryDelay = 500;
 
+  if (allowedBuildingIds && allowedBuildingIds.length === 0) {
+    return [];
+  }
+
   while (retryCount <= maxRetries) {
     try {
+      let buildingFilter = '';
+      const filterParams: number[] = [];
+      if (allowedBuildingIds && allowedBuildingIds.length > 0) {
+        const ph = allowedBuildingIds.map(() => '?').join(',');
+        buildingFilter = ` AND (b.building_id IS NULL OR b.building_id IN (${ph}))`;
+        filterParams.push(...allowedBuildingIds);
+      }
+
       const sql = `
         SELECT 
           t.tenant_id,
@@ -69,6 +84,7 @@ export async function getAllTenantsForAdmin(): Promise<AdminTenantRow[]> {
         LEFT JOIN buildings b
           ON b.building_id = r.building_id
         WHERE COALESCE(t.is_deleted, 0) = 0
+        ${buildingFilter}
         ORDER BY 
           COALESCE(b.building_id, 999999) ASC,
           CASE 
@@ -79,8 +95,8 @@ export async function getAllTenantsForAdmin(): Promise<AdminTenantRow[]> {
           r.room_number ASC,
           t.tenant_id DESC
       `;
-      
-      const results = await query<AdminTenantRow>(sql);
+
+      const results = await query<AdminTenantRow>(sql, filterParams);
       // กรองข้อมูลที่ซ้ำซ้อน
       const uniqueResults = new Map<number, AdminTenantRow>();
       results.forEach((row) => {
@@ -113,7 +129,15 @@ export async function getAllTenantsForAdmin(): Promise<AdminTenantRow[]> {
   return [];
 }
 
-export async function getAllTenants(roomId?: number): Promise<TenantWithRoom[]> {
+/** @param allowedBuildingIds จำกัดตามอาคาร (superuser); ส่ง [] เพื่อคืนลิสต์ว่าง */
+export async function getAllTenants(
+  roomId?: number,
+  allowedBuildingIds?: number[],
+): Promise<TenantWithRoom[]> {
+  if (allowedBuildingIds && allowedBuildingIds.length === 0) {
+    return [];
+  }
+
   let sql = `
     SELECT t.tenant_id, r.room_id, 
            t.first_name_th AS first_name, 
@@ -130,7 +154,13 @@ export async function getAllTenants(roomId?: number): Promise<TenantWithRoom[]> 
     JOIN buildings b ON r.building_id = b.building_id
     WHERE c.status = 'active'
   `;
-  const params: any[] = [];
+  const params: unknown[] = [];
+
+  if (allowedBuildingIds && allowedBuildingIds.length > 0) {
+    const ph = allowedBuildingIds.map(() => '?').join(',');
+    sql += ` AND r.building_id IN (${ph})`;
+    params.push(...allowedBuildingIds);
+  }
 
   if (roomId) {
     sql += ' AND c.room_id = ?';

@@ -9,6 +9,9 @@ import BillPreviewContent, {
 
 // ค่าบำรุงรักษาคงที่
 const MAINTENANCE_FEE = 1000;
+const getMaintenanceFeeForBuildingId = (
+  buildingId: number | undefined | null,
+): number => (Number(buildingId) === 1 ? 1000 : 6000);
 
 interface Tenant {
   tenant_id: number;
@@ -38,6 +41,7 @@ interface DetailedBill {
   room_id: number;
   contract_id: number;
   cycle_id: number;
+  building_id?: number;
   room_number: string;
   building_name: string;
   billing_year: number;
@@ -93,6 +97,17 @@ interface BillForm {
 
 export default function AdminBillsClient() {
   const now = new Date();
+
+  // กันข้อมูล debug/SQL ที่อาจหลุดเข้ามาในฟิลด์ชื่ออาคาร (เช่นมี backticks หรือข้อความแนวเงื่อนไข SQL)
+  const sanitizeBuildingNameForUi = (value: string | null | undefined): string => {
+    if (!value) return '';
+    const s = String(value);
+    // ตัดส่วนที่เริ่มด้วยข้อความเงื่อนไข
+    const withoutCondition = s.replace(/\s*ถ้าเป็นหอพัก[\s\S]*$/g, '');
+    // ลบสตริงใน backticks ทั้งก้อน (กัน `rooms`/`building_id` หลุดมา)
+    const withoutBackticks = withoutCondition.replace(/`[^`]*`/g, '');
+    return withoutBackticks.trim();
+  };
   
   // แปลง พ.ศ. เป็น ค.ศ. สำหรับ month picker
   const beYear = now.getFullYear() + 543;
@@ -110,12 +125,16 @@ export default function AdminBillsClient() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isRunningBilling, setIsRunningBilling] = useState(false);
   const [contracts, setContracts] = useState<Contract[]>([]);
+  const [contractStatusFilter, setContractStatusFilter] = useState<'active' | 'ended'>('active');
   const [isLoadingContracts, setIsLoadingContracts] = useState(false);
   const [utilityReadings, setUtilityReadings] = useState<{
     electric: { meter_start: number | null; meter_end: number | null } | null;
     water: { meter_start: number | null; meter_end: number | null } | null;
   }>({ electric: null, water: null });
   const [isLoadingReadings, setIsLoadingReadings] = useState(false);
+
+  // แท็บเลือกอาคาร (เพื่อกรองตาราง/Export/สัญญาที่ใช้สร้างบิล)
+  const [selectedBuildingId, setSelectedBuildingId] = useState<number | 'all'>('all');
   
   // State สำหรับ preview modal
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
@@ -153,6 +172,61 @@ export default function AdminBillsClient() {
     [contracts, form.contract_ids]
   );
 
+  const buildingOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    bills.forEach((b) => {
+      if (typeof b.building_id === 'number' && b.building_name) {
+        map.set(b.building_id, b.building_name);
+      }
+    });
+    return Array.from(map.entries()).sort((a, b) =>
+      String(a[1]).localeCompare(String(b[1]), 'th'),
+    );
+  }, [bills]);
+
+  const filteredBills = useMemo(() => {
+    if (selectedBuildingId === 'all') return bills;
+    return bills.filter((b) => b.building_id === selectedBuildingId);
+  }, [bills, selectedBuildingId]);
+
+  const filteredContracts = useMemo(() => {
+    if (selectedBuildingId === 'all') return contracts;
+    return contracts.filter((c) => c.building_id === selectedBuildingId);
+  }, [contracts, selectedBuildingId]);
+
+  // ถ้าบิลที่โหลดมาไม่มีอาคารที่เลือกอยู่แล้ว ให้กลับเป็น "ทุกอาคาร"
+  useEffect(() => {
+    if (selectedBuildingId === 'all') return;
+    if (!buildingOptions.some(([id]) => id === selectedBuildingId)) {
+      setSelectedBuildingId('all');
+    }
+  }, [buildingOptions, selectedBuildingId]);
+
+  // กัน UX: กรณีเลือกอาคารแล้ว แต่ตารางกรองไม่พบข้อมูล
+  // (เช่น state ค้าง/ประเภทข้อมูลไม่ตรง) ให้กลับไปที่ "ทุกอาคาร"
+  useEffect(() => {
+    if (selectedBuildingId === 'all') return;
+    if (bills.length === 0) return;
+    if (filteredBills.length === 0) {
+      setSelectedBuildingId('all');
+    }
+  }, [selectedBuildingId, filteredBills.length, bills.length]);
+
+  // กันกรณีผู้ใช้สลับแท็บอาคารตอนที่ modal เปิดอยู่
+  useEffect(() => {
+    if (!isCreateModalOpen) return;
+    setForm((prev) => {
+      const nextIds =
+        selectedBuildingId === 'all'
+          ? prev.contract_ids
+          : prev.contract_ids.filter((id) => {
+              const c = contracts.find((x) => x.contract_id === id);
+              return c ? c.building_id === selectedBuildingId : false;
+            });
+      return { ...prev, contract_ids: nextIds };
+    });
+  }, [selectedBuildingId, isCreateModalOpen, contracts]);
+
   // เปลี่ยนสถานะบิล (รายการเดียว)
   const handleBillStatusChange = async (billId: number, newStatus: string) => {
     try {
@@ -180,15 +254,20 @@ export default function AdminBillsClient() {
 
   // ปรับสถานะบิลทั้งหมดในหน้านี้ (รอบบิลที่เลือก)
   const handleBulkStatusChange = async () => {
-    if (bills.length === 0) return;
-    const statusLabel = bulkStatus === 'draft' ? 'ร่าง' : bulkStatus === 'sent' ? 'ส่งแล้ว' : 'ชำระแล้ว';
-    if (!confirm(`ต้องการเปลี่ยนสถานะบิลทั้งหมด (${bills.length} รายการ) เป็น "${statusLabel}" ใช่หรือไม่?`)) {
+    if (filteredBills.length === 0) return;
+    const statusLabel =
+      bulkStatus === 'draft' ? 'ร่าง' : bulkStatus === 'sent' ? 'ส่งแล้ว' : 'ชำระแล้ว';
+    if (
+      !confirm(
+        `ต้องการเปลี่ยนสถานะบิลทั้งหมด (${filteredBills.length} รายการ) เป็น "${statusLabel}" ใช่หรือไม่?`
+      )
+    ) {
       return;
     }
     setIsBulkUpdating(true);
     try {
       const results = await Promise.allSettled(
-        bills.map((b) =>
+        filteredBills.map((b) =>
           fetch(`/api/bills/${b.bill_id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
@@ -201,7 +280,11 @@ export default function AdminBillsClient() {
         alert(`อัปเดตสำเร็จ ${results.length - failed.length} รายการ มีข้อผิดพลาด ${failed.length} รายการ`);
       }
       setBills((prev) =>
-        prev.map((b) => ({ ...b, status: bulkStatus }))
+        prev.map((b) =>
+          filteredBills.some((fb) => fb.bill_id === b.bill_id)
+            ? { ...b, status: bulkStatus }
+            : b
+        )
       );
     } catch (error: any) {
       console.error('Error bulk updating bill status:', error);
@@ -264,7 +347,13 @@ export default function AdminBillsClient() {
         throw new Error(errorData.error || 'Failed to fetch bill');
       }
       const data: BillPreviewData = await res.json();
-      setPreviewBillData(data);
+      setPreviewBillData({
+        ...data,
+        tenant: {
+          ...data.tenant,
+          building_name: sanitizeBuildingNameForUi(data.tenant?.building_name),
+        },
+      });
     } catch (error: any) {
       console.error('Error fetching bill preview:', error);
       alert(`ไม่สามารถโหลดข้อมูลบิลได้: ${error.message || 'Unknown error'}`);
@@ -310,7 +399,7 @@ export default function AdminBillsClient() {
     const fetchContracts = async () => {
       setIsLoadingContracts(true);
       try {
-        const res = await fetch('/api/contracts?status=active');
+        const res = await fetch(`/api/contracts?status=${contractStatusFilter}`);
         if (res.ok) {
           const data = await res.json();
           // เรียงลำดับตาม building_id และ room_number (น้อยไปมาก)
@@ -333,7 +422,7 @@ export default function AdminBillsClient() {
       }
     };
     fetchContracts();
-  }, []);
+  }, [contractStatusFilter]);
 
   // เปิด modal สร้างบิล
   const openCreateModal = () => {
@@ -349,6 +438,8 @@ export default function AdminBillsClient() {
       setFormMonthValue(formInitialMonthValue);
     }
 
+    // ล้างการเลือกสัญญาเดิมเพื่อให้สอดคล้องกับอาคาร/รอบบิลที่เลือกตอนนี้
+    setForm((prev) => ({ ...prev, contract_ids: [] }));
     setIsCreateModalOpen(true);
   };
 
@@ -496,7 +587,7 @@ export default function AdminBillsClient() {
         body: JSON.stringify({
             contract_id: contract.contract_id,
           cycle_id: cycleId,
-          maintenance_fee: MAINTENANCE_FEE,
+          maintenance_fee: getMaintenanceFeeForBuildingId(contract.building_id),
           electric_amount: 0, // จะคำนวณจาก utility readings และ rates
           water_amount: 0, // จะคำนวณจาก utility readings และ rates
           status: form.status,
@@ -566,7 +657,17 @@ export default function AdminBillsClient() {
   // Export Excel
   const handleExportExcel = async () => {
     try {
-      const res = await fetch(`/api/bills/export/excel?year=${year}&month=${month}`);
+      const buildingIdParam =
+        selectedBuildingId === 'all' ? '' : `&building_id=${selectedBuildingId}`;
+
+      const selectedBuildingName =
+        selectedBuildingId === 'all'
+          ? null
+          : buildingOptions.find(([id]) => id === selectedBuildingId)?.[1] ?? null;
+
+      const res = await fetch(
+        `/api/bills/export/excel?year=${year}&month=${month}${buildingIdParam}`
+      );
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || 'Failed to export Excel');
@@ -576,7 +677,10 @@ export default function AdminBillsClient() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `บิล_${year}_${month}_ทั้งหมด.xlsx`;
+      a.download =
+        selectedBuildingName && selectedBuildingId !== 'all'
+          ? `บิล_${year}_${month}_${selectedBuildingName}.xlsx`
+          : `บิล_${year}_${month}_ทั้งหมด.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -632,7 +736,7 @@ export default function AdminBillsClient() {
 
     let rowNumber = 1;
 
-    bills.forEach((bill) => {
+    filteredBills.forEach((bill) => {
       // ตรวจสอบว่า bill มีข้อมูลครบถ้วน
       if (!bill || !bill.bill_id) {
         console.warn('Invalid bill data:', bill);
@@ -667,7 +771,7 @@ export default function AdminBillsClient() {
 
     console.log('Table rows generated:', rows.length);
     return rows;
-  }, [bills]);
+  }, [filteredBills]);
 
   // คำนวณยอดรวมจากยอดที่แสดงจริงในแต่ละแถว
   // ใช้สูตรเดียวกับที่ใช้คำนวณใน cell (คำนวณจากมิเตอร์ + rate 100%)
@@ -678,9 +782,13 @@ export default function AdminBillsClient() {
     let totalAmount = 0;
 
     tableRows.forEach((row) => {
+      const maintenanceFeePerBill =
+        row.bill.maintenance_fee != null
+          ? Number(row.bill.maintenance_fee)
+          : MAINTENANCE_FEE;
       // ค่าบำรุงรักษา: แสดงเฉพาะผู้เช่าคนแรก (isFirstTenant)
       if (row.isFirstTenant) {
-        totalMaintenance += MAINTENANCE_FEE;
+        totalMaintenance += maintenanceFeePerBill;
       }
 
       const electricity = getUtilityReading(row.bill, 'electric');
@@ -713,7 +821,8 @@ export default function AdminBillsClient() {
         const waterAmountPerPerson = water && water.usage != null && water.rate_per_unit != null
           ? (Number(water.usage) * Number(water.rate_per_unit)) / tenantCount
           : 0;
-        const rowTotal = electricAmountPerPerson + waterAmountPerPerson + MAINTENANCE_FEE;
+        const rowTotal =
+          electricAmountPerPerson + waterAmountPerPerson + maintenanceFeePerBill;
         if (!isNaN(rowTotal)) {
           totalAmount += rowTotal;
         }
@@ -765,7 +874,7 @@ export default function AdminBillsClient() {
           >
             {isRunningBilling ? 'กำลังออกบิล...' : 'ออกบิลทั้งเดือน'}
           </button>
-          {bills.length > 0 && (
+          {filteredBills.length > 0 && (
             <button
               onClick={handleExportExcel}
               className="bg-green-700 text-white px-4 py-2 rounded-lg hover:bg-green-800 flex items-center gap-2"
@@ -780,9 +889,59 @@ export default function AdminBillsClient() {
         </div>
       </div>
 
+      {/* แท็บเลือกอาคาร — แยกมุมมองชัดเจน */}
+      {bills.length > 0 && (
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm px-2 sm:px-3 pt-2 mb-4">
+          <div className="flex items-center justify-between gap-3 px-1 pb-2">
+            <div className="text-sm font-medium text-gray-800">
+              แยกตามอาคาร
+            </div>
+            {selectedBuildingId !== 'all' && (
+              <div className="text-xs text-gray-500">
+                แสดงเฉพาะอาคาร: {buildingOptions.find(([id]) => id === selectedBuildingId)?.[1] ?? '-'}
+              </div>
+            )}
+          </div>
+
+          <div className="overflow-x-auto pb-2">
+            <div className="flex flex-nowrap gap-1 min-w-0">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={selectedBuildingId === 'all'}
+                onClick={() => setSelectedBuildingId('all')}
+                className={`shrink-0 px-3 py-2 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+                  selectedBuildingId === 'all'
+                    ? 'border-blue-600 text-blue-800 bg-blue-50/90'
+                    : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                ทุกอาคาร
+              </button>
+              {buildingOptions.map(([id, name]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selectedBuildingId === id}
+                  onClick={() => setSelectedBuildingId(id)}
+                  className={`shrink-0 px-3 py-2 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+                    selectedBuildingId === id
+                      ? 'border-slate-700 text-slate-900 bg-slate-100'
+                      : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="text-center py-8 text-gray-500">กำลังโหลดข้อมูล...</div>
-      ) : bills.length === 0 ? (
+      ) : filteredBills.length === 0 ? (
         <div className="bg-white shadow rounded-lg p-8 text-center">
           <p className="text-gray-500">ไม่พบข้อมูลบิลสำหรับ {getMonthNameThai(month)} {year}</p>
           <p className="text-sm text-gray-400 mt-2">
@@ -837,7 +996,7 @@ export default function AdminBillsClient() {
                     <button
                       type="button"
                       onClick={handleBulkStatusChange}
-                      disabled={isBulkUpdating || bills.length === 0}
+                      disabled={isBulkUpdating || filteredBills.length === 0}
                       className="px-2 py-1 text-[11px] rounded border bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                     >
                       {isBulkUpdating ? 'กำลังอัปเดต...' : 'ปรับสถานะทั้งหมด'}
@@ -905,7 +1064,7 @@ export default function AdminBillsClient() {
                   return (
                     <tr key={`${row.bill.bill_id}_${row.tenant?.tenant_id || 'no-tenant'}`}>
                       <td className="px-3 py-2 text-center border">{row.rowNumber}</td>
-                      <td className="px-3 py-2 border">{row.bill.room_number || '-'}</td>
+                    <td className="px-3 py-2 border">{row.bill.room_number || '-'}</td>
                       <td className="px-3 py-2 border">
                         {row.tenant && row.tenant.first_name && row.tenant.last_name
                           ? `${row.tenant.first_name} ${row.tenant.last_name}`
@@ -913,7 +1072,11 @@ export default function AdminBillsClient() {
                       </td>
                     <td className="px-3 py-2 text-right border">
                       {row.isFirstTenant
-                        ? formatNumber(MAINTENANCE_FEE)
+                        ? formatNumber(
+                            row.bill.maintenance_fee != null
+                              ? Number(row.bill.maintenance_fee)
+                              : MAINTENANCE_FEE,
+                          )
                         : ''}
                     </td>
                     {/* ไฟฟ้า */}
@@ -989,7 +1152,10 @@ export default function AdminBillsClient() {
                       {/* คำนวณยอดรวมทั้งสิ้นต่อคน = (ค่าไฟต่อคน) + (ค่าน้ำต่อคน) + ค่าบำรุงรักษา */}
                       {(() => {
                         const tenantCount = Math.max(row.bill.tenant_count || 1, 1);
-                        const maintenanceFee = 1000; // ค่าบำรุงรักษาแต่ละคนจ่ายเต็ม
+                        const maintenanceFee =
+                          row.bill.maintenance_fee != null
+                            ? Number(row.bill.maintenance_fee)
+                            : getMaintenanceFeeForBuildingId(row.bill.building_id);
                         
                         // คำนวณ electric_amount ต่อคน
                         let electricAmountPerPerson = 0;
@@ -1120,17 +1286,34 @@ export default function AdminBillsClient() {
                 <label className="block text-sm font-medium mb-2">
                   เลือกสัญญาเช่า (ผู้เช่า) <span className="text-red-500">*</span>
                 </label>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs text-gray-600">ประเภทสัญญา:</span>
+                  <select
+                    className="border rounded px-2 py-1 text-xs"
+                    value={contractStatusFilter}
+                    onChange={(e) =>
+                      setContractStatusFilter(e.target.value as 'active' | 'ended')
+                    }
+                  >
+                    <option value="active">ผู้เช่าปัจจุบัน (สัญญา active)</option>
+                    <option value="ended">ผู้เช่าที่ออกแล้ว (สัญญา ended)</option>
+                  </select>
+                </div>
+                <p className="text-[11px] text-gray-500 mb-2">
+                  ใช้โหมด <span className="font-semibold">สัญญา ended</span> เมื่อต้องการออกบิลรอบล่าสุดให้ผู้เช่าที่ย้ายออกแล้ว
+                  โดยยังใช้เลขมิเตอร์ของรอบบิลปัจจุบันของห้องเดิม
+                </p>
                 <div className="w-full border rounded-md px-3 py-2 max-h-60 overflow-y-auto bg-white">
                   {isLoadingContracts ? (
                     <p className="text-sm text-gray-500">กำลังโหลด...</p>
-                  ) : contracts.length === 0 ? (
+                  ) : filteredContracts.length === 0 ? (
                     <p className="text-sm text-gray-500">ไม่มีสัญญาเช่า</p>
                   ) : (
-                    <div className="space-y-2">
-                  {contracts.map((contract) => (
+                    <div className="flex flex-col gap-2">
+                      {filteredContracts.map((contract) => (
                         <label
                           key={contract.contract_id}
-                          className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-2 rounded"
+                          className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-2 rounded w-full"
                         >
                           <input
                             type="checkbox"
@@ -1150,11 +1333,12 @@ export default function AdminBillsClient() {
                             }}
                             className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                           />
-                          <span className="text-sm text-gray-700">
-                      {contract.building_name} - ห้อง {contract.room_number} - {contract.first_name_th} {contract.last_name_th}
+                          <span className="text-sm text-gray-700 break-words">
+                            {sanitizeBuildingNameForUi(contract.building_name)} - ห้อง {contract.room_number} -{' '}
+                            {contract.first_name_th} {contract.last_name_th}
                           </span>
                         </label>
-                  ))}
+                      ))}
                     </div>
                   )}
                 </div>
@@ -1187,7 +1371,22 @@ export default function AdminBillsClient() {
               <div>
                 <label className="block text-sm font-medium mb-1">ค่าบำรุงรักษา</label>
                 <div className="w-full border rounded-md px-3 py-2 bg-gray-50 text-gray-700">
-                  {formatNumber(MAINTENANCE_FEE)} บาท
+                  {(() => {
+                    if (selectedContracts.length === 0) {
+                      return `${formatNumber(MAINTENANCE_FEE)} บาท`;
+                    }
+                    const fees = Array.from(
+                      new Set(
+                        selectedContracts.map((c) =>
+                          getMaintenanceFeeForBuildingId(c.building_id),
+                        ),
+                      ),
+                    );
+                    if (fees.length === 1) {
+                      return `${formatNumber(fees[0])} บาท`;
+                    }
+                    return 'ค่าบำรุงรักษาแตกต่างตามอาคาร';
+                  })()}
                 </div>
               </div>
 

@@ -6,6 +6,7 @@ import { query, queryOne } from '@/lib/db';
 export interface RoomOccupancyInfo {
   room_id: number;
   room_number: string;
+  building_id: number;
   building_name: string;
   room_type_id: number | null;
   room_type_name: string | null;

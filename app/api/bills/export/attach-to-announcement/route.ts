@@ -70,8 +70,10 @@ export async function POST(req: Request) {
         cy.due_date,
         r.room_number,
         r.floor_no,
+        r.room_type_id,
         bu.building_id,
         bu.name_th AS building_name,
+        COALESCE(rt.max_occupants, 1) AS max_occupants,
         t.tenant_id,
         t.first_name_th AS first_name,
         t.last_name_th AS last_name,
@@ -87,6 +89,8 @@ export async function POST(req: Request) {
       JOIN tenants t ON c.tenant_id = t.tenant_id
       JOIN rooms r ON c.room_id = r.room_id
       JOIN buildings bu ON r.building_id = bu.building_id
+      LEFT JOIN room_types rt
+        ON rt.id = r.room_type_id
       WHERE cy.billing_year = ? AND cy.billing_month = ?
       ORDER BY r.room_number, t.tenant_id
     `;
@@ -201,10 +205,13 @@ export async function POST(req: Request) {
         const calculatedElectricAmount = totalElectricAmountForRoom / tenantCount;
         const calculatedWaterAmount = totalWaterAmountForRoom / tenantCount;
 
-        // ค่าบำรุงรักษา: แต่ละคนจ่ายเต็มจำนวน (ไม่ต้องหาร)
-        const maintenanceFee = 1000;
+        // ค่าบำรุงรักษาต่อคน = ค่าบำรุงรักษาตามอาคาร ÷ จำนวนคนที่ห้องรองรับ
+        const baseMaintenanceFee = Number(bill.building_id) === 1 ? 1000 : 6000;
+        const maxOccupants = Math.max(Number(bill.max_occupants || 1) || 1, 1);
+        const maintenanceFeePerPerson = baseMaintenanceFee / maxOccupants;
         // ยอดรวมทั้งสิ้นต่อคน = (ค่าไฟต่อคน) + (ค่าน้ำต่อคน) + ค่าบำรุงรักษา
-        const calculatedTotalAmount = calculatedElectricAmount + calculatedWaterAmount + maintenanceFee;
+        const calculatedTotalAmount =
+          calculatedElectricAmount + calculatedWaterAmount + maintenanceFeePerPerson;
 
         groupedBills[billKey] = {
           bill_id: bill.bill_id,
@@ -218,7 +225,7 @@ export async function POST(req: Request) {
           billing_month: bill.billing_month,
           billing_date: bill.billing_date,
           due_date: bill.due_date,
-          maintenance_fee: maintenanceFee,
+          maintenance_fee: maintenanceFeePerPerson,
           electric_amount: calculatedElectricAmount,
           water_amount: calculatedWaterAmount,
           subtotal_amount: calculatedElectricAmount + calculatedWaterAmount,

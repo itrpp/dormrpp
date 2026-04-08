@@ -1,14 +1,42 @@
 // app/api/rooms/route.ts
 import { NextResponse } from 'next/server';
 import { getAllRooms, createRoom } from '@/lib/repositories/rooms';
+import { requireAppRoles } from '@/lib/auth/middleware';
+import {
+  ADMIN_BUILDING_DATA_ACCESS_ROLES,
+  getAdminBuildingScopeFromAppRoles,
+  isBuildingIdInScope,
+  resolveAllowedBuildingIdsForListQuery,
+} from '@/lib/auth/building-scope';
 
 // GET /api/rooms?building_id=1
 export async function GET(req: Request) {
   try {
-    const { searchParams } = new URL(req.url);
-    const buildingId = searchParams.get('building_id');
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
 
-    const rooms = await getAllRooms(buildingId ? Number(buildingId) : undefined);
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+    const { searchParams } = new URL(req.url);
+    const buildingIdParam = searchParams.get('building_id');
+    const bid =
+      buildingIdParam !== null && buildingIdParam !== ''
+        ? Number(buildingIdParam)
+        : undefined;
+
+    const restrictIds = resolveAllowedBuildingIdsForListQuery(
+      scope,
+      bid !== undefined && Number.isFinite(bid) ? bid : null,
+    );
+    if (restrictIds !== null && restrictIds.length === 0) {
+      return NextResponse.json([]);
+    }
+
+    const rooms = await getAllRooms(
+      restrictIds === null ? bid : undefined,
+      restrictIds === null ? undefined : restrictIds,
+    );
     return NextResponse.json(rooms);
   } catch (error) {
     console.error('Error fetching rooms:', error);
@@ -23,6 +51,12 @@ export async function GET(req: Request) {
 // body: { building_id, room_number, floor_no, status, room_type_id? }
 export async function POST(req: Request) {
   try {
+    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
+    if (!authResult.authorized) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+
     const body = await req.json();
     const { building_id, room_number, floor_no, status, room_type_id } = body;
 
@@ -30,6 +64,13 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: 'building_id, room_number are required' },
         { status: 400 }
+      );
+    }
+
+    if (!isBuildingIdInScope(Number(building_id), scope)) {
+      return NextResponse.json(
+        { error: 'ไม่มีสิทธิ์จัดการอาคารนี้' },
+        { status: 403 },
       );
     }
 
