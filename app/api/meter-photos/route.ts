@@ -299,15 +299,10 @@ export async function POST(req: Request) {
 
 // GET /api/meter-photos?room_id=302&year=2025&month=10
 // ดึงรูปมิเตอร์ตาม room_id, year, month
+// เปิดอ่านสาธารณะ: หน้า /admin/meters (ตรวจสอบมิเตอร์) ให้ทุกคนดูได้ — สอดคล้องกับข้อมูลที่ SSR โหลดแล้ว
+// การอัปโหลด/แก้ไข/ลบ ยังใช้ POST/PATCH/DELETE พร้อมตรวจสิทธิ์
 export async function GET(req: Request) {
   try {
-    const authResult = await requireAppRoles(ADMIN_BUILDING_DATA_ACCESS_ROLES);
-    if (!authResult.authorized) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
-    const scopeWhere = appendBuildingScopeWhere(scope, 'b.building_id');
-
     const { searchParams } = new URL(req.url);
     const room_id = searchParams.get('room_id');
     const room_ids_param = searchParams.get('room_ids'); // comma-separated batch
@@ -337,11 +332,6 @@ export async function GET(req: Request) {
       WHERE 1=1
     `;
     const params: unknown[] = [];
-
-    if (scopeWhere) {
-      sql += scopeWhere.clause;
-      params.push(...scopeWhere.params);
-    }
 
     const roomIdArray: number[] = room_ids_param
       ? room_ids_param

@@ -50,6 +50,7 @@ export default function AdminRoomsClient({
   );
   const [selectedFloor, setSelectedFloor] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all'); // รวมสถานะและจำนวนผู้เข้าพัก
+  const [showInactiveRooms, setShowInactiveRooms] = useState<boolean>(true);
 
   // state สำหรับ pagination
   const [currentPage, setCurrentPage] = useState(1);
@@ -404,6 +405,12 @@ export default function AdminRoomsClient({
   // ฟิลเตอร์
   const filteredRooms = useMemo(() => {
     return rooms.filter((r) => {
+      // 0) filter ห้องปิดใช้งาน
+      const isDeleted = Number(r.is_deleted ?? 0) === 1;
+      if (!showInactiveRooms && isDeleted) {
+        return false;
+      }
+
       // 1) filter อาคาร
       if (selectedBuilding !== 'all') {
         if (!r.building_id || String(r.building_id) !== String(selectedBuilding)) {
@@ -454,12 +461,12 @@ export default function AdminRoomsClient({
 
       return true;
     });
-  }, [rooms, selectedBuilding, selectedFloor, selectedStatus, roomOccupancies, roomTenants]);
+  }, [rooms, selectedBuilding, selectedFloor, selectedStatus, showInactiveRooms, roomOccupancies, roomTenants]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedBuilding, selectedFloor, selectedStatus]);
+  }, [selectedBuilding, selectedFloor, selectedStatus, showInactiveRooms]);
 
   // เปลี่ยนอาคารแล้วรีเซ็ตชั้น (กันค้างชั้นที่ไม่มีในอาคารใหม่)
   useEffect(() => {
@@ -633,7 +640,40 @@ export default function AdminRoomsClient({
         });
 
         if (!res.ok) {
-          const error = await res.json();
+          const error = await res.json().catch(() => ({}));
+          if (
+            res.status === 409 &&
+            error?.is_deleted === true &&
+            Number.isFinite(Number(error?.room_id))
+          ) {
+            const roomId = Number(error.room_id);
+            const shouldReactivate = confirm(
+              'พบห้องเลขนี้ในสถานะปิดใช้งานอยู่แล้ว ต้องการเปิดใช้งานห้องเดิมหรือไม่?',
+            );
+            if (shouldReactivate) {
+              const reactivateRes = await fetch(`/api/rooms/${roomId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ is_deleted: false }),
+              });
+              const reactivated = await reactivateRes.json().catch(() => ({}));
+              if (!reactivateRes.ok) {
+                throw new Error(
+                  reactivated.error || 'ไม่สามารถเปิดใช้งานห้องเดิมได้',
+                );
+              }
+              setRooms((prev) =>
+                prev.map((r) =>
+                  r.room_id === roomId
+                    ? { ...(r as RoomWithDetails), is_deleted: 0 }
+                    : r,
+                ),
+              );
+              alert('เปิดใช้งานห้องเดิมสำเร็จ');
+              setIsModalOpen(false);
+              return;
+            }
+          }
           throw new Error(error.error || 'Create room failed');
         }
 
@@ -711,7 +751,7 @@ export default function AdminRoomsClient({
   const handleToggleActive = async (roomId: number, newIsDeleted: boolean) => {
     const action = newIsDeleted ? 'ปิดใช้งาน' : 'เปิดใช้งาน';
     const confirmMessage = newIsDeleted 
-      ? 'ยืนยันการปิดใช้งานห้องพัก? ห้องที่ปิดใช้งานจะไม่แสดงในรายการ'
+      ? 'ยืนยันการปิดใช้งานห้องพัก? ห้องจะถูกซ่อนเมื่อปิดตัวเลือก "แสดงห้องปิดใช้งาน"'
       : 'ยืนยันการเปิดใช้งานห้องพัก?';
     
     if (!confirm(confirmMessage)) return;
@@ -1372,6 +1412,16 @@ export default function AdminRoomsClient({
             <option value="maintenance">🟠 ซ่อมบำรุง</option>
           </select>
         </div>
+
+        <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={showInactiveRooms}
+            onChange={(e) => setShowInactiveRooms(e.target.checked)}
+          />
+          แสดงห้องปิดใช้งาน
+        </label>
       </div>
 
       {/* ตัวเลือกแสดงผลและข้อมูลสรุป - แสดงเฉพาะในมุมมองตาราง */}
@@ -1445,7 +1495,14 @@ export default function AdminRoomsClient({
                   {room.building_name}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                  {room.room_number}
+                  <div className="flex items-center gap-2">
+                    <span>{room.room_number}</span>
+                    {Number(room.is_deleted ?? 0) === 1 ? (
+                      <span className="px-2 py-0.5 rounded-full text-[11px] bg-rose-100 text-rose-700">
+                        ปิดใช้งาน
+                      </span>
+                    ) : null}
+                  </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                   {room.floor_no ?? '-'}

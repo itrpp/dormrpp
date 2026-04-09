@@ -93,6 +93,7 @@ export interface RoomWithDetails {
 export async function getAllRooms(
   buildingId?: number,
   restrictToBuildingIds?: number[],
+  options?: { includeDeleted?: boolean },
 ): Promise<RoomWithDetails[]> {
   // ตรวจสอบและสร้างคอลัมน์ is_deleted ถ้ายังไม่มี
   await ensureIsDeletedColumn();
@@ -100,6 +101,8 @@ export async function getAllRooms(
   if (restrictToBuildingIds && restrictToBuildingIds.length === 0) {
     return [];
   }
+
+  const includeDeleted = options?.includeDeleted === true;
 
   let sql = `
     SELECT r.room_id, r.room_number, r.floor_no, r.status,
@@ -109,9 +112,13 @@ export async function getAllRooms(
            COALESCE(r.is_deleted, 0) AS is_deleted
     FROM rooms r
     JOIN buildings b ON r.building_id = b.building_id
-    WHERE COALESCE(r.is_deleted, 0) = 0
+    WHERE 1=1
   `;
   const params: unknown[] = [];
+
+  if (!includeDeleted) {
+    sql += ' AND COALESCE(r.is_deleted, 0) = 0';
+  }
 
   if (restrictToBuildingIds && restrictToBuildingIds.length > 0) {
     if (buildingId != null && Number.isFinite(buildingId)) {

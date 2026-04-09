@@ -6,7 +6,9 @@ import AdminRoomsClient from './AdminRoomsClient';
 export default async function AdminRoomsPage() {
   const allowedBuildingIds =
     await getResolvedAllowedBuildingIdsForServerUser();
-  const rooms = await getAllRooms(undefined, allowedBuildingIds);
+  const rooms = await getAllRooms(undefined, allowedBuildingIds, {
+    includeDeleted: true,
+  });
 
   return (
     <AdminRoomsClient

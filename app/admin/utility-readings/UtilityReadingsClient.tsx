@@ -102,7 +102,8 @@ export default function UtilityReadingsClient({
   const [editingPhotoId, setEditingPhotoId] = useState<number | null>(null); // สำหรับแก้ไขรูป
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null); // สำหรับแสดงรูป preview
   const [existingPhotoUrl, setExistingPhotoUrl] = useState<string | null>(null); // สำหรับแสดงรูปเก่าเมื่อแก้ไข
-  
+  const [zoomMeterImage, setZoomMeterImage] = useState<{ url: string; title: string } | null>(null);
+
   // State สำหรับเก็บสถานะรูปภาพ (key: `${room_id}-${utility_type}`)
   const [photoStatus, setPhotoStatus] = useState<Map<string, {
     photo_id: number;
@@ -841,6 +842,7 @@ export default function UtilityReadingsClient({
       setPhotoPreviewUrl(null);
     }
     setExistingPhotoUrl(null);
+    setZoomMeterImage(null);
   };
 
   // อัปโหลดหรือแก้ไขรูปมิเตอร์ (ค่ามิเตอร์จากรูปไม่บังคับ)
@@ -1536,8 +1538,8 @@ export default function UtilityReadingsClient({
 
       {/* Modal สำหรับอัปโหลดรูปมิเตอร์ */}
       {uploadModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto shadow-xl">
             <h2 className="text-xl font-bold mb-4">
               {editingPhotoId ? 'แก้ไข' : 'อัปโหลด'}รูปมิเตอร์{uploadingUtilityType === 'electric' ? 'ไฟฟ้า' : 'น้ำ'}
             </h2>
@@ -1595,7 +1597,19 @@ export default function UtilityReadingsClient({
                     <img
                       src={existingPhotoUrl}
                       alt="รูปเก่า"
-                      className="w-full h-auto max-h-64 object-contain rounded"
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setZoomMeterImage({ url: existingPhotoUrl, title: 'รูปมิเตอร์ (เดิม)' });
+                        }
+                      }}
+                      className="w-full h-auto max-h-96 object-contain rounded cursor-zoom-in"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setZoomMeterImage({ url: existingPhotoUrl, title: 'รูปมิเตอร์ (เดิม)' });
+                      }}
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = 'none';
                       }}
@@ -1607,7 +1621,25 @@ export default function UtilityReadingsClient({
                     <img
                       src={photoPreviewUrl}
                       alt={editingPhotoId ? 'รูปใหม่ที่จะแทนที่' : 'รูปที่เลือก'}
-                      className="w-full h-auto max-h-64 object-contain rounded"
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setZoomMeterImage({
+                            url: photoPreviewUrl,
+                            title: editingPhotoId ? 'รูปใหม่ที่จะแทนที่' : 'รูปที่เลือก',
+                          });
+                        }
+                      }}
+                      className="w-full h-auto max-h-96 object-contain rounded cursor-zoom-in"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setZoomMeterImage({
+                          url: photoPreviewUrl,
+                          title: editingPhotoId ? 'รูปใหม่ที่จะแทนที่' : 'รูปที่เลือก',
+                        });
+                      }}
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = 'none';
                       }}
@@ -1655,6 +1687,36 @@ export default function UtilityReadingsClient({
                       : 'อัปโหลด'
                 }
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {zoomMeterImage && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/85 p-4 flex items-center justify-center"
+          onClick={() => setZoomMeterImage(null)}
+        >
+          <div
+            className="relative max-w-6xl w-full max-h-[92vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between text-white mb-2">
+              <p className="text-sm">{zoomMeterImage.title}</p>
+              <button
+                type="button"
+                className="px-3 py-1 rounded bg-white/15 hover:bg-white/25"
+                onClick={() => setZoomMeterImage(null)}
+              >
+                ปิด
+              </button>
+            </div>
+            <div className="bg-black/40 rounded-lg p-2 flex items-center justify-center overflow-auto">
+              <img
+                src={zoomMeterImage.url}
+                alt={zoomMeterImage.title}
+                className="max-w-full max-h-[84vh] object-contain rounded"
+              />
             </div>
           </div>
         </div>

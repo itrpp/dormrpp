@@ -20,6 +20,11 @@ export async function GET(req: Request) {
     const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
     const { searchParams } = new URL(req.url);
     const buildingIdParam = searchParams.get('building_id');
+    const includeDeletedParam = searchParams.get('include_deleted');
+    const includeDeleted =
+      includeDeletedParam === '1' ||
+      includeDeletedParam === 'true' ||
+      includeDeletedParam === 'yes';
     const bid =
       buildingIdParam !== null && buildingIdParam !== ''
         ? Number(buildingIdParam)
@@ -36,6 +41,7 @@ export async function GET(req: Request) {
     const rooms = await getAllRooms(
       restrictIds === null ? bid : undefined,
       restrictIds === null ? undefined : restrictIds,
+      { includeDeleted },
     );
     return NextResponse.json(rooms);
   } catch (error) {
@@ -81,6 +87,54 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: 'room_number must be a 3-digit numeric string (e.g. 101, 305)' },
         { status: 400 }
+      );
+    }
+
+    // กันเพิ่มซ้ำ: ถ้ามีเลขห้องในอาคารเดียวกันอยู่แล้ว ให้แจ้งทันที
+    const existingRows = await (await import('@/lib/db')).query<{
+      room_id: number;
+      room_number: string;
+      building_id: number;
+    }>(
+      `SELECT room_id, room_number, building_id
+       FROM rooms
+       WHERE building_id = ? AND room_number = ?
+       LIMIT 1`,
+      [Number(building_id), roomNumberStr],
+    );
+    if (existingRows.length > 0) {
+      const existing = existingRows[0]!;
+      let isDeleted = 0;
+      try {
+        const deletedRows = await (await import('@/lib/db')).query<{
+          is_deleted: number;
+        }>(
+          `SELECT COALESCE(is_deleted, 0) AS is_deleted
+           FROM rooms
+           WHERE room_id = ?
+           LIMIT 1`,
+          [existing.room_id],
+        );
+        isDeleted = Number(deletedRows[0]?.is_deleted ?? 0);
+      } catch {
+        isDeleted = 0;
+      }
+
+      if (isDeleted === 1) {
+        return NextResponse.json(
+          {
+            error:
+              'พบห้องเลขนี้อยู่แล้วในสถานะปิดใช้งาน กรุณาเปิดใช้งานห้องเดิมแทนการสร้างซ้ำ',
+            room_id: existing.room_id,
+            is_deleted: true,
+          },
+          { status: 409 },
+        );
+      }
+
+      return NextResponse.json(
+        { error: 'มีหมายเลขห้องนี้ในอาคารเดียวกันอยู่แล้ว' },
+        { status: 409 },
       );
     }
 
