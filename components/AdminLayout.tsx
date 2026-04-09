@@ -109,6 +109,25 @@ export default function AdminLayout({
   };
 
   const menuItems = getMenuItems(sessionRole, appRoleCodes);
+  const roleStatusLabel = useMemo(() => {
+    const codes = new Set(appRoleCodes ?? []);
+    const managedBuildings: string[] = [];
+
+    if (codes.has('SUPERUSER_RP')) {
+      managedBuildings.push('หอพักรวงผึ้ง');
+    }
+    if (codes.has('SUPERUSER_MED')) {
+      managedBuildings.push('หอพักแพทยศาสตร์');
+    }
+
+    if (managedBuildings.length > 1) {
+      return `ดูแลจัดการระบบ ${managedBuildings.join(', ')}`;
+    }
+    if (managedBuildings.length === 1) {
+      return `ดูแลจัดการระบบ ${managedBuildings[0]}`;
+    }
+    return sessionRoleLabel || 'ผู้ใช้งานระบบ';
+  }, [appRoleCodes, sessionRoleLabel]);
 
   const isActive = (href: string) => {
     // รองรับทั้ง URL เดิม (/admin) และ URL ใหม่ (/dormrpp)
@@ -378,7 +397,7 @@ export default function AdminLayout({
                           {sessionName}
                         </p>
                         <p className="text-xs text-slate-500">
-                          {sessionRoleLabel || 'ผู้ใช้งานระบบ'}
+                          {roleStatusLabel}
                         </p>
                       </div>
                     </div>
@@ -397,7 +416,7 @@ export default function AdminLayout({
                         {sessionName}
                       </p>
                       <p className="text-[10px] text-slate-500">
-                        {sessionRoleLabel || 'ผู้ใช้งานระบบ'}
+                        {roleStatusLabel}
                       </p>
                     </div>
                     <LogoutButton />
