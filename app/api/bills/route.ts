@@ -12,11 +12,13 @@ import {
 // สิทธิ์ที่อนุญาตให้เข้าถึงข้อมูลบิล (ระดับระบบ)
 const BILL_ACCESS_ROLES: AppRoleCode[] = [
   'ADMIN',        // ผู้ดูแลระบบ
-  'FINANCE',      // การเงิน
+  'FINANCE',      // การเงิน (legacy)
+  'FINANCE-R',    // การเงินอาคารรวงผึ้ง
+  'FINANCE-M',    // การเงินอาคารแพทยศาสตร์
   'SUPERUSER_RP', // Superuser หอพักรวงผึ้ง
   'SUPERUSER_MED' // Superuser หอพักแพทยศาสตร์
 ];
-const BILL_MANAGE_ROLES: AppRoleCode[] = ['ADMIN', 'FINANCE'];
+const BILL_MANAGE_ROLES: AppRoleCode[] = ['ADMIN', 'FINANCE', 'FINANCE-R', 'FINANCE-M'];
 
 // GET /api/bills?year=2568&month=10&room_id=1
 export async function GET(req: Request) {

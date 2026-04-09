@@ -25,7 +25,7 @@ export async function getResolvedAllowedBuildingIdsForServerUser(): Promise<
 
 /**
  * Dashboard: รวมสิทธิ์กับพารามิเตอร์ ?building_id=
- * - effectiveIds undefined = แสดงรวมทุกอาคาร (เฉพาะ ADMIN/FINANCE เมื่อไม่ระบุอาคาร หรือผู้เยี่ยมไม่ระบุอาคาร)
+ * - effectiveIds undefined = แสดงรวมทุกอาคาร (เฉพาะ ADMIN/FINANCE legacy เมื่อไม่ระบุอาคาร หรือผู้เยี่ยมไม่ระบุอาคาร)
  * - effectiveIds เป็น array = กรองตามชุดนั้น
  * - ผู้เยี่ยม (ไม่ล็อกอิน): เลือกอาคารได้ผ่าน ?building_id= ที่มีในตาราง buildings เท่านั้น
  */

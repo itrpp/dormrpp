@@ -42,7 +42,7 @@ export default function AdminLayout({
     if (codes.has('ADMIN')) {
       return adminBrand;
     }
-    if (codes.has('FINANCE')) {
+    if (codes.has('FINANCE') || codes.has('FINANCE-R') || codes.has('FINANCE-M')) {
       return adminBrand;
     }
     if (codes.has('SUPERUSER_MED') || codes.has('TENANT_MED')) {
@@ -80,6 +80,8 @@ export default function AdminLayout({
     if (
       codes.has('ADMIN') ||
       codes.has('FINANCE') ||
+      codes.has('FINANCE-R') ||
+      codes.has('FINANCE-M') ||
       (legacyStaff && codes.size === 0)
     ) {
       return {
@@ -113,10 +115,10 @@ export default function AdminLayout({
     const codes = new Set(appRoleCodes ?? []);
     const managedBuildings: string[] = [];
 
-    if (codes.has('SUPERUSER_RP')) {
+    if (codes.has('SUPERUSER_RP') || codes.has('FINANCE-R')) {
       managedBuildings.push('หอพักรวงผึ้ง');
     }
-    if (codes.has('SUPERUSER_MED')) {
+    if (codes.has('SUPERUSER_MED') || codes.has('FINANCE-M')) {
       managedBuildings.push('หอพักแพทยศาสตร์');
     }
 

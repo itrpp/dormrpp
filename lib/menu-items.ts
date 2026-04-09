@@ -16,7 +16,7 @@ const MENU_ITEMS: MenuItem[] = [
   { href: '/dormrpp/tenants', label: 'ผู้เช่า', icon: '👥', requiredAppRoles: ['ADMIN', 'SUPERUSER_RP', 'SUPERUSER_MED'] },
   { href: '/dormrpp/utility-readings', label: 'บันทึกเลขมิเตอร์', icon: '📝', requiredAppRoles: ['ADMIN', 'SUPERUSER_RP', 'SUPERUSER_MED'] },
   { href: '/dormrpp/meters', label: '💧⚡ตรวจสอบ มิเตอร์น้ำ-ไฟ', icon: '', public: true },
-  { href: '/dormrpp/bills', label: 'บิลค่าใช้จ่าย', icon: '💰', requiredAppRoles: ['ADMIN', 'FINANCE', 'SUPERUSER_RP', 'SUPERUSER_MED'] },
+  { href: '/dormrpp/bills', label: 'บิลค่าใช้จ่าย', icon: '💰', requiredAppRoles: ['ADMIN', 'FINANCE', 'FINANCE-R', 'FINANCE-M', 'SUPERUSER_RP', 'SUPERUSER_MED'] },
   { href: '/dormrpp/announcements', label: 'จัดการประกาศ', icon: '📢', requiredAppRoles: ['ADMIN', 'SUPERUSER_RP', 'SUPERUSER_MED'] },
   { href: '/dormrpp/tenant-mappings', label: 'แมปผู้ใช้↔ผู้เช่าเพื่อดูบิล', icon: '🧩', requiredAppRoles: ['ADMIN', 'SUPERUSER_RP', 'SUPERUSER_MED'] },
   { href: '/dormrpp/user-roles', label: 'สิทธิ์ผู้ใช้', icon: '🔐', requiredAppRoles: ['ADMIN'] },

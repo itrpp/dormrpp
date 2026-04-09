@@ -39,6 +39,8 @@ function parseRoleCodes(roleCodes: string | null | undefined): AppRoleCode[] {
     'SUPERUSER_RP',
     'SUPERUSER_MED',
     'FINANCE',
+    'FINANCE-R',
+    'FINANCE-M',
     'TENANT_RP',
     'TENANT_MED',
     'USER',
@@ -145,6 +147,8 @@ export async function setUserRoles(
     'SUPERUSER_RP',
     'SUPERUSER_MED',
     'FINANCE',
+    'FINANCE-R',
+    'FINANCE-M',
     'TENANT_RP',
     'TENANT_MED',
     'USER',
@@ -179,7 +183,7 @@ export async function setUserRoles(
     if (insertedRows !== uniqueAllowedCodes.length) {
       await connection.rollback();
       throw new Error(
-        `ไม่สามารถแมปสิทธิ์ทั้งหมดกับตาราง auth_roles ได้ (บันทึกได้ ${insertedRows}/${uniqueAllowedCodes.length} รายการ) กรุณาตรวจสอบว่าตาราง auth_roles มี code ครบ: ADMIN, SUPERUSER_RP, SUPERUSER_MED, FINANCE, TENANT_RP, TENANT_MED`,
+        `ไม่สามารถแมปสิทธิ์ทั้งหมดกับตาราง auth_roles ได้ (บันทึกได้ ${insertedRows}/${uniqueAllowedCodes.length} รายการ) กรุณาตรวจสอบว่าตาราง auth_roles มี code ครบ: ADMIN, SUPERUSER_RP, SUPERUSER_MED, FINANCE, FINANCE-R, FINANCE-M, TENANT_RP, TENANT_MED`,
       );
     }
 

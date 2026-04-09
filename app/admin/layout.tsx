@@ -21,6 +21,8 @@ export default async function AdminLayout({ children }: { children: ReactNode })
       'SUPERUSER_RP',
       'SUPERUSER_MED',
       'FINANCE',
+      'FINANCE-R',
+      'FINANCE-M',
       'TENANT_RP',
       'TENANT_MED',
     ];

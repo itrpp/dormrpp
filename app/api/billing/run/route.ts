@@ -4,13 +4,22 @@ import { query, pool } from '@/lib/db';
 import { getOrCreateBillingCycle, getUtilityTypeId, getCurrentUtilityRate } from '@/lib/repositories/bills';
 import { requireAppRoles } from '@/lib/auth/middleware';
 import type { AppRoleCode } from '@/lib/auth/app-roles';
+import { getAdminBuildingScopeFromAppRoles, resolveAllowedBuildingIdsForListQuery } from '@/lib/auth/building-scope';
 
-const BILL_MANAGE_ROLES: AppRoleCode[] = ['ADMIN', 'FINANCE'];
+const BILL_MANAGE_ROLES: AppRoleCode[] = ['ADMIN', 'FINANCE', 'FINANCE-R', 'FINANCE-M'];
 
 export async function POST(req: Request) {
   const authResult = await requireAppRoles(BILL_MANAGE_ROLES);
   if (!authResult.authorized) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+  const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+  const allowedBuildingIds = resolveAllowedBuildingIdsForListQuery(scope, null);
+  if (allowedBuildingIds !== null && allowedBuildingIds.length === 0) {
+    return NextResponse.json(
+      { error: 'ไม่มีสิทธิ์จัดการบิลของอาคารใด' },
+      { status: 403 },
+    );
   }
   const connection = await pool.getConnection();
   
@@ -52,6 +61,13 @@ export async function POST(req: Request) {
     // จำนวนเงินทั้งหมดจะคำนวณจาก meter readings ใน API อื่นๆ แทน
     // ค่าบำรุงรักษา: แต่ละคนจ่ายเต็มจำนวน 1000 บาท (ใช้ค่าคงที่ ไม่เก็บในฐานข้อมูล)
     // ค่าน้ำและค่าไฟ: หารด้วยจำนวนผู้เช่าในห้อง (active contracts) - คำนวณใน API อื่นๆ
+    const buildingFilterSql =
+      allowedBuildingIds === null
+        ? ''
+        : allowedBuildingIds.length === 1
+        ? ' AND r.building_id = ?'
+        : ` AND r.building_id IN (${allowedBuildingIds.map(() => '?').join(',')})`;
+
     const sql = `
       INSERT INTO bills (
         tenant_id,
@@ -67,11 +83,13 @@ export async function POST(req: Request) {
         bc.cycle_id,
         'draft' AS status
       FROM contracts c
+      JOIN rooms r ON r.room_id = c.room_id
       JOIN billing_cycles bc
         ON bc.billing_year = ?
        AND bc.billing_month = ?
       
       WHERE c.status = 'active'
+      ${buildingFilterSql}
       
       -- ป้องกันออกบิลซ้ำ (UNIQUE KEY: tenant_id + cycle_id)
       AND NOT EXISTS (
@@ -81,10 +99,12 @@ export async function POST(req: Request) {
       );
     `;
 
-    const result = await connection.query(sql, [
+    const sqlParams = [
       year, // JOIN billing_cycles billing_year
       month, // JOIN billing_cycles billing_month
-    ]);
+      ...(allowedBuildingIds ?? []),
+    ];
+    const result = await connection.query(sql, sqlParams);
 
     const affectedRows = (result as any).affectedRows || 0;
 

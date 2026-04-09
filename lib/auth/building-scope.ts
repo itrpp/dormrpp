@@ -13,13 +13,17 @@ export type AdminBuildingScope =
 export const ADMIN_BUILDING_DATA_ACCESS_ROLES: AppRoleCode[] = [
   'ADMIN',
   'FINANCE',
+  'FINANCE-R',
+  'FINANCE-M',
   'SUPERUSER_RP',
   'SUPERUSER_MED',
 ];
 
 /**
- * ADMIN / FINANCE เห็นทุกอาคาร
- * SUPERUSER_RP → อาคารรวงผึ้ง, SUPERUSER_MED → อาคารแพทย์ (มีทั้งสอง role = สองอาคาร)
+ * ADMIN / FINANCE (legacy) เห็นทุกอาคาร
+ * SUPERUSER_RP / FINANCE-R → อาคารรวงผึ้ง
+ * SUPERUSER_MED / FINANCE-M → อาคารแพทย์
+ * หากมีทั้งสอง role ฝั่งรายอาคาร = เห็นสองอาคาร
  */
 export function getAdminBuildingScopeFromAppRoles(
   roles: AppRoleCode[],
@@ -28,8 +32,12 @@ export function getAdminBuildingScopeFromAppRoles(
     return { kind: 'all' };
   }
   const ids: number[] = [];
-  if (roles.includes('SUPERUSER_RP')) ids.push(BUILDING_ID_RUANG_PHUENG);
-  if (roles.includes('SUPERUSER_MED')) ids.push(BUILDING_ID_MED);
+  if (roles.includes('SUPERUSER_RP') || roles.includes('FINANCE-R')) {
+    ids.push(BUILDING_ID_RUANG_PHUENG);
+  }
+  if (roles.includes('SUPERUSER_MED') || roles.includes('FINANCE-M')) {
+    ids.push(BUILDING_ID_MED);
+  }
   const unique = [...new Set(ids)];
   if (unique.length === 0) {
     return { kind: 'all' };

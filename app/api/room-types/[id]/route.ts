@@ -10,6 +10,8 @@ import {
 const MUTATE_ROLES: AppRoleCode[] = [
   'ADMIN',
   'FINANCE',
+  'FINANCE-R',
+  'FINANCE-M',
   'SUPERUSER_RP',
   'SUPERUSER_MED',
 ];

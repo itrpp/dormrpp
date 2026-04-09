@@ -7,7 +7,9 @@ import type { SessionUser } from './session';
  * ADMIN         : ผู้ดูแลระบบ จัดการได้ทั้งหมด
  * SUPERUSER_RP  : Superuser หอพักรวงผึ้ง
  * SUPERUSER_MED : Superuser หอพักแพทยศาสตร์
- * FINANCE       : เจ้าหน้าที่การเงิน จัดการบิลทั้ง 2 อาคาร
+ * FINANCE       : (legacy) เจ้าหน้าที่การเงิน จัดการบิลทั้ง 2 อาคาร
+ * FINANCE-R     : เจ้าหน้าที่การเงินอาคารรวงผึ้ง
+ * FINANCE-M     : เจ้าหน้าที่การเงินอาคารแพทยศาสตร์
  * TENANT_RP     : ผู้เช่าหอพักรวงผึ้ง เห็นบิลเฉพาะห้องตัวเอง
  * TENANT_MED    : ผู้เช่าหอพักแพทยศาสตร์ เห็นบิลเฉพาะห้องตัวเอง
  * USER          : ผู้ใช้งานทั่วไป – เห็นเฉพาะ Dashboard, ตรวจสอบมิเตอร์, ประกาศ
@@ -17,6 +19,8 @@ export type AppRoleCode =
   | 'SUPERUSER_RP'
   | 'SUPERUSER_MED'
   | 'FINANCE'
+  | 'FINANCE-R'
+  | 'FINANCE-M'
   | 'TENANT_RP'
   | 'TENANT_MED'
   | 'USER';

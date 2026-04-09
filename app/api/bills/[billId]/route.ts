@@ -3,14 +3,32 @@ import { NextResponse } from 'next/server';
 import { getBillById, updateBill, deleteBill } from '@/lib/repositories/bills';
 import { requireAppRoles } from '@/lib/auth/middleware';
 import type { AppRoleCode } from '@/lib/auth/app-roles';
+import { query } from '@/lib/db';
+import { getAdminBuildingScopeFromAppRoles, isBuildingIdInScope } from '@/lib/auth/building-scope';
 
 const BILL_ACCESS_ROLES: AppRoleCode[] = [
   'ADMIN',
   'FINANCE',
+  'FINANCE-R',
+  'FINANCE-M',
   'SUPERUSER_RP',
   'SUPERUSER_MED',
 ];
-const BILL_MANAGE_ROLES: AppRoleCode[] = ['ADMIN', 'FINANCE'];
+const BILL_MANAGE_ROLES: AppRoleCode[] = ['ADMIN', 'FINANCE', 'FINANCE-R', 'FINANCE-M'];
+
+async function getBillBuildingId(billId: number): Promise<number | null> {
+  const rows = await query<{ building_id: number }>(
+    `
+      SELECT r.building_id
+      FROM bills b
+      JOIN rooms r ON r.room_id = b.room_id
+      WHERE b.bill_id = ?
+      LIMIT 1
+    `,
+    [billId],
+  );
+  return rows[0]?.building_id ?? null;
+}
 
 // GET /api/bills/[billId]
 export async function GET(
@@ -23,6 +41,17 @@ export async function GET(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     const billId = Number(params.billId);
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+    const buildingId = await getBillBuildingId(billId);
+    if (buildingId == null) {
+      return NextResponse.json(
+        { error: 'Bill not found' },
+        { status: 404 }
+      );
+    }
+    if (!isBuildingIdInScope(buildingId, scope)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     const bill = await getBillById(billId);
 
     if (!bill) {
@@ -53,6 +82,17 @@ export async function PATCH(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     const billId = Number(params.billId);
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+    const buildingId = await getBillBuildingId(billId);
+    if (buildingId == null) {
+      return NextResponse.json(
+        { error: 'Bill not found' },
+        { status: 404 }
+      );
+    }
+    if (!isBuildingIdInScope(buildingId, scope)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     const body = await req.json();
 
     await updateBill(billId, {
@@ -84,6 +124,17 @@ export async function DELETE(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     const billId = Number(params.billId);
+    const scope = getAdminBuildingScopeFromAppRoles(authResult.appRoles ?? []);
+    const buildingId = await getBillBuildingId(billId);
+    if (buildingId == null) {
+      return NextResponse.json(
+        { error: 'Bill not found' },
+        { status: 404 }
+      );
+    }
+    if (!isBuildingIdInScope(buildingId, scope)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     await deleteBill(billId);
 
     return NextResponse.json({ message: 'Bill deleted' });

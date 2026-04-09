@@ -8,7 +8,7 @@ import {
 } from '@/lib/auth/building-scope';
 
 export const dynamic = 'force-dynamic';
-const BILL_MANAGE_ROLES: AppRoleCode[] = ['ADMIN', 'FINANCE'];
+const BILL_MANAGE_ROLES: AppRoleCode[] = ['ADMIN', 'FINANCE', 'FINANCE-R', 'FINANCE-M'];
 
 async function ensureBillFeeExemptionsTable() {
   await query(

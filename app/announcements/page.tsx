@@ -20,6 +20,8 @@ export default async function AnnouncementsPage() {
       'SUPERUSER_RP',
       'SUPERUSER_MED',
       'FINANCE',
+      'FINANCE-R',
+      'FINANCE-M',
       'TENANT_RP',
       'TENANT_MED',
       'USER',
