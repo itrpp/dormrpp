@@ -53,6 +53,9 @@ type Props = {
 
 const COLORS = ['#10b981', '#3b82f6', '#6b7280', '#ef4444'];
 
+const chartCardClass =
+  'rounded-xl border border-slate-200/90 bg-gradient-to-b from-white via-slate-50/70 to-slate-100/50 p-3 shadow-sm shadow-slate-200/40 ring-1 ring-slate-100/80 sm:p-4';
+
 export default function DashboardCharts({
   roomStatusData,
   monthlyRevenueData,
@@ -60,9 +63,9 @@ export default function DashboardCharts({
   occupancyData,
 }: Props) {
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       {/* กราฟวงกลม: สถานะห้องพัก */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-3">
+      <div className={chartCardClass}>
         <h3 className="text-sm font-semibold mb-2 text-gray-800 flex items-center gap-1.5">
           <span className="text-base">📊</span>
           <span>สถานะห้องพัก</span>
@@ -95,7 +98,7 @@ export default function DashboardCharts({
       </div>
 
       {/* กราฟแท่ง: จำนวนผู้เช่าใหม่/ออกรายเดือน */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-3">
+      <div className={chartCardClass}>
         <h3 className="text-sm font-semibold mb-2 text-gray-800 flex items-center gap-1.5">
           <span className="text-base">👥</span>
           <span>จำนวนผู้เช่าใหม่/ออกรายเดือน</span>
@@ -122,7 +125,7 @@ export default function DashboardCharts({
       </div>
 
       {/* กราฟเส้น: รายได้รายเดือน */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-3">
+      <div className={chartCardClass}>
         <h3 className="text-sm font-semibold mb-2 text-gray-800 flex items-center gap-1.5">
           <span className="text-base">💰</span>
           <span>รายได้รายเดือน</span>
@@ -161,7 +164,7 @@ export default function DashboardCharts({
       </div>
 
       {/* กราฟพื้นที่: อัตราการเข้าพักรายเดือน */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-3">
+      <div className={chartCardClass}>
         <h3 className="text-sm font-semibold mb-2 text-gray-800 flex items-center gap-1.5">
           <span className="text-base">📈</span>
           <span>อัตราการเข้าพักรายเดือน</span>

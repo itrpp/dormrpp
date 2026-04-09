@@ -69,9 +69,9 @@ export default function AdminMobileMenu({ sessionName, sessionRole }: MobileMenu
           <div className="flex items-center justify-between p-4 border-b border-gray-200">
             <div className="flex items-center gap-2">
               <img
-                src="/logo.jpg"
-                alt="หอพักรวงผึ้ง"
-                className="h-8 w-8 object-cover rounded-full"
+                src="/rpp-admin-logo.png"
+                alt="โรงพยาบาลราชพิพัฒน์"
+                className="h-8 w-8 object-contain rounded-full"
               />
               <span className="text-sm font-bold text-gray-800">เมนู</span>
             </div>

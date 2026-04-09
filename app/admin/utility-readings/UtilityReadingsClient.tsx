@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { getMonthNameThai } from '@/lib/date-utils';
+import { ADMIN_SURFACE_CARD } from '@/lib/ui/admin-surface';
 
 interface Room {
   room_id: number;
@@ -1050,7 +1051,7 @@ export default function UtilityReadingsClient({
         <h1 className="text-3xl font-bold text-gray-800 mb-4">บันทึกเลขมิเตอร์ (ค่าน้ำ/ค่าไฟ)</h1>
         
         {/* เลือกรอบบิล */}
-        <div className="bg-white shadow rounded-lg p-4 mb-4">
+        <div className={`${ADMIN_SURFACE_CARD} p-4 mb-4`}>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium mb-2 text-gray-700">
@@ -1072,7 +1073,7 @@ export default function UtilityReadingsClient({
                 อาคาร
               </label>
               <div
-                className="bg-white rounded-lg border border-gray-200 shadow-sm px-2 pt-2"
+                className={`${ADMIN_SURFACE_CARD} px-2 pt-2`}
                 role="tablist"
                 aria-label="เลือกอาคาร"
               >
@@ -1160,7 +1161,7 @@ export default function UtilityReadingsClient({
 
       {/* เลือกห้องที่จะบันทึก (จำไว้) */}
       {cycleId && roomsInSelectedBuilding.length > 0 && (
-        <div className="bg-white shadow rounded-lg p-4 mb-4">
+        <div className={`${ADMIN_SURFACE_CARD} p-4 mb-4`}>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-2">
             <div>
               <div className="text-sm font-semibold text-gray-800">
@@ -1225,7 +1226,7 @@ export default function UtilityReadingsClient({
       )}
 
       {cycleId && roomsInSelectedBuilding.length === 0 && (
-        <div className="bg-white shadow rounded-lg p-4 mb-4 text-sm text-gray-600">
+        <div className={`${ADMIN_SURFACE_CARD} p-4 mb-4 text-sm text-gray-600`}>
           ไม่พบห้องที่มีสัญญา active ในอาคารที่เลือก
         </div>
       )}
@@ -1272,7 +1273,7 @@ export default function UtilityReadingsClient({
       {/* ตารางบันทึกเลขมิเตอร์ */}
       {!cycleId ? (
         !isLoadingCycle ? (
-          <div className="bg-white shadow rounded-lg p-8 text-center">
+          <div className={`${ADMIN_SURFACE_CARD} p-8 text-center`}>
             <div className="flex flex-col items-center gap-4">
               <svg className="h-16 w-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -1286,7 +1287,7 @@ export default function UtilityReadingsClient({
       ) : isLoadingRooms ? (
         <div className="text-center py-8">กำลังโหลดข้อมูล...</div>
       ) : (
-        <div className="bg-white shadow rounded-lg overflow-hidden">
+        <div className={`${ADMIN_SURFACE_CARD} overflow-hidden`}>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50 border-b-2 border-gray-300">

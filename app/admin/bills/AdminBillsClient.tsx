@@ -6,6 +6,7 @@ import { getMonthNameThai } from '@/lib/date-utils';
 import BillPreviewContent, {
   type BillPreviewData,
 } from '@/components/BillPreviewContent';
+import { ADMIN_SURFACE_CARD } from '@/lib/ui/admin-surface';
 
 // ค่าบำรุงรักษาคงที่
 const MAINTENANCE_FEE = 1000;
@@ -139,8 +140,8 @@ export default function AdminBillsClient({
   }>({ electric: null, water: null });
   const [isLoadingReadings, setIsLoadingReadings] = useState(false);
 
-  // แท็บเลือกอาคาร (เพื่อกรองตาราง/Export/สัญญาที่ใช้สร้างบิล)
-  const [selectedBuildingId, setSelectedBuildingId] = useState<number | 'all'>('all');
+  // แท็บเลือกอาคาร (เพื่อกรองตาราง/Export/สัญญาที่ใช้สร้างบิล) — ไม่มีโหมด "ทุกอาคาร"
+  const [selectedBuildingId, setSelectedBuildingId] = useState<number | null>(null);
   /** ยกเว้นค่าบำรุงรักษา/ค่าห้องรายห้อง (เก็บเป็น room_id) สำหรับตอน “ออกบิล” */
   const [exemptMaintenanceRoomIds, setExemptMaintenanceRoomIds] = useState<Set<number>>(
     () => new Set(),
@@ -208,48 +209,40 @@ export default function AdminBillsClient({
     );
   }, [bills]);
 
-  const filteredBills = useMemo(() => {
-    if (selectedBuildingId === 'all') return bills;
-    return bills.filter((b) => b.building_id === selectedBuildingId);
-  }, [bills, selectedBuildingId]);
-
-  const filteredContracts = useMemo(() => {
-    if (selectedBuildingId === 'all') return contracts;
-    return contracts.filter((c) => c.building_id === selectedBuildingId);
-  }, [contracts, selectedBuildingId]);
-
-  // ถ้าบิลที่โหลดมาไม่มีอาคารที่เลือกอยู่แล้ว ให้กลับเป็น "ทุกอาคาร"
-  useEffect(() => {
-    if (selectedBuildingId === 'all') return;
-    if (!buildingOptions.some(([id]) => id === selectedBuildingId)) {
-      setSelectedBuildingId('all');
+  /** อาคารที่ใช้กรองจริง: ถ้ายังไม่เลือกหรือเลือกไม่ตรงรายการ ให้ใช้อาคารแรกตามลำดับชื่อ */
+  const effectiveBuildingId = useMemo(() => {
+    if (buildingOptions.length === 0) return null;
+    if (
+      selectedBuildingId != null &&
+      buildingOptions.some(([id]) => id === selectedBuildingId)
+    ) {
+      return selectedBuildingId;
     }
+    return buildingOptions[0][0];
   }, [buildingOptions, selectedBuildingId]);
 
-  // กัน UX: กรณีเลือกอาคารแล้ว แต่ตารางกรองไม่พบข้อมูล
-  // (เช่น state ค้าง/ประเภทข้อมูลไม่ตรง) ให้กลับไปที่ "ทุกอาคาร"
-  useEffect(() => {
-    if (selectedBuildingId === 'all') return;
-    if (bills.length === 0) return;
-    if (filteredBills.length === 0) {
-      setSelectedBuildingId('all');
-    }
-  }, [selectedBuildingId, filteredBills.length, bills.length]);
+  const filteredBills = useMemo(() => {
+    if (effectiveBuildingId == null) return [];
+    return bills.filter((b) => b.building_id === effectiveBuildingId);
+  }, [bills, effectiveBuildingId]);
+
+  const filteredContracts = useMemo(() => {
+    if (effectiveBuildingId == null) return [];
+    return contracts.filter((c) => c.building_id === effectiveBuildingId);
+  }, [contracts, effectiveBuildingId]);
 
   // กันกรณีผู้ใช้สลับแท็บอาคารตอนที่ modal เปิดอยู่
   useEffect(() => {
     if (!isCreateModalOpen) return;
+    if (effectiveBuildingId == null) return;
     setForm((prev) => {
-      const nextIds =
-        selectedBuildingId === 'all'
-          ? prev.contract_ids
-          : prev.contract_ids.filter((id) => {
-              const c = contracts.find((x) => x.contract_id === id);
-              return c ? c.building_id === selectedBuildingId : false;
-            });
+      const nextIds = prev.contract_ids.filter((id) => {
+        const c = contracts.find((x) => x.contract_id === id);
+        return c ? c.building_id === effectiveBuildingId : false;
+      });
       return { ...prev, contract_ids: nextIds };
     });
-  }, [selectedBuildingId, isCreateModalOpen, contracts]);
+  }, [effectiveBuildingId, isCreateModalOpen, contracts]);
 
   // เปลี่ยนสถานะบิล (รายการเดียว)
   const handleBillStatusChange = async (billId: number, newStatus: string) => {
@@ -730,13 +723,12 @@ export default function AdminBillsClient({
   // Export Excel
   const handleExportExcel = async () => {
     try {
-      const buildingIdParam =
-        selectedBuildingId === 'all' ? '' : `&building_id=${selectedBuildingId}`;
+      if (effectiveBuildingId == null) return;
+
+      const buildingIdParam = `&building_id=${effectiveBuildingId}`;
 
       const selectedBuildingName =
-        selectedBuildingId === 'all'
-          ? null
-          : buildingOptions.find(([id]) => id === selectedBuildingId)?.[1] ?? null;
+        buildingOptions.find(([id]) => id === effectiveBuildingId)?.[1] ?? null;
 
       const res = await fetch(
         `/api/bills/export/excel?year=${year}&month=${month}${buildingIdParam}`
@@ -750,10 +742,9 @@ export default function AdminBillsClient({
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download =
-        selectedBuildingName && selectedBuildingId !== 'all'
-          ? `บิล_${year}_${month}_${selectedBuildingName}.xlsx`
-          : `บิล_${year}_${month}_ทั้งหมด.xlsx`;
+      a.download = selectedBuildingName
+        ? `บิล_${year}_${month}_${selectedBuildingName}.xlsx`
+        : `บิล_${year}_${month}.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -918,7 +909,7 @@ export default function AdminBillsClient({
           <h1 className="text-3xl font-bold text-gray-800">จัดการบิลค่าใช้จ่าย</h1>
           {!canManageBills && (
             <p className="text-xs text-amber-700 mt-1">
-              โหมดอ่านอย่างเดียว: บัญชีผู้ดูแลรายอาคารไม่สามารถแก้ไขบิลได้
+              โหมดอ่านอย่างเดียว:
             </p>
           )}
         </div>
@@ -972,42 +963,30 @@ export default function AdminBillsClient({
 
       {/* แท็บเลือกอาคาร — แยกมุมมองชัดเจน */}
       {bills.length > 0 && (
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm px-2 sm:px-3 pt-2 mb-4">
+        <div className={`${ADMIN_SURFACE_CARD} px-2 sm:px-3 pt-2 mb-4`}>
           <div className="flex items-center justify-between gap-3 px-1 pb-2">
             <div className="text-sm font-medium text-gray-800">
               แยกตามอาคาร
             </div>
-            {selectedBuildingId !== 'all' && (
+            {effectiveBuildingId != null && (
               <div className="text-xs text-gray-500">
-                แสดงเฉพาะอาคาร: {buildingOptions.find(([id]) => id === selectedBuildingId)?.[1] ?? '-'}
+                แสดงเฉพาะอาคาร:{' '}
+                {buildingOptions.find(([id]) => id === effectiveBuildingId)?.[1] ?? '-'}
               </div>
             )}
           </div>
 
           <div className="overflow-x-auto pb-2">
             <div className="flex flex-nowrap gap-1 min-w-0">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={selectedBuildingId === 'all'}
-                onClick={() => setSelectedBuildingId('all')}
-                className={`shrink-0 px-3 py-2 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
-                  selectedBuildingId === 'all'
-                    ? 'border-blue-600 text-blue-800 bg-blue-50/90'
-                    : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
-                }`}
-              >
-                ทุกอาคาร
-              </button>
               {buildingOptions.map(([id, name]) => (
                 <button
                   key={id}
                   type="button"
                   role="tab"
-                  aria-selected={selectedBuildingId === id}
+                  aria-selected={effectiveBuildingId === id}
                   onClick={() => setSelectedBuildingId(id)}
                   className={`shrink-0 px-3 py-2 text-sm font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
-                    selectedBuildingId === id
+                    effectiveBuildingId === id
                       ? 'border-slate-700 text-slate-900 bg-slate-100'
                       : 'border-transparent text-gray-600 hover:text-gray-900 hover:bg-gray-50'
                   }`}
@@ -1023,14 +1002,14 @@ export default function AdminBillsClient({
       {isLoading ? (
         <div className="text-center py-8 text-gray-500">กำลังโหลดข้อมูล...</div>
       ) : filteredBills.length === 0 ? (
-        <div className="bg-white shadow rounded-lg p-8 text-center">
+        <div className={`${ADMIN_SURFACE_CARD} p-8 text-center`}>
           <p className="text-gray-500">ไม่พบข้อมูลบิลสำหรับ {getMonthNameThai(month)} {year}</p>
           <p className="text-sm text-gray-400 mt-2">
             กรุณาตรวจสอบปีและเดือนที่เลือก หรือสร้างบิลใหม่
           </p>
         </div>
       ) : (
-        <div className="bg-white shadow rounded-lg overflow-x-auto">
+        <div className={`${ADMIN_SURFACE_CARD} overflow-x-auto`}>
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>

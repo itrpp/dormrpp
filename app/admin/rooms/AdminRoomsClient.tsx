@@ -4,6 +4,7 @@ import { useMemo, useState, useEffect } from 'react';
 import type { RoomWithDetails } from '@/lib/repositories/rooms';
 import type { Building, RoomType } from '@/types/db';
 import type { RoomOccupancyInfo } from '@/lib/repositories/room-occupancy';
+import { ADMIN_SURFACE_CARD } from '@/lib/ui/admin-surface';
 
 type Props = {
   initialRooms: RoomWithDetails[];
@@ -1320,7 +1321,7 @@ export default function AdminRoomsClient({
 
         {/* แท็บเลือกอาคาร — แยกมุมมองชัดเจน */}
         <div
-          className="bg-white rounded-lg border border-gray-200 shadow-sm px-2 sm:px-3 pt-2"
+          className={`${ADMIN_SURFACE_CARD} px-2 sm:px-3 pt-2`}
           role="tablist"
           aria-label="เลือกอาคาร"
         >
@@ -1370,7 +1371,7 @@ export default function AdminRoomsClient({
       </div>
 
       {/* แถว filter (ชั้น + สถานะ) */}
-      <div className="bg-white shadow rounded-lg p-4 mb-4 flex flex-col lg:flex-row gap-4 lg:items-end">
+      <div className={`${ADMIN_SURFACE_CARD} p-4 mb-4 flex flex-col lg:flex-row gap-4 lg:items-end`}>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             ชั้น
@@ -1426,7 +1427,7 @@ export default function AdminRoomsClient({
 
       {/* ตัวเลือกแสดงผลและข้อมูลสรุป - แสดงเฉพาะในมุมมองตาราง */}
       {viewMode === 'table' && (
-        <div className="bg-white shadow rounded-lg p-4 mb-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className={`${ADMIN_SURFACE_CARD} p-4 mb-4 flex flex-col sm:flex-row items-center justify-between gap-4`}>
           <div className="text-sm text-gray-700">
             แสดง {startIndex + 1} - {Math.min(endIndex, filteredRooms.length)} จาก {filteredRooms.length} รายการ
           </div>
@@ -1452,7 +1453,7 @@ export default function AdminRoomsClient({
       {viewMode === 'table' ? (
         <>
           {/* ตารางห้องพัก */}
-          <div className="bg-white shadow rounded-lg overflow-hidden">
+          <div className={`${ADMIN_SURFACE_CARD} overflow-hidden`}>
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
@@ -1658,7 +1659,7 @@ export default function AdminRoomsClient({
 
           {/* Pagination */}
           {totalPages > 1 && (
-            <div className="bg-white shadow rounded-lg p-4 mt-4">
+            <div className={`${ADMIN_SURFACE_CARD} p-4 mt-4`}>
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                 <div className="flex items-center gap-2">
                   <button
@@ -1735,7 +1736,7 @@ export default function AdminRoomsClient({
               });
 
               return (
-                <div key={floor} className="bg-white shadow rounded-lg p-4">
+                <div key={floor} className={`${ADMIN_SURFACE_CARD} p-4`}>
                   <h2 className="text-xl font-bold text-gray-800 mb-2">
                     ชั้น {floor}
                   </h2>
@@ -1946,13 +1947,13 @@ export default function AdminRoomsClient({
               );
             })}
           {roomsByFloor.size === 0 && (
-            <div className="bg-white shadow rounded-lg p-8 text-center text-gray-500">
+            <div className={`${ADMIN_SURFACE_CARD} p-8 text-center text-gray-500`}>
               ไม่พบข้อมูลห้องพัก
             </div>
           )}
           
           {/* แถบอธิบายสีและความหมายของสถานะห้อง */}
-          <div className="bg-white shadow rounded-lg p-4 mt-4">
+          <div className={`${ADMIN_SURFACE_CARD} p-4 mt-4`}>
             <h3 className="text-sm font-semibold text-gray-700 mb-3">คำอธิบายสีและสถานะห้อง</h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
               <div className="flex items-center gap-2">
@@ -2469,7 +2470,7 @@ export default function AdminRoomsClient({
                         .map((tenant) => (
                         <div
                           key={tenant.tenant_id}
-                          className="bg-white rounded-lg p-4 border border-gray-200"
+                          className={`${ADMIN_SURFACE_CARD} p-4`}
                         >
                           <div className="flex justify-between items-start">
                             <div className="grid grid-cols-2 gap-4 flex-1">
@@ -2637,7 +2638,7 @@ export default function AdminRoomsClient({
                       {roomDetails.recentBills.map((bill) => (
                         <div
                           key={bill.bill_id}
-                          className="bg-white rounded-lg p-3 border border-gray-200 flex justify-between items-center"
+                          className={`${ADMIN_SURFACE_CARD} p-3 flex justify-between items-center`}
                         >
                           <div>
                             <p className="font-medium">

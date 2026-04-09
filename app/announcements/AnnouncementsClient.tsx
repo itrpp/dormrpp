@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import { ADMIN_SURFACE_CARD } from '@/lib/ui/admin-surface';
 
 const PAGE_SIZE = 20;
 
@@ -213,7 +214,7 @@ export default function AnnouncementsClient() {
           ← กลับ
         </button>
 
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        <div className={`${ADMIN_SURFACE_CARD} p-6`}>
           <h1 className="text-2xl font-bold text-gray-900 mb-2">
             {selectedAnnouncement.announcement.title}
           </h1>
@@ -407,7 +408,7 @@ export default function AnnouncementsClient() {
         <p className="text-sm text-gray-500">หอพักรวงผึ้ง - โรงพยาบาลราชพิพัฒน์</p>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-6">
+      <div className={`${ADMIN_SURFACE_CARD} p-4 mb-6`}>
         <div className="flex flex-col md:flex-row gap-4 items-stretch md:items-center">
           <input
             type="text"
@@ -440,7 +441,7 @@ export default function AnnouncementsClient() {
               return (
                 <div
                   key={announcement.announcement_id}
-                  className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow cursor-pointer"
+                  className={`${ADMIN_SURFACE_CARD} p-5 hover:shadow-md transition-shadow cursor-pointer`}
                   onClick={() => handleOpenAnnouncement(announcement.announcement_id)}
                 >
                   <div className="flex items-start gap-4">
@@ -484,7 +485,7 @@ export default function AnnouncementsClient() {
           </div>
 
           {filteredAnnouncements.length > 0 && (
-            <div className="mt-6 bg-white rounded-xl shadow-sm border border-gray-100 px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className={`mt-6 ${ADMIN_SURFACE_CARD} px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3`}>
               <p className="text-sm text-gray-600">
                 แสดง{' '}
                 <span className="font-medium">

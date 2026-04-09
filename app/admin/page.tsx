@@ -726,7 +726,7 @@ export default async function AdminDashboard({
       ? 'ไม่พบอาคารในเขตที่คุณดูแล'
       : scopedBuildingNames
         ? `ภาพรวมเฉพาะอาคารที่คุณดูแล — ${scopedBuildingNames}`
-        : 'ภาพรวมระบบจัดการหอพักรวงผึ้ง โรงพยาบาลราชพิพัฒน์';
+        : 'ภาพรวมระบบจัดการหอพัก โรงพยาบาลราชพิพัฒน์';
 
   return (
     <div className="space-y-3">
@@ -748,7 +748,7 @@ export default async function AdminDashboard({
       </div>
 
       {/* สถิติทั้งหมด */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-3">
+      <div className="rounded-xl border border-slate-200/90 bg-gradient-to-b from-white via-slate-50/70 to-slate-100/50 p-3 shadow-sm shadow-slate-200/40 ring-1 ring-slate-100/80 sm:p-4">
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-9 gap-3">
       {/* สถิติห้องพัก */}
           <div>

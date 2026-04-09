@@ -1,3 +1,4 @@
+import { query } from '@/lib/db';
 import { getSession } from './session';
 import { getAppRolesForSessionUser } from './app-roles';
 import type { AdminBuildingScope } from './building-scope';
@@ -24,8 +25,9 @@ export async function getResolvedAllowedBuildingIdsForServerUser(): Promise<
 
 /**
  * Dashboard: รวมสิทธิ์กับพารามิเตอร์ ?building_id=
- * - effectiveIds undefined = แสดงรวมทุกอาคาร (เฉพาะ ADMIN/FINANCE เมื่อไม่ระบุอาคาร)
+ * - effectiveIds undefined = แสดงรวมทุกอาคาร (เฉพาะ ADMIN/FINANCE เมื่อไม่ระบุอาคาร หรือผู้เยี่ยมไม่ระบุอาคาร)
  * - effectiveIds เป็น array = กรองตามชุดนั้น
+ * - ผู้เยี่ยม (ไม่ล็อกอิน): เลือกอาคารได้ผ่าน ?building_id= ที่มีในตาราง buildings เท่านั้น
  */
 export async function getDashboardBuildingResolution(
   requestedBuildingId?: number | null,
@@ -35,7 +37,23 @@ export async function getDashboardBuildingResolution(
 }> {
   const session = await getSession();
   if (!session) {
-    return { scope: { kind: 'all' }, effectiveIds: undefined };
+    const scope = { kind: 'all' as const };
+    if (
+      requestedBuildingId != null &&
+      Number.isFinite(Number(requestedBuildingId))
+    ) {
+      const bid = Math.trunc(Number(requestedBuildingId));
+      if (bid > 0) {
+        const rows = await query<{ building_id: number }>(
+          'SELECT building_id FROM buildings WHERE building_id = ? LIMIT 1',
+          [bid],
+        );
+        if (rows.length > 0) {
+          return { scope, effectiveIds: [bid] };
+        }
+      }
+    }
+    return { scope, effectiveIds: undefined };
   }
   const roles = await getAppRolesForSessionUser(session);
   const scope = getAdminBuildingScopeFromAppRoles(roles);

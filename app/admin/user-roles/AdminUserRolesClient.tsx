@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import type { AdminAuthUserRow, AuthRoleRow } from '@/lib/repositories/auth-users';
+import { ADMIN_SURFACE_CARD } from '@/lib/ui/admin-surface';
 
 type Props = {
   initialUsers: AdminAuthUserRow[];
@@ -196,7 +197,7 @@ export default function AdminUserRolesClient({ initialUsers, initialRoles }: Pro
         </div>
       </div>
 
-      <div className="bg-white shadow rounded-lg overflow-x-auto">
+      <div className={`${ADMIN_SURFACE_CARD} overflow-x-auto`}>
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
             <tr>

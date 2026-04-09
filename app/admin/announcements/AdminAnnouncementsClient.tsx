@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import type { AnnouncementStatus } from '@/types/db';
 import type { AdminAnnouncementForClient } from './page';
+import { ADMIN_SURFACE_CARD } from '@/lib/ui/admin-surface';
 
 // ใช้ type เดียวกับ page.tsx
 type Announcement = AdminAnnouncementForClient;
@@ -528,7 +529,7 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
       </div>
 
       {/* Filters - การ์ดเหมือนหน้าประกาศ */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 mb-6">
+      <div className={`${ADMIN_SURFACE_CARD} p-4 mb-6`}>
         <div className="flex flex-col md:flex-row gap-4 items-stretch md:items-end">
           <div className="flex-1">
             <label className="block text-sm font-medium text-gray-700 mb-1">ค้นหา</label>
@@ -573,7 +574,7 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
 
       {/* รายการประกาศแบบการ์ด - สไตล์เดียวกับหน้าประกาศ */}
       {filteredAnnouncements.length === 0 ? (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-12 text-center">
+        <div className={`${ADMIN_SURFACE_CARD} p-12 text-center`}>
           <p className="text-gray-500">ไม่พบประกาศ</p>
         </div>
       ) : (
@@ -584,7 +585,7 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
             return (
               <div
                 key={announcement.announcement_id}
-                className="bg-white rounded-lg shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow"
+                className={`${ADMIN_SURFACE_CARD} p-5 hover:shadow-md transition-shadow`}
               >
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
                   <div className="flex-1 min-w-0">
@@ -754,7 +755,7 @@ export default function AdminAnnouncementsClient({ initialAnnouncements }: Props
 
       {/* Pagination - 20 รายการต่อหน้า */}
       {filteredAnnouncements.length > 0 && (
-        <div className="mt-6 bg-white rounded-lg shadow-sm border border-gray-100 px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className={`mt-6 ${ADMIN_SURFACE_CARD} px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3`}>
           <p className="text-sm text-gray-600">
             แสดง{' '}
             <span className="font-medium">

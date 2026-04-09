@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { BillPreviewData } from '@/components/BillPreviewContent';
 import BillPreviewContent from '@/components/BillPreviewContent';
 import { getMonthNameThai } from '@/lib/date-utils';
+import { ADMIN_SURFACE_CARD } from '@/lib/ui/admin-surface';
 
 interface UtilityReading {
   reading_id: number;
@@ -303,11 +304,11 @@ export default function TenantBillsClient() {
       </div>
 
       {isLoading ? (
-        <div className="bg-white shadow rounded-lg p-8 text-center text-gray-500">
+        <div className={`${ADMIN_SURFACE_CARD} p-8 text-center text-gray-500`}>
           กำลังโหลดข้อมูล...
         </div>
       ) : rows.length === 0 ? (
-        <div className="bg-white shadow rounded-lg p-8 text-center">
+        <div className={`${ADMIN_SURFACE_CARD} p-8 text-center`}>
           <p className="text-gray-500">
             {monthValue === ''
               ? 'ยังไม่มีบิล'
@@ -318,7 +319,7 @@ export default function TenantBillsClient() {
           </p>
         </div>
       ) : (
-        <div className="bg-white shadow rounded-lg overflow-x-auto">
+        <div className={`${ADMIN_SURFACE_CARD} overflow-x-auto`}>
           <table className="min-w-full divide-y divide-gray-200 text-sm">
             <thead className="bg-gray-50">
               <tr>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { ADMIN_SURFACE_CARD } from '@/lib/ui/admin-surface';
 
 type TenantMappingRow = {
   auth_user_id: number;
@@ -224,7 +225,7 @@ export default function TenantAuthUsersClient() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* ตารางผู้ใช้ AD */}
-        <div className="lg:col-span-2 bg-white shadow rounded-lg overflow-hidden">
+        <div className={`lg:col-span-2 ${ADMIN_SURFACE_CARD} overflow-hidden`}>
           <div className="px-4 py-3 border-b border-gray-200 space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-gray-800">
@@ -407,7 +408,7 @@ export default function TenantAuthUsersClient() {
         </div>
 
         {/* แผงแก้ไข mapping */}
-        <div className="bg-white shadow rounded-lg p-4 space-y-4">
+        <div className={`${ADMIN_SURFACE_CARD} p-4 space-y-4`}>
           <h2 className="text-sm font-semibold text-gray-800 mb-1">
             จัดการ Mapping ผู้ใช้ ↔ ผู้เช่า
           </h2>

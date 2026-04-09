@@ -54,14 +54,14 @@ export default function LoginPage() {
       <div className="max-w-md w-full bg-white shadow-lg rounded-lg p-8">
         <div className="flex flex-col items-center mb-8">
           <img
-            src="/logo.jpg"
-            alt="Dormitory RPP Logo"
-            className="h-20 w-20 object-cover rounded-full mb-4"
+            src="/rpp-admin-logo.png"
+            alt="โรงพยาบาลราชพิพัฒน์"
+            className="h-28 w-28 object-contain rounded-full mb-4"
           />
           <h1 className="text-3xl font-bold text-center text-gray-800">
             เข้าสู่ระบบ
           </h1>
-          <p className="text-sm text-gray-600 mt-2">หอพักรวงผึ้ง</p>
+          <p className="text-sm text-gray-600 mt-2">ระบบจัดการหอพัก</p>
           <p className="text-xs text-gray-500 mt-1">โรงพยาบาลราชพิพัฒน์</p>
         </div>
         

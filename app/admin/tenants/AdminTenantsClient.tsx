@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useEffect } from 'react';
 import type { AdminTenantRow } from '@/lib/repositories/tenants';
+import { ADMIN_SURFACE_CARD } from '@/lib/ui/admin-surface';
 
 type Props = {
   initialTenants: AdminTenantRow[];
@@ -513,7 +514,7 @@ export default function AdminTenantsClient({
       </div>
 
       {/* แถว search + filter */}
-      <div className="bg-white shadow rounded-lg p-4 mb-4 flex flex-col lg:flex-row gap-4 lg:items-end">
+      <div className={`${ADMIN_SURFACE_CARD} p-4 mb-4 flex flex-col lg:flex-row gap-4 lg:items-end`}>
         <div className="flex-1">
           <label className="block text-sm font-medium text-gray-700 mb-1">
             ค้นหาชื่อ-นามสกุล
@@ -565,7 +566,7 @@ export default function AdminTenantsClient({
       </div>
 
       {/* แถวแสดงจำนวนและเลือกจำนวนแสดงผล */}
-      <div className="bg-white shadow rounded-lg p-4 mb-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className={`${ADMIN_SURFACE_CARD} p-4 mb-4 flex flex-col sm:flex-row items-center justify-between gap-4`}>
         <div className="text-sm text-gray-700">
           แสดง {startIndex + 1} - {Math.min(endIndex, filteredTenants.length)} จาก {filteredTenants.length} รายการ
         </div>
@@ -587,7 +588,7 @@ export default function AdminTenantsClient({
       </div>
 
       {/* ตารางผู้เช่า */}
-      <div className="bg-white shadow rounded-lg overflow-hidden">
+      <div className={`${ADMIN_SURFACE_CARD} overflow-hidden`}>
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
@@ -713,7 +714,7 @@ export default function AdminTenantsClient({
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="bg-white shadow rounded-lg p-4 mt-4">
+        <div className={`${ADMIN_SURFACE_CARD} p-4 mt-4`}>
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="text-sm text-gray-700">
               แสดง {startIndex + 1} - {Math.min(endIndex, filteredTenants.length)} จาก {filteredTenants.length} รายการ

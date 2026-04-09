@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
+import { ADMIN_SURFACE_CARD } from '@/lib/ui/admin-surface';
 
 interface BillingCycle {
   cycle_id: number;
@@ -467,7 +468,7 @@ export default function MetersClient({
   return (
     <div>
         {/* Filters */}
-        <div className="bg-white rounded-lg sm:rounded-xl shadow-sm border border-gray-100 p-4 sm:p-5 lg:p-6 mb-4 sm:mb-6">
+        <div className={`${ADMIN_SURFACE_CARD} p-4 sm:p-5 lg:p-6 mb-4 sm:mb-6`}>
           <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-4">
             🔍 กรองข้อมูล
           </h2>
@@ -510,7 +511,7 @@ export default function MetersClient({
                 อาคาร
               </label>
               <div
-                className="bg-white rounded-lg border border-gray-200 shadow-sm px-2 pt-2"
+                className={`${ADMIN_SURFACE_CARD} px-2 pt-2`}
                 role="tablist"
                 aria-label="เลือกอาคาร"
               >
@@ -610,7 +611,7 @@ export default function MetersClient({
         </div>
 
         {/* Table */}
-        <div className="bg-white rounded-lg sm:rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className={`${ADMIN_SURFACE_CARD} overflow-hidden`}>
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
