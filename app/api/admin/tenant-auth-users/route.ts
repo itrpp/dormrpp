@@ -2,10 +2,48 @@ import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { requireAppRoles } from '@/lib/auth/middleware';
 import type { AppRoleCode } from '@/lib/auth/app-roles';
+import { createLDAPService } from '@/lib/auth/ldap';
+import { ALLOWED_GROUP_DN, ALLOWED_GROUP_DN_FALLBACK } from '@/lib/auth/roles';
 
 export const dynamic = 'force-dynamic';
 
 const TENANT_MAPPING_ACCESS: AppRoleCode[] = ['ADMIN', 'SUPERUSER_RP', 'SUPERUSER_MED'];
+const MED_ONLY_ROLES: AppRoleCode[] = ['SUPERUSER_MED', 'FINANCE-M'];
+const RP_OR_GLOBAL_ROLES: AppRoleCode[] = ['ADMIN', 'FINANCE', 'SUPERUSER_RP', 'FINANCE-R'];
+const MED_STUDENT_OU_DN = 'OU=Client_Pacs,OU=rpp-user,DC=rpphosp,DC=local';
+const MED_STUDENT_TITLE = 'นักศึกษาแพทย์';
+
+function shouldRestrictToMedStudents(roles: AppRoleCode[]): boolean {
+  const hasMedOnlyRole = MED_ONLY_ROLES.some((r) => roles.includes(r));
+  if (!hasMedOnlyRole) return false;
+  const hasRpOrGlobalRole = RP_OR_GLOBAL_ROLES.some((r) => roles.includes(r));
+  return !hasRpOrGlobalRole;
+}
+
+async function getAllowedMedStudentAdIds(): Promise<Set<string>> {
+  const ldap = createLDAPService();
+  try {
+    let adUsers = await ldap.getUsersInGroup(ALLOWED_GROUP_DN);
+    if (!adUsers || adUsers.length === 0) {
+      adUsers = await ldap.getUsersInGroup(ALLOWED_GROUP_DN_FALLBACK);
+    }
+
+    const targetOu = MED_STUDENT_OU_DN.toLowerCase();
+    const targetTitle = MED_STUDENT_TITLE.trim();
+    const allowedIds = adUsers
+      .filter((u) => {
+        const dn = String(u.distinguishedName ?? '').toLowerCase();
+        const title = String(u.title ?? '').trim();
+        return dn.includes(targetOu) && title === targetTitle;
+      })
+      .map((u) => String(u.id ?? '').trim())
+      .filter((id) => id.length > 0);
+
+    return new Set(allowedIds);
+  } finally {
+    await ldap.disconnect();
+  }
+}
 
 interface TenantAuthUserRow {
   auth_user_id: number;
@@ -76,7 +114,16 @@ export async function GET() {
       `,
     );
 
-    return NextResponse.json(rows);
+    const appRoles = authResult.appRoles ?? [];
+    if (!shouldRestrictToMedStudents(appRoles)) {
+      return NextResponse.json(rows);
+    }
+
+    const allowedAdIds = await getAllowedMedStudentAdIds();
+    const filteredRows = rows.filter((row) =>
+      allowedAdIds.has(String(row.ad_username ?? '').trim()),
+    );
+    return NextResponse.json(filteredRows);
   } catch (error: any) {
     console.error('Error fetching tenant auth users:', error);
     return NextResponse.json(

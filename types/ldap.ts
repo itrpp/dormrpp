@@ -29,6 +29,7 @@ export interface LDAPUserData {
   email: string;
   department: string;
   title: string;
+  distinguishedName?: string;
   groups: string;
   role: "admin" | "user";
 }

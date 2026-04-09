@@ -142,7 +142,9 @@ export default function TenantAuthUsersClient() {
     }
     setIsSearchingTenants(true);
     try {
-      const res = await fetch(`/api/tenants?q=${encodeURIComponent(tenantQuery)}`);
+      const res = await fetch(
+        `/api/tenants?q=${encodeURIComponent(tenantQuery)}&context=tenant-mapping`,
+      );
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'ค้นหาผู้เช่าไม่สำเร็จ');

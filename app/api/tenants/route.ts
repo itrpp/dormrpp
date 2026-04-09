@@ -26,6 +26,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const roomId = searchParams.get('room_id');
     const q = searchParams.get('q');
+    const context = searchParams.get('context');
 
     const resolvedListIds = resolveAllowedBuildingIdsForListQuery(scope, null);
     const allowedForTenants =
@@ -34,9 +35,22 @@ export async function GET(req: Request) {
     // โหมดค้นหาผู้เช่าเก่า
     if (q && !roomId) {
       const keyword = `%${q}%`;
+      const isTenantMappingContext = context === 'tenant-mapping';
       const tbc = tenantSearchBuildingClause(scope);
-      const scopeTail = tbc ? tbc.clause : '';
-      const scopeParams = tbc ? tbc.params : [];
+      let scopeTail = tbc ? tbc.clause : '';
+      let scopeParams = tbc ? tbc.params : [];
+
+      // โหมดค้นหาเพื่อแมปผู้ใช้ ↔ ผู้เช่า:
+      // ต้องเห็น "เฉพาะผู้เช่าที่มีห้อง" ในอาคารตามสิทธิ์รับผิดชอบ
+      // (ไม่ดึงผู้เช่าที่ยังไม่มีห้อง เพื่อลดรายการนอกขอบเขตงาน)
+      if (isTenantMappingContext && scope.kind === 'buildings') {
+        if (scope.buildingIds.length === 0) {
+          return NextResponse.json([]);
+        }
+        const placeholders = scope.buildingIds.map(() => '?').join(',');
+        scopeTail = ` AND r_last.room_id IS NOT NULL AND r_last.building_id IN (${placeholders})`;
+        scopeParams = [...scope.buildingIds];
+      }
       const searchBind = [
         keyword,
         keyword,

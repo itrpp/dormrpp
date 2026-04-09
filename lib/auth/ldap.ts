@@ -292,6 +292,7 @@ export class LDAPService {
       email: getAttribute("userPrincipalName"),
       department: getFirstOU(getAttribute("distinguishedName")) || "",
       title: getAttribute("title") || getAttribute("description") || "",
+      distinguishedName: getAttribute("distinguishedName") || searchResult.objectName,
       groups: groupsString,
       role: isAdmin ? "admin" : "user",
     };
